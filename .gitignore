@@ -5,7 +5,6 @@
 /generated
 /generated-cjs
 /.antlr
-extension-bundle.js
 input.json
 /tests/debug.txt
 /tests/output.txt
