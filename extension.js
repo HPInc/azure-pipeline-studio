@@ -221,6 +221,24 @@ function activate(context) {
             }
         } catch (error) {
             console.error('Error expanding pipeline:', error);
+
+            // Clear the rendering window and show the error
+            const targetUri = getRenderTargetUri(document);
+            const errorMessage = `# Error Expanding Azure Pipeline\n\n${error.message}\n\n---\n\n${error.stack || ''}`;
+            renderedContent.set(targetUri.toString(), errorMessage);
+            renderedEmitter.fire(targetUri);
+
+            // Also open the error in the render window if not already visible
+            if (!options.silent) {
+                const targetDoc = await vscode.workspace.openTextDocument(targetUri);
+                await vscode.window.showTextDocument(targetDoc, {
+                    viewColumn: vscode.ViewColumn.Beside,
+                    preview: false,
+                    preserveFocus: true,
+                });
+            }
+
+            // Show error notification
             if (vscode && vscode.window) {
                 vscode.window.showErrorMessage(`Failed to expand Azure Pipeline: ${error.message}`);
             }

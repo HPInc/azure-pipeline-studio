@@ -5,6 +5,7 @@ VS Code extension and CLI tool for formatting and expanding Azure DevOps YAML pi
 ## Features
 
 - **Template Expansion**: Expand pipelines with shared templates and repository resources
+- **Parameter Validation**: Automatic validation ensures all required template parameters are provided (see [PARAMETER_VALIDATION.md](PARAMETER_VALIDATION.md))
 - **Expression Evaluation**: All 33 Azure DevOps expression functions (`${{ }}`, `$[]`, `$()`)
 - **Advanced Formatting**: Customizable indentation, line width, array formatting, native comment preservation
 - **Modern YAML Parser**: Uses `yaml` package (v2.x) with full comment support

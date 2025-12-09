@@ -5,6 +5,18 @@ All notable changes to Azure Pipeline Studio will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2025-12-09
+
+### Added
+- Automatic validation to ensure all required template parameters (those without default values) are provided when calling a template
+- Validates passed parameters aganist the allowed values for a parameter, when defined in parameters with values
+
+### Fixed
+- Fixed template parameter handling when runtime variables are passed through template chains
+- Fixed issue where compile-time expressions using runtime variable parameters would evaluate incorrectly
+
+[1.0.1]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.0.1
+
 ## [1.0.0] - 2025-12-03
 
 ### Added

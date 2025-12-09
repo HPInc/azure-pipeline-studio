@@ -594,6 +594,60 @@ class AzurePipelineParser {
         return result;
     }
 
+    validateTemplateParameters(templateDocument, providedParameters, templatePath) {
+        if (!templateDocument || typeof templateDocument !== 'object') {
+            return;
+        }
+
+        const { parameters } = templateDocument;
+        if (!parameters) {
+            return;
+        }
+
+        const missingRequired = [];
+
+        const checkParameter = (param, paramName) => {
+            if (!param || typeof param !== 'object') {
+                return;
+            }
+
+            const name = paramName || param.name;
+            if (!name) {
+                return;
+            }
+
+            // Check if parameter has a default value
+            const hasDefault = param.default !== undefined || param.value !== undefined || param.values !== undefined;
+
+            // Check if parameter was provided
+            const wasProvided = providedParameters && Object.prototype.hasOwnProperty.call(providedParameters, name);
+
+            // If no default and not provided, it's missing
+            if (!hasDefault && !wasProvided) {
+                missingRequired.push(name);
+            }
+        };
+
+        if (Array.isArray(parameters)) {
+            for (const param of parameters) {
+                checkParameter(param);
+            }
+        } else if (typeof parameters === 'object') {
+            for (const [name, param] of Object.entries(parameters)) {
+                checkParameter(param, name);
+            }
+        }
+
+        if (missingRequired.length > 0) {
+            const templateName = templatePath || 'template';
+            const paramList = missingRequired.map((p) => `'${p}'`).join(', ');
+            throw new Error(
+                `Missing required parameter(s) for template '${templateName}': ${paramList}. ` +
+                    `These parameters do not have default values and must be provided when calling the template.`,
+            );
+        }
+    }
+
     extractVariables(document) {
         const result = {};
         if (!document || typeof document !== 'object') {
@@ -639,6 +693,14 @@ class AzurePipelineParser {
         for (let index = 0; index < array.length; index += 1) {
             const element = array[index];
 
+            if (process.env.ADO_YAML_DEBUG && typeof element === 'object' && element !== null) {
+                const keys = Object.keys(element);
+                if (keys.length > 0 && keys[0].includes('if') && keys[0].includes('parameters')) {
+                    console.log('[debug] Array element with conditional-like key:', keys[0].substring(0, 100));
+                    console.log('[debug] isConditionalDirective:', this.isConditionalDirective(keys[0]));
+                }
+            }
+
             if (this.isTemplateReference(element)) {
                 const templateItems = this.expandTemplateReference(element, context);
                 result.push(...templateItems);
@@ -647,6 +709,10 @@ class AzurePipelineParser {
 
             if (this.isSingleKeyObject(element)) {
                 const key = Object.keys(element)[0];
+
+                if (process.env.ADO_YAML_DEBUG && this.isConditionalDirective(key)) {
+                    console.log('[debug] Processing conditional in array, key length:', key.length);
+                }
 
                 if (this.isEachDirective(key)) {
                     const applied = this.applyEachDirective(key, element[key], context);
@@ -852,14 +918,40 @@ class AzurePipelineParser {
             const body = element[key];
 
             if (this.isIfDirective(key)) {
+                // Only process this IF if we haven't taken a branch yet, OR if this is the first condition
+                // This allows multiple independent IF conditions, but respects IF-ELSEIF-ELSE chains
+                if (index !== startIndex && !this.isElseIfDirective(key) && !this.isElseDirective(key)) {
+                    // This is a new independent IF, not part of the current IF-ELSEIF-ELSE chain
+                    break;
+                }
+
                 const condition = this.parseIfCondition(key);
                 const result = this.evaluateExpression(condition, context);
                 if (process.env.ADO_YAML_DEBUG === '1') {
                     console.log('[debug] IF condition:', condition, '=>', result);
+                    console.log('[debug] branchTaken:', branchTaken, ', toBoolean(result):', this.toBoolean(result));
+                    if (result) {
+                        console.log('[debug] Branch body type:', Array.isArray(body) ? 'array' : typeof body);
+                        if (Array.isArray(body)) {
+                            console.log('[debug] Branch body length:', body.length);
+                            if (body.length > 0) {
+                                console.log('[debug] First item:', JSON.stringify(body[0]).substring(0, 200));
+                            }
+                        }
+                    }
                 }
                 if (!branchTaken && this.toBoolean(result)) {
                     items = this.flattenBranchValue(body, context);
                     branchTaken = true;
+                    if (process.env.ADO_YAML_DEBUG === '1') {
+                        console.log('[debug] Branch taken, returned', items.length, 'items');
+                        if (items.length > 0 && items[0]) {
+                            console.log('[debug] First returned item type:', typeof items[0]);
+                            if (typeof items[0] === 'object' && items[0] !== null) {
+                                console.log('[debug] First returned item keys:', Object.keys(items[0]).slice(0, 5));
+                            }
+                        }
+                    }
                 }
             } else if (this.isElseIfDirective(key)) {
                 const condition = this.parseElseIfCondition(key);
@@ -1782,9 +1874,15 @@ class AzurePipelineParser {
 
     walkSegments(current, segments) {
         let value = current;
-        for (const segment of segments) {
+        for (let i = 0; i < segments.length; i++) {
+            const segment = segments[i];
             if (value === undefined || value === null) {
                 return undefined;
+            }
+            // If we're accessing a nested property (not top-level) that doesn't exist on an object,
+            // return empty string instead of undefined (Azure DevOps behavior)
+            if (i > 0 && typeof value === 'object' && !Array.isArray(value) && !(segment in value)) {
+                return '';
             }
             value = value[segment];
         }
@@ -1962,6 +2060,10 @@ class AzurePipelineParser {
 
         const defaultParameters = this.extractParameters(templateDocument);
         const providedParameters = this.normalizeTemplateParameters(node.parameters, context);
+
+        // Validate that all required parameters (without defaults) are provided
+        this.validateTemplateParameters(templateDocument, providedParameters, templatePathValue);
+
         const mergedParameters = { ...defaultParameters, ...providedParameters };
 
         if (process.env.DEBUG_PARSER && templatePathValue && templatePathValue.includes('windows-client-v0')) {

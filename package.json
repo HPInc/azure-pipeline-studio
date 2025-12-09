@@ -202,5 +202,5 @@
     "test:module": "node tests/test-azure-expressions-module.js"
   },
   "type": "commonjs",
-  "version": "1.0.0"
+  "version": "1.0.1"
 }
