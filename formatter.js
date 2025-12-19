@@ -281,6 +281,13 @@ function protectEmptyValues(content) {
 }
 
 /**
+ * Convert block scalars (|) to folded scalars (>-) with blank lines between statements (Microsoft style)
+ * Microsoft adds blank lines between each statement so that when using >- (folded),
+ * each statement appears on its own line in the final YAML
+ * @param {string} content - The YAML content
+ * @returns {string} Content with block scalars converted to folded with blanks
+ */
+/**
  * Restore empty values that were protected during formatting
  * @param {string} content - The formatted content with placeholders
  * @param {Map} commentMap - The mapping of comment placeholders
@@ -751,7 +758,8 @@ function applyPipelineFormatting(text, newline, options) {
         }
 
         // 1. Step Spacing - Simplified approach
-        if (options.stepSpacing) {
+        // Skip step spacing for expanded output to preserve original spacing
+        if (options.stepSpacing && !options.wasExpanded) {
             // Track when we're in steps/jobs/stages sections
             let inListSection = false;
             let listSectionIndent = -1;
@@ -862,9 +870,9 @@ function applyPipelineFormatting(text, newline, options) {
             }
         }
 
-        // 2. First Block Blank Lines
+        // 2. First Block Blank Lines (skip for expanded output to preserve original spacing)
         let section2HandledThisLine = false;
-        if (hasParametersAtStart) {
+        if (hasParametersAtStart && !options.wasExpanded) {
             if (!parametersEnded && i > firstNonEmptyLine) {
                 if (
                     trimmed &&
@@ -899,6 +907,7 @@ function applyPipelineFormatting(text, newline, options) {
         }
 
         // 3. Section Spacing (betweenSectionBlankLines and firstBlockBlankLines)
+        // Skip for expanded output to preserve original spacing
         // Detect root sections: lines at indent 0 that are keys (end with : or have : followed by a value)
         const isRootSection =
             trimmed &&
@@ -908,7 +917,7 @@ function applyPipelineFormatting(text, newline, options) {
             /^[^:]+:/.test(trimmed); // Matches keys at root level (with or without inline values)
 
         // Only skip if Section 2 just handled this specific line
-        if (isRootSection && lastRootSectionIndex >= 0 && !section2HandledThisLine) {
+        if (isRootSection && lastRootSectionIndex >= 0 && !section2HandledThisLine && !options.wasExpanded) {
             // Remove existing blanks before this section
             while (pass1.length > 0 && pass1[pass1.length - 1].trim() === '') {
                 pass1.pop();
@@ -954,8 +963,9 @@ function applyPipelineFormatting(text, newline, options) {
         }
 
         // Ensure at least 1 blank line before jobs: and steps: (at any indent level, not just root)
+        // Skip for expanded output to preserve original spacing
         const isJobsOrSteps = trimmed === 'jobs:' || trimmed === 'steps:';
-        if (isJobsOrSteps && lineIndent > 0 && !section2HandledThisLine) {
+        if (isJobsOrSteps && lineIndent > 0 && !section2HandledThisLine && !options.wasExpanded) {
             // Check if there's already a blank line before this
             let hasBlankBefore = false;
             if (pass1.length > 0 && pass1[pass1.length - 1].trim() === '') {
@@ -1018,7 +1028,9 @@ function applyPipelineFormatting(text, newline, options) {
         }
     }
 
-    return pass1.join(newline);
+    let finalResult = pass1.join(newline);
+
+    return finalResult;
 }
 
 /**
@@ -1085,13 +1097,17 @@ function formatYaml(content, options = {}) {
                   ? Math.min(options.blankLinesBetweenSections, 4)
                   : 1,
         sectionSpacing: options && typeof options.sectionSpacing === 'boolean' ? options.sectionSpacing : false,
+        // Flag indicating if template expansion happened
+        wasExpanded: options && typeof options.wasExpanded === 'boolean' ? options.wasExpanded : false,
     };
 
     try {
+        let inputContent = content;
+
         // Replace template expressions with placeholders
         const { content: preprocessedContent, placeholderMap } = effective.expandTemplates
-            ? { content: content, placeholderMap: new Map() }
-            : replaceTemplateExpressionsWithPlaceholders(content);
+            ? { content: inputContent, placeholderMap: new Map() }
+            : replaceTemplateExpressionsWithPlaceholders(inputContent);
 
         // Temporarily disable block scalar protection - it's breaking bash scripts
         // TODO: Fix the block scalar protection to handle complex bash content
@@ -1144,6 +1160,7 @@ function formatYaml(content, options = {}) {
             singleQuote: null, // Preserve original quote style
             blockQuote: true, // Use block quotes for multi-line scalars
             defaultStringType: 'PLAIN', // Default to plain strings (unquoted)
+            aliasDuplicateObjects: false, // Disable YAML anchors/aliases for Azure Pipelines compatibility
         });
 
         // Restore block scalars from placeholders
@@ -1163,8 +1180,23 @@ function formatYaml(content, options = {}) {
         // Apply pipeline-specific formatting
         normalized = applyPipelineFormatting(normalized, newline, effective);
 
-        // Ensure single newline at end of file
-        normalized = normalized.replace(new RegExp(`(?:${escapeRegExp(newline)})*$`), newline);
+        // Remove trailing whitespace from each line (spaces and tabs)
+        normalized = normalized
+            .split(newline)
+            .map((line) => line.replace(/[ \t]+$/, ''))
+            .join(newline);
+
+        // Ensure newline(s) at end of file
+        // If template was expanded, preserve 2 blank lines (Microsoft format: content + 3 newlines total)
+        // Otherwise, ensure single newline at end
+        if (effective.wasExpanded) {
+            normalized = normalized.replace(
+                new RegExp(`(?:${escapeRegExp(newline)})*$`),
+                `${newline}${newline}${newline}`,
+            );
+        } else {
+            normalized = normalized.replace(new RegExp(`(?:${escapeRegExp(newline)})*$`), newline);
+        }
 
         return {
             text: normalized,

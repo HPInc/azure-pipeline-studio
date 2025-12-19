@@ -5,6 +5,30 @@ All notable changes to Azure Pipeline Studio will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3] - 2025-12-19
+
+### Added
+- **Expand Pipeline (Azure Compatible)** command - explicit Azure DevOps-compatible output formatting
+- `azureCompatible` setting - controls literal blocks (|), capitalized booleans, trailing blank lines
+- Quote preservation through template expansion with context-aware tracking
+- `condition: false` added to `checkout: none` for Azure DevOps compatibility
+- Test coverage for block scalars, quote preservation, boolean capitalization, and Azure compatibility
+
+### Changed
+- **Menu UI**: Removed "Azure Pipeline Studio:" prefix from all commands for cleaner appearance
+- Renamed "Show Rendered YAML" → "Expand Pipeline (Standard)"
+- Removed ANTLR dependency - now uses pure `yaml` package for all parsing (~1,300 lines removed)
+- Simplified build process - direct webpack output, no dist folder copying
+- Azure-specific transformations (literal blocks, blank lines) now only apply when `azureCompatible: true`
+
+### Fixed
+- Heredocs/scripts with `${{ }}` expressions use literal style (|) in standard mode to preserve formatting
+- Trailing spaces in multi-line scalars handled with double-quoted format
+- Nested conditional directives in arrays properly resolved
+- Quote styles preserved through multi-level template expansion
+
+[1.0.3]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.0.3
+
 ## [1.0.2] - 2025-12-11
 
 ### Added

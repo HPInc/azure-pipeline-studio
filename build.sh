@@ -11,9 +11,8 @@ INSTALL=0
 PRE_RELEASE=0
 RELEASE=1
 DEVELOPMENT=0
-SKIP_COMPILE=0
 
-while getopts ":iprds" OPT; do
+while getopts ":iprd" OPT; do
   case ${OPT} in
     i)
       INSTALL=1
@@ -27,38 +26,11 @@ while getopts ":iprds" OPT; do
     d)
       DEVELOPMENT=1
       ;;
-    s)
-      SKIP_COMPILE=1
-      ;;
     *)
       usage
       ;;
   esac
 done
-
-# copy all files to dist
-declare FILES=(
-  .vscodeignore
-  .babelrc
-  CHANGELOG
-  LICENSE
-  LICENSE.txt
-  README.md
-  webpack.config.js
-  package.json
-  icon.png
-  AzurePipelineParser.g4
-  AzurePipelineLexer.g4
-  azurePipelineYaml.js
-  extension.js
-  parser.js
-  formatter.js
-  utils.js
-  tests)
-
-mkdir -p dist
-cp -af "${FILES[@]}" dist
-cd dist || exit 1
 
 if [ ${INSTALL} -eq 1 ]; then
   npm install -g @vscode/vsce
@@ -69,13 +41,7 @@ fi
 
 npm install
 
-if [ ${SKIP_COMPILE} -eq 0 ]; then
-  npm run compile
-else
-  echo "Skipping ANTLR compile step (-s flag)"
-fi
-
-# Build with webpack (npm scripts already call webpack, don't call it twice)
+# Build with webpack
 # Webpack outputs to extension-bundle.js to avoid overwriting source
 if [ ${DEVELOPMENT} -eq 1 ]; then
   npm run build:dev
@@ -83,15 +49,7 @@ else
   npm run build:prod
 fi
 
-# Rename the bundled file to extension.js for the VSIX package
-if [ -f "extension-bundle.js" ]; then
-  # Also copy the bundle to root for pre-commit hook usage
-  cp extension-bundle.js ../extension-bundle.js
-  mv extension-bundle.js extension.js
-  # Update package.json to point to extension.js
-  sed -i 's|"main": "./extension-bundle.js"|"main": "./extension.js"|' package.json
-fi
-
+# Package the extension
 rm -f ./*.vsix
 
 #VERSION=$(jq -Mr .version package.json)
@@ -101,10 +59,6 @@ if [ ${RELEASE} -eq 1 ]; then
   else
     vsce package
   fi
-  #scp "ado-pipeline-navigator-${VERSION}.vsix" tools:/var/www/html/files/ado-pipeline-navigator.vsix
   #code --install-extension "ado-pipeline-navigator-${VERSION}.vsix"
   #vsce publish --pre-release
 fi
-
-rm -f ../*.vsix
-mv ./*.vsix ../

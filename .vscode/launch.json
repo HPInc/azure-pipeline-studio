@@ -28,16 +28,6 @@
         "-f",
         "tests/terraform-module/outputs.tf"
       ]
-    },
-    {
-      "name": "Debug ANTLR4 grammar",
-      "type": "antlr-debug",
-      "request": "launch",
-      "input": "/root/op.hcl",
-      "grammar": "${workspaceFolder}/hclParser.g4",
-      "startRule": "configFile",
-      "printParseTree": true,
-      "visualParseTree": true
     }
   ],
   "version": "0.2.0"

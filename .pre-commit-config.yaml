@@ -1,4 +1,8 @@
 repos:
+- repo: https://github.com/HPInc/azure-pipeline-studio
+  rev: v1.0.2
+  hooks:
+  - id: azure-pipeline-formatter
 - repo: local
   hooks:
   - id: prettier
@@ -15,10 +19,6 @@ repos:
     args: [ --autofix ]
     types: [ file ]
     files: \.(properties)$
-- repo: .
-  rev: HEAD
-  hooks:
-  - id: azure-pipeline-formatter
 - repo: https://github.com/pre-commit/pre-commit-hooks
   rev: v4.5.0
   hooks:

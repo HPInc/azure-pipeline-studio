@@ -1,0 +1,14 @@
+# Template with UNQUOTED inline
+parameters:
+- name: message
+  type: string
+  default: ''
+
+
+steps:
+- task: PythonScript@0
+  displayName: Post PR Comment or Trunk
+  inputs:
+    scriptSource: inline
+    script: |
+      print('${{ parameters.message }}')

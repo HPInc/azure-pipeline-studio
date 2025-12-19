@@ -35,7 +35,7 @@ module.exports = {
         fallback: {
             fs: false,
         },
-        modules: ['generated-cjs', 'node_modules'],
+        modules: ['node_modules'],
     },
     module: {
         rules: [
