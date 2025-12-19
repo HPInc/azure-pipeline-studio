@@ -1,0 +1,26 @@
+trigger:
+  branches:
+    include:
+    - main
+
+variables:
+- name: Build.Reason
+  value: 'PullRequest'
+- name: testBoolean
+  value: ${{ in(variables['Build.Reason'], 'PullRequest', 'Manual') }}
+
+jobs:
+- job: TestJob
+  pool:
+    vmImage: ubuntu-latest
+  variables:
+    autoTrunkBuild: ${{ in(variables['Build.Reason'], 'PullRequest', 'Manual') }}
+    comparison1: ${{ eq(variables['Build.Reason'], 'PullRequest') }}
+    comparison2: ${{ ne(variables['Build.Reason'], 'Manual') }}
+    logical1: ${{ and(eq(variables['Build.Reason'], 'PullRequest'), ne('test', 'test2')) }}
+    logical2: ${{ or(eq(1, 2), eq(3, 3)) }}
+    logical3: ${{ not(eq(1, 2)) }}
+
+  steps:
+  - script: echo "Testing boolean capitalization"
+    displayName: 'Test Step'

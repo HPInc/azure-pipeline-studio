@@ -1,11 +1,10 @@
 **
-!extension.js
+!extension-bundle.js
 !package.json
 !icon.png
 !README.md
 !LICENSE.txt
 !CHANGELOG
-!get-code.sh
 
 # Test files
 **/test/**

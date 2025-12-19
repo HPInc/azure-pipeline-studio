@@ -1,0 +1,19 @@
+# Test pipeline using both github message templates
+# to verify quote preservation works correctly
+
+trigger: none
+
+stages:
+- stage: Test
+
+  jobs:
+  - job: Build
+
+    steps:
+    - template: test-templates/github-post-message.yaml
+      parameters:
+        message: "Test 1"
+
+    - template: test-templates/github-trunk-post-message.yaml
+      parameters:
+        message: "Test 2"

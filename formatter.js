@@ -10,106 +10,6 @@ function escapeRegExp(string) {
 }
 
 /**
- * Protect folded/literal scalar blocks from YAML parsing
- * @param {string} content - The YAML content
- * @returns {{ content: string, scalarMap: Map }} The content with placeholders and the mapping
- */
-function protectBlockScalars(content) {
-    const lines = content.split(/\r?\n/);
-    const scalarMap = new Map();
-    let counter = 0;
-    const result = [];
-    let i = 0;
-
-    while (i < lines.length) {
-        const line = lines[i];
-        const match = line.match(/^(\s*)([^:]+):\s*([|>][-+]?)\s*$/);
-
-        if (match) {
-            const indent = match[1];
-            const key = match[2];
-            const indicator = match[3];
-            const lineIndent = indent.length;
-
-            // For block scalars, content must be indented more than the key line
-            // We need to find the minimum required indent for content
-            const minContentIndent = lineIndent + 2;
-
-            // Collect the block scalar content
-            const blockLines = [line];
-            i++;
-
-            // Gather all lines that are part of this block scalar
-            while (i < lines.length) {
-                const nextLine = lines[i];
-                const nextTrimmed = nextLine.trim();
-                const nextIndent = nextLine.length - nextLine.trimStart().length;
-
-                // Empty lines are part of the block
-                if (nextTrimmed === '') {
-                    blockLines.push(nextLine);
-                    i++;
-                    continue;
-                }
-
-                // Lines must be indented at least minContentIndent to be part of the block
-                if (nextIndent >= minContentIndent) {
-                    blockLines.push(nextLine);
-                    i++;
-                    continue;
-                }
-
-                // We've reached the end of the block
-                break;
-            }
-
-            // Create placeholder - use a quoted string to prevent YAML from interpreting it
-            const placeholder = `__BLOCK_SCALAR_${counter}__`;
-            scalarMap.set(placeholder, blockLines.join('\n'));
-            // Use quoted placeholder so YAML treats it as a simple string
-            result.push(`${indent}${key}: "${placeholder}"`);
-            counter++;
-        } else {
-            result.push(line);
-            i++;
-        }
-    }
-
-    return { content: result.join('\n'), scalarMap };
-}
-
-/**
- * Restore block scalars from placeholders
- * @param {string} content - The content with placeholders
- * @param {Map} scalarMap - Map of placeholder to original block scalar
- * @returns {string} Content with restored block scalars
- */
-function restoreBlockScalars(content, scalarMap) {
-    let result = content;
-    for (const [placeholder, originalBlock] of scalarMap) {
-        // The placeholder will be in the output as a quoted string like: key: "__BLOCK_SCALAR_0__"
-        // We need to replace it with the original block scalar
-        const lines = originalBlock.split('\n');
-        const firstLine = lines[0]; // This is "key: |" or "key: >"
-        const restLines = lines.slice(1); // Content lines
-
-        // Extract the block indicator (|, >, |-, >+, etc.)
-        const blockIndicator = firstLine.substring(firstLine.lastIndexOf(':') + 1).trim();
-
-        // Build the full replacement: indicator + content lines
-        const fullReplacement = restLines.length > 0 ? blockIndicator + '\n' + restLines.join('\n') : blockIndicator;
-
-        // Replace "key: "__BLOCK_SCALAR_N__"" or "key: '__BLOCK_SCALAR_N__'" with "key: |<content>"
-        const quotedPlaceholder = `"${placeholder}"`;
-        const singleQuotedPlaceholder = `'${placeholder}'`;
-
-        result = result.replace(new RegExp(`: ${escapeRegExp(quotedPlaceholder)}`, 'g'), `: ${fullReplacement}`);
-        result = result.replace(new RegExp(`: ${escapeRegExp(singleQuotedPlaceholder)}`, 'g'), `: ${fullReplacement}`);
-    }
-    return result;
-}
-
-/**
  * Replace Azure Pipeline template expressions with placeholders
  * @param {string} content - The YAML content
  * @returns {{ content: string, placeholderMap: Map }} The content with placeholders and the mapping
@@ -119,14 +19,11 @@ function replaceTemplateExpressionsWithPlaceholders(content) {
         return { content, placeholderMap: new Map() };
     }
 
-    // Match Azure Pipelines template expressions like ${{ parameters.x }}, $[variables.y]
-    // Note: We only replace ${{}} and $[] because $(variable) is handled fine by YAML parser
     const templateExpressionPattern = /(\$\{\{[^}]+\}\}|\$\[[^\]]+\])/g;
     const placeholderMap = new Map();
     let counter = 0;
 
     const result = content.replace(templateExpressionPattern, (match) => {
-        // Create a unique placeholder that replaces the expression entirely
         const placeholder = '__EXPR_PLACEHOLDER_' + counter + '__';
         placeholderMap.set(placeholder, match);
         counter++;
@@ -143,17 +40,12 @@ function replaceTemplateExpressionsWithPlaceholders(content) {
  * @returns {string} The content with restored expressions
  */
 function restoreTemplateExpressions(content, placeholderMap) {
-    if (!content || !placeholderMap || placeholderMap.size === 0) {
-        return content;
-    }
+    if (!content || !placeholderMap || placeholderMap.size === 0) return content;
 
     let result = content;
     for (const [placeholder, originalExpression] of placeholderMap) {
-        // Replace all occurrences of the placeholder with the original expression
-        const escapedPlaceholder = placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        result = result.replace(new RegExp(escapedPlaceholder, 'g'), originalExpression);
+        result = result.replace(new RegExp(escapeRegExp(placeholder), 'g'), originalExpression);
     }
-
     return result;
 }
 
@@ -177,13 +69,11 @@ function protectEmptyValues(content) {
         const line = lines[i];
         const trimmed = line.trim();
 
-        // Skip comments, blank lines, and list items
         if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('-')) {
             result.push(line);
             continue;
         }
 
-        // Check if this is a key with empty value using regex
         const keyMatch = line.match(emptyValuePattern);
         if (!keyMatch) {
             result.push(line);
@@ -192,44 +82,24 @@ function protectEmptyValues(content) {
 
         const indent = keyMatch[1];
         const key = keyMatch[2];
-
-        // Look ahead to find the first non-blank, non-comment line to determine if this key has child content
         let nextIndex = i + 1;
         let hasChildContent = false;
-
-        // Skip blanks and comments to find first real content
         while (nextIndex < lines.length) {
             const nextLine = lines[nextIndex];
             const nextTrimmed = nextLine.trim();
             const nextIndent = nextLine.length - nextLine.trimStart().length;
 
-            // Skip blank lines
-            if (nextTrimmed === '') {
+            if (nextTrimmed === '' || nextTrimmed.startsWith('#')) {
                 nextIndex++;
                 continue;
             }
 
-            // Skip comments - we'll process them based on the content that follows
-            if (nextTrimmed.startsWith('#')) {
-                nextIndex++;
-                continue;
-            }
-
-            // Found first real content - determine if it's a child
-            // If it's a list item at same or greater indentation, it's child content
-            if (nextTrimmed.startsWith('-') && nextIndent >= indent.length) {
-                hasChildContent = true;
-            } else if (nextIndent > indent.length) {
-                // If it's content indented more than the key, it's child content
-                hasChildContent = true;
-            }
-            // Otherwise it's a sibling or less-indented content (not a child)
+            hasChildContent =
+                (nextTrimmed.startsWith('-') && nextIndent >= indent.length) || nextIndent > indent.length;
             break;
         }
 
-        // Only protect if there's NO child content (the key truly has an empty value)
         if (!hasChildContent) {
-            // Collect all comments and blank lines at key's indent level or greater until we hit real content
             const allValueComments = [];
             let commentIndex = i + 1;
 
@@ -237,36 +107,28 @@ function protectEmptyValues(content) {
                 const commentLine = lines[commentIndex];
                 const commentTrimmed = commentLine.trim();
 
-                // Blank lines are part of the empty value block
                 if (commentTrimmed === '') {
                     allValueComments.push(commentLine);
                     commentIndex++;
                     continue;
                 }
 
-                // Stop at first non-comment content
-                if (!commentTrimmed.startsWith('#')) {
-                    break;
-                }
+                if (!commentTrimmed.startsWith('#')) break;
 
-                // Collect comments at key's indent level or greater
                 const commentIndent = commentLine.length - commentLine.trimStart().length;
                 if (commentIndent >= indent.length) {
                     allValueComments.push(commentLine);
                     commentIndex++;
                 } else {
-                    // Stop at less-indented comments (they belong to outer scope)
                     break;
                 }
             }
 
             if (allValueComments.length > 0) {
-                // Encode comments into placeholder
                 const commentId = `__COMMENT_${commentCounter}__`;
                 commentMap.set(commentId, allValueComments);
                 commentCounter++;
                 result.push(`${indent}${key}: __EMPTY_VALUE_PLACEHOLDER__${commentId}`);
-                // Skip the comment lines we collected
                 i = commentIndex - 1;
             } else {
                 result.push(`${indent}${key}: __EMPTY_VALUE_PLACEHOLDER__`);
@@ -287,12 +149,8 @@ function protectEmptyValues(content) {
  * @returns {string} The content with restored empty values
  */
 function restoreEmptyValues(content, commentMap) {
-    if (!content) {
-        return content;
-    }
-
+    if (!content) return content;
     if (!commentMap || commentMap.size === 0) {
-        // No comments to restore, just remove placeholders
         return content.replace(/:\s*__EMPTY_VALUE_PLACEHOLDER__\s*$/gm, ':');
     }
 
@@ -300,21 +158,13 @@ function restoreEmptyValues(content, commentMap) {
     const result = [];
 
     for (const line of lines) {
-        // Check if line has a placeholder with comment ID
         const match = line.match(/^(\s*)([^:]+):\s*__EMPTY_VALUE_PLACEHOLDER__(__COMMENT_\d+__)\s*$/);
         if (match) {
-            const indent = match[1];
-            const key = match[2];
-            const commentId = match[3];
+            const [, indent, key, commentId] = match;
             const comments = commentMap.get(commentId);
-
-            if (comments && comments.length > 0) {
-                // Restore empty value with comments on separate lines
-                result.push(`${indent}${key}:`);
+            result.push(`${indent}${key}:`);
+            if (comments?.length) {
                 comments.forEach((comment) => result.push(comment));
-            } else {
-                // No comments found, just restore empty value
-                result.push(`${indent}${key}:`);
             }
         } else if (line.match(/:\s*__EMPTY_VALUE_PLACEHOLDER__\s*$/)) {
             // Placeholder without comment ID
@@ -543,34 +393,7 @@ function applyPipelineFormatting(text, newline, options) {
     const stepPattern =
         /^\s*-\s+(task|bash|powershell|pwsh|script|sh|checkout|download|downloadBuild|getPackage|publish|reviewApp|template):/;
 
-    // Helper function to find if we're inside a steps section by looking backwards
-    const isInsideStepsSection = (lines, currentIndex, currentIndent) => {
-        for (let i = currentIndex - 1; i >= 0; i--) {
-            const line = lines[i];
-            const trimmed = line.trim();
-            const indent = line.length - line.trimStart().length;
-
-            // If we found 'steps:', check if current line is at same or greater indent
-            if (trimmed === 'steps:' && !line.includes('${{')) {
-                // Current line is inside steps if it's at same indent or greater
-                return currentIndent >= indent;
-            }
-
-            // If we find a line at lower indent that's not blank/comment, we've left the steps context
-            if (indent < currentIndent && trimmed && !trimmed.startsWith('#')) {
-                // But check if this is the steps: line itself
-                if (trimmed === 'steps:' && !line.includes('${{')) {
-                    return currentIndent >= indent;
-                }
-            }
-        }
-        return false;
-    };
-
-    // Define top-level sections for first block blank lines
     const topLevelSections = ['stages:', 'jobs:', 'steps:', 'trigger:', 'pr:', 'resources:', 'pool:', 'variables:'];
-
-    // Track if we've seen parameters at the start (for firstBlockBlankLines)
     let hasParametersAtStart = false;
     let firstNonEmptyLine = -1;
     for (let i = 0; i < lines.length; i++) {
@@ -582,33 +405,15 @@ function applyPipelineFormatting(text, newline, options) {
         }
     }
 
-    // Single Pass: Compact nested structures, apply spacing rules, and cleanup
-    // This preserves blank lines between root sections and in step sections
     const pass1 = [];
     let currentSection = null;
-    let currentSectionIndent = 0;
     let prevWasComment = false;
-
-    // Step spacing state
-    let prevWasCommentBeforeStep = false;
-    const lastListItemAtIndent = new Map();
-
-    // Simplified steps section tracking - track if we've seen a step in current steps section
-    let lastStepInStepsSection = -1; // Line number of last step we saw in steps section
-    let lastStepIndent = -1; // Indent level of last step we saw
-
-    // Simplified variables section tracking - track if we're in a variables section
-    let lastItemInVariablesSection = -1; // Line number of last item in variables section
-    let currentVariablesIndent = -1; // Indent level of current variables section
-
-    // Track multi-line blocks (bash: |, script: |, etc.) - don't modify blank lines inside them
+    let lastStepInStepsSection = -1;
+    let currentVariablesIndent = -1;
     let inMultiLineBlock = false;
     let multiLineBlockIndent = -1;
-
-    // Section spacing state
     let foundFirstSection = false;
     let foundFirstMainSection = false;
-    let firstSectionWasMainSection = false;
     let parametersEnded = false;
     let lastRootSectionIndex = -1;
 
@@ -620,7 +425,6 @@ function applyPipelineFormatting(text, newline, options) {
         // Track the current root section
         if (lineIndent === 0 && trimmed && !trimmed.startsWith('#') && trimmed.endsWith(':')) {
             currentSection = trimmed.slice(0, -1);
-            currentSectionIndent = 0;
         }
 
         // Check if this is a blank line
@@ -751,7 +555,8 @@ function applyPipelineFormatting(text, newline, options) {
         }
 
         // 1. Step Spacing - Simplified approach
-        if (options.stepSpacing) {
+        // Skip step spacing for expanded output to preserve original spacing
+        if (options.stepSpacing && !options.wasExpanded) {
             // Track when we're in steps/jobs/stages sections
             let inListSection = false;
             let listSectionIndent = -1;
@@ -788,7 +593,6 @@ function applyPipelineFormatting(text, newline, options) {
             // Track variables section
             if (trimmed === 'variables:' && !line.includes('${{')) {
                 currentVariablesIndent = lineIndent;
-                lastItemInVariablesSection = -1;
             } else if (
                 currentVariablesIndent >= 0 &&
                 lineIndent < currentVariablesIndent &&
@@ -797,7 +601,6 @@ function applyPipelineFormatting(text, newline, options) {
             ) {
                 // Exit variables section when we outdent below the variables: line
                 currentVariablesIndent = -1;
-                lastItemInVariablesSection = -1;
             } else if (
                 currentVariablesIndent >= 0 &&
                 lineIndent === currentVariablesIndent &&
@@ -808,7 +611,6 @@ function applyPipelineFormatting(text, newline, options) {
                 // Also exit if we see another key at the same level (like pool:, steps:, etc.)
                 if (trimmed.endsWith(':') && trimmed !== 'variables:') {
                     currentVariablesIndent = -1;
-                    lastItemInVariablesSection = -1;
                 }
             }
             // Items in variables section are list items (starting with -) at the same indent as variables:
@@ -851,20 +653,18 @@ function applyPipelineFormatting(text, newline, options) {
             // Update tracker if this is a pipeline item (not conditionals)
             if (isPipelineItem) {
                 lastStepInStepsSection = i;
-                lastStepIndent = lineIndent;
             } else if (
                 (trimmed === 'steps:' || trimmed === 'jobs:' || trimmed === 'stages:') &&
                 !line.includes('${{')
             ) {
                 // Reset when entering a new section
                 lastStepInStepsSection = -1;
-                lastStepIndent = -1;
             }
         }
 
-        // 2. First Block Blank Lines
+        // 2. First Block Blank Lines (skip for expanded output to preserve original spacing)
         let section2HandledThisLine = false;
-        if (hasParametersAtStart) {
+        if (hasParametersAtStart && !options.wasExpanded) {
             if (!parametersEnded && i > firstNonEmptyLine) {
                 if (
                     trimmed &&
@@ -883,7 +683,6 @@ function applyPipelineFormatting(text, newline, options) {
                 // Track if first section was a main section (stages/jobs/steps)
                 const keyOnly = trimmed.includes(':') ? trimmed.substring(0, trimmed.indexOf(':') + 1).trim() : trimmed;
                 const isMainSec = keyOnly === 'steps:' || keyOnly === 'stages:' || keyOnly === 'jobs:';
-                firstSectionWasMainSection = isMainSec;
                 if (isMainSec) {
                     foundFirstMainSection = true;
                 }
@@ -899,6 +698,7 @@ function applyPipelineFormatting(text, newline, options) {
         }
 
         // 3. Section Spacing (betweenSectionBlankLines and firstBlockBlankLines)
+        // Skip for expanded output to preserve original spacing
         // Detect root sections: lines at indent 0 that are keys (end with : or have : followed by a value)
         const isRootSection =
             trimmed &&
@@ -908,7 +708,7 @@ function applyPipelineFormatting(text, newline, options) {
             /^[^:]+:/.test(trimmed); // Matches keys at root level (with or without inline values)
 
         // Only skip if Section 2 just handled this specific line
-        if (isRootSection && lastRootSectionIndex >= 0 && !section2HandledThisLine) {
+        if (isRootSection && lastRootSectionIndex >= 0 && !section2HandledThisLine && !options.wasExpanded) {
             // Remove existing blanks before this section
             while (pass1.length > 0 && pass1[pass1.length - 1].trim() === '') {
                 pass1.pop();
@@ -954,8 +754,9 @@ function applyPipelineFormatting(text, newline, options) {
         }
 
         // Ensure at least 1 blank line before jobs: and steps: (at any indent level, not just root)
+        // Skip for expanded output to preserve original spacing
         const isJobsOrSteps = trimmed === 'jobs:' || trimmed === 'steps:';
-        if (isJobsOrSteps && lineIndent > 0 && !section2HandledThisLine) {
+        if (isJobsOrSteps && lineIndent > 0 && !section2HandledThisLine && !options.wasExpanded) {
             // Check if there's already a blank line before this
             let hasBlankBefore = false;
             if (pass1.length > 0 && pass1[pass1.length - 1].trim() === '') {
@@ -1018,7 +819,9 @@ function applyPipelineFormatting(text, newline, options) {
         }
     }
 
-    return pass1.join(newline);
+    let finalResult = pass1.join(newline);
+
+    return finalResult;
 }
 
 /**
@@ -1085,44 +888,29 @@ function formatYaml(content, options = {}) {
                   ? Math.min(options.blankLinesBetweenSections, 4)
                   : 1,
         sectionSpacing: options && typeof options.sectionSpacing === 'boolean' ? options.sectionSpacing : false,
+        wasExpanded: options && typeof options.wasExpanded === 'boolean' ? options.wasExpanded : false,
     };
 
     try {
-        // Replace template expressions with placeholders
+        let inputContent = content;
+
         const { content: preprocessedContent, placeholderMap } = effective.expandTemplates
-            ? { content: content, placeholderMap: new Map() }
-            : replaceTemplateExpressionsWithPlaceholders(content);
+            ? { content: inputContent, placeholderMap: new Map() }
+            : replaceTemplateExpressionsWithPlaceholders(inputContent);
 
-        // Temporarily disable block scalar protection - it's breaking bash scripts
-        // TODO: Fix the block scalar protection to handle complex bash content
-        // const { content: scalarProtectedContent, scalarMap } = protectBlockScalars(preprocessedContent);
-        const scalarProtectedContent = preprocessedContent;
-        const scalarMap = new Map();
+        const { content: protectedContent, commentMap } = protectEmptyValues(preprocessedContent);
 
-        // Protect empty values from being formatted
-        const { content: protectedContent, commentMap } = protectEmptyValues(scalarProtectedContent);
-
-        // Parse with comment preservation using yaml package
-        // Set strict: false to allow duplicate keys and other issues
         const doc = YAML.parseDocument(protectedContent, { strict: false, uniqueKeys: false });
 
-        // Check if document has errors
         if (doc.errors && doc.errors.length > 0) {
-            // Filter out warnings about invalid escape sequences (common in Windows paths)
             const genuineErrors = doc.errors.filter(
                 (e) => !e.message || !e.message.includes('Invalid escape sequence'),
             );
 
             if (genuineErrors.length > 0) {
-                // Return original content and set error when there are genuine parse errors
                 const errorMessages = genuineErrors.map((e) => e.message).join(', ');
                 const filePrefix = effective.fileName ? `[${effective.fileName}] ` : '';
-                if (errorMessages.length > 200) {
-                    console.error(`${filePrefix}[yaml package warnings]:`, errorMessages.substring(0, 200) + '...');
-                } else {
-                    console.error(`${filePrefix}[yaml package warnings]:`, errorMessages);
-                }
-
+                console.error(`${filePrefix}YAML parsing error:`, errorMessages);
                 return {
                     text: content,
                     warning: undefined,
@@ -1134,37 +922,40 @@ function formatYaml(content, options = {}) {
         doc.errors = [];
         doc.warnings = [];
 
-        // Stringify with preserved comments and no line wrapping
         let result = doc.toString({
             indent: effective.indent,
             indentSeq: !effective.noArrayIndent,
-            lineWidth: -1, // Disable line wrapping completely (unlimited line width)
-            doubleQuotedAsJSON: true, // Preserve \n escape sequences in double-quoted strings
-            doubleQuotedMinMultiLineLength: Infinity, // Never convert double-quoted to multi-line
-            singleQuote: null, // Preserve original quote style
-            blockQuote: true, // Use block quotes for multi-line scalars
-            defaultStringType: 'PLAIN', // Default to plain strings (unquoted)
+            lineWidth: -1,
+            doubleQuotedAsJSON: true,
+            doubleQuotedMinMultiLineLength: Infinity,
+            singleQuote: null,
+            blockQuote: true,
+            defaultStringType: 'PLAIN',
+            aliasDuplicateObjects: false,
         });
 
-        // Restore block scalars from placeholders
-        result = restoreBlockScalars(result, scalarMap);
-
-        // Restore template expressions from placeholders
         result = restoreTemplateExpressions(result, placeholderMap);
-
-        // Restore empty values
         result = restoreEmptyValues(result, commentMap);
 
         const newline = effective.newlineFormat;
-
-        // Convert all line endings to match the target format
         let normalized = result.replace(/\r?\n/g, newline);
-
-        // Apply pipeline-specific formatting
         normalized = applyPipelineFormatting(normalized, newline, effective);
+        normalized = normalized
+            .split(newline)
+            .map((line) => line.replace(/[ \t]+$/, ''))
+            .join(newline);
 
-        // Ensure single newline at end of file
-        normalized = normalized.replace(new RegExp(`(?:${escapeRegExp(newline)})*$`), newline);
+        // Ensure newline(s) at end of file
+        // If template was expanded, preserve 2 blank lines (Microsoft format: content + 3 newlines total)
+        // Otherwise, ensure single newline at end
+        if (effective.wasExpanded && effective.azureCompatible) {
+            normalized = normalized.replace(
+                new RegExp(`(?:${escapeRegExp(newline)})*$`),
+                `${newline}${newline}${newline}`,
+            );
+        } else {
+            normalized = normalized.replace(new RegExp(`(?:${escapeRegExp(newline)})*$`), newline);
+        }
 
         return {
             text: normalized,
@@ -1172,9 +963,11 @@ function formatYaml(content, options = {}) {
             error: undefined,
         };
     } catch (error) {
-        // If yaml package fails, return error
         const syntaxMessage = describeYamlSyntaxError(error);
+        const filePrefix = effective.fileName ? `[${effective.fileName}] ` : '';
+
         if (syntaxMessage) {
+            console.error(`${filePrefix}${syntaxMessage}`);
             return {
                 text: content,
                 warning: undefined,
@@ -1182,6 +975,7 @@ function formatYaml(content, options = {}) {
             };
         }
 
+        console.error(`${filePrefix}YAML formatting failed:`, error.message);
         return {
             text: content,
             warning: undefined,

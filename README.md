@@ -7,7 +7,8 @@ VS Code extension and CLI tool for formatting and expanding Azure DevOps YAML pi
 ## Features
 
 - **Template Expansion**: Expand pipelines with shared templates and repository resources
-- **Parameter Validation**: Automatic validation ensures all required template parameters are provided (see [PARAMETER_VALIDATION.md](PARAMETER_VALIDATION.md))
+- **Compile-Time Variables**: Set Azure Pipeline variables (Build.Reason, Build.SourceBranch, etc.) to test different build scenarios (see [docs/COMPILE_TIME_VARIABLES.md](docs/COMPILE_TIME_VARIABLES.md))
+- **Parameter Validation**: Automatic validation ensures all required template parameters are provided
 - **Expression Evaluation**: All 33 Azure DevOps expression functions (`${{ }}`, `$[]`, `$()`)
 - **Advanced Formatting**: Customizable indentation, line width, array formatting, native comment preservation
 - **Modern YAML Parser**: Uses `yaml` package (v2.x) with full comment support
@@ -42,8 +43,9 @@ repos:
 
 ### VS Code
 1. Open a `.yml`/`.yaml` pipeline file
-2. Right-click → **Azure Pipeline Studio** → **Format YAML** or **Show Rendered YAML**
+2. Right-click → **Azure Pipeline Studio** → **Format YAML** or **Expand Pipeline**
 3. Configure repository paths via **Configure Resource Locations**
+4. Use **Expand Pipeline (Azure Compatible)** for Azure DevOps-compatible output
 
 ### CLI
 ```bash
@@ -53,6 +55,12 @@ node extension-bundle.js pipeline.yml
 # Format with options
 node extension-bundle.js pipeline.yml -f indent=4 -f noArrayIndent=false
 
+# Expand templates with variables
+node extension-bundle.js pipeline.yml -x \
+  -v "Build.Reason=Manual" \
+  -v "Build.SourceBranch=refs/heads/main" \
+  -o expanded.yml
+
 # Recursive format
 node extension-bundle.js -R ./pipelines -f indent=4
 
@@ -60,7 +68,7 @@ node extension-bundle.js -R ./pipelines -f indent=4
 node extension-bundle.js pipeline.yml -o formatted.yml
 
 # Map repository templates
-node extension-bundle.js pipeline.yml -r templates=../shared-templates
+node extension-bundle.js pipeline.yml -x -r templates=../shared-templates
 ```
 
 ### Pre-commit
@@ -79,13 +87,22 @@ pre-commit run azure-pipeline-formatter --all-files
 - `azurePipelineStudio.format.stepSpacing` (boolean, default: true)
 - `azurePipelineStudio.format.firstBlockBlankLines` (0-4, default: 2)
 - `azurePipelineStudio.format.blankLinesBetweenSections` (0-4, default: 1)
+- `azurePipelineStudio.format.azureCompatible` (boolean, default: false)
+
+**Expansion Settings:**
+- `azurePipelineStudio.expansion.expandTemplates` (boolean, default: true)
+- `azurePipelineStudio.expansion.variables` (object, default: {})
 
 **Repository Locations:**
 ```json
 {
   "azurePipelineStudio.resourceLocations": [
     {"repository": "templates", "location": "${workspaceFolder}/../shared"}
-  ]
+  ],
+  "azurePipelineStudio.expansion.variables": {
+    "Build.Reason": "Manual",
+    "Build.SourceBranch": "refs/heads/main"
+  }
 }
 ```
 
@@ -96,9 +113,10 @@ All commands are available via:
 - Right-click context menu → **Azure Pipeline Studio**
 
 Available commands:
-- `Azure Pipeline Studio: Format YAML` - Format the current file in-place
-- `Azure Pipeline Studio: Show Rendered YAML` - Expand templates and expressions
-- `Azure Pipeline Studio: Configure Resource Locations` - Set up repository paths
+- **Format YAML** - Format the current file in-place
+- **Expand Pipeline (Standard)** - Expand templates and expressions with user settings
+- **Expand Pipeline (Azure Compatible)** - Expand with Azure DevOps-compatible formatting (literal blocks, capitalized booleans)
+- **Configure Resource Locations** - Set up repository paths for template resolution
 
 ## Configuration
 
@@ -114,6 +132,7 @@ Configure YAML formatting via VS Code settings (File → Preferences → Setting
 - `azurePipelineStudio.format.blankLinesBetweenSections` - Blank lines between root sections (trigger/variables/resources/etc), 0-4 (default: `1`)
 - `azurePipelineStudio.format.forceQuotes` - Force double quotes on all strings (default: `false`)
 - `azurePipelineStudio.format.sortKeys` - Sort object keys alphabetically (default: `false`)
+- `azurePipelineStudio.format.azureCompatible` - Use Azure DevOps-compatible formatting: literal block scalars (|), capitalized booleans, trailing blank lines (default: `false`)
 - `azurePipelineStudio.refreshOnSave` - Auto-refresh rendered YAML view when source file is saved (default: `true`)
 
 ### Resource Locations
@@ -282,14 +301,12 @@ Control formatting per file using special comments in the first 5 lines:
 Run the comprehensive test suite:
 
 ```bash
-./test.sh              # All tests with progress indicators
-./test.sh --quick      # Fast YAML parsing tests only
-./test.sh --verbose    # Detailed output for debugging
+npm test              # Run all tests
 ```
 
-**Test Coverage:** 57 tests covering YAML parsing, formatting, expressions, and edge cases.
+**Test Coverage:** 74 tests covering YAML parsing, formatting, expressions, Azure compatibility, and edge cases.
 
-See [TESTING.md](TESTING.md) for detailed documentation.
+See [docs/TESTING.md](docs/TESTING.md) for detailed documentation.
 
 ## Requirements
 
@@ -298,7 +315,6 @@ See [TESTING.md](TESTING.md) for detailed documentation.
 
 ## Known Limitations
 
-- ANTLR grammar may report syntax errors on some edge cases (doesn't affect template expansion)
 - Runtime expressions (`$[]`) are recognized but not evaluated
 - Some advanced Azure DevOps features may not be fully supported
 
@@ -314,5 +330,4 @@ MIT
 
 Built with:
 - [yaml](https://github.com/eemeli/yaml) - Modern YAML parser with comment preservation
-- [ANTLR4](https://www.antlr.org/) - Parser generator
 - [jsep](https://github.com/EricSmekens/jsep) - JavaScript expression parser

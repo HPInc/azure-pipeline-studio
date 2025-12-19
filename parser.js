@@ -2,265 +2,11 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const YAML = require('yaml');
-const antlr4 = require('antlr4');
 const jsep = require('jsep');
-const adoYamlLexer = require('./generated-cjs/AzurePipelineLexer').default;
-const adoYamlParser = require('./generated-cjs/AzurePipelineParser').default;
-
-class CollectingErrorListener {
-    constructor() {
-        this.errors = [];
-    }
-
-    syntaxError(recognizer, offendingSymbol, line, column, msg) {
-        this.errors.push({
-            line,
-            column,
-            message: msg,
-            symbol: offendingSymbol && offendingSymbol.text ? offendingSymbol.text : undefined,
-        });
-    }
-
-    reportAmbiguity() {}
-
-    reportAttemptingFullContext() {}
-
-    reportContextSensitivity() {}
-}
-
-class PipelineConfig {
-    constructor() {
-        this.name = '';
-        this.trigger = {};
-        this.parameters = [];
-        this.variables = [];
-        this.resources = {};
-        this.stages = [];
-        this.jobs = [];
-        this.steps = [];
-        this.extends = {};
-        this.expressions = [];
-        this.ranges = [];
-        this.syntaxErrors = 0;
-        this.lexerErrors = 0;
-        this.syntaxErrorDetails = [];
-        this.lexerErrorDetails = [];
-        this.hasErrors = false;
-    }
-}
-
-class Range {
-    constructor(startLine, startCol, endLine, endCol) {
-        this.startLine = startLine;
-        this.startCol = startCol;
-        this.endLine = endLine;
-        this.endCol = endCol;
-    }
-}
 
 class AzurePipelineParser {
     constructor(options = {}) {
-        this.printTree = !!options.printTree;
         this.expressionCache = new Map();
-    }
-
-    parseFile(filePath) {
-        const input = fs.readFileSync(filePath, 'utf8');
-        return this.parseString(input, filePath);
-    }
-
-    parseString(input, fileName = 'inline') {
-        const pipelineInfo = new PipelineConfig();
-        pipelineInfo.fileName = fileName;
-
-        const chars = new antlr4.InputStream(input);
-        const lexer = new adoYamlLexer(chars);
-        const lexerErrorListener = new CollectingErrorListener();
-        lexer.removeErrorListeners();
-        lexer.addErrorListener(lexerErrorListener);
-        const tokens = new antlr4.CommonTokenStream(lexer);
-        const parser = new adoYamlParser(tokens);
-        const parserErrorListener = new CollectingErrorListener();
-        parser.removeErrorListeners();
-        parser.addErrorListener(parserErrorListener);
-        parser.buildParseTrees = true;
-        const tree = parser.yamlFile();
-
-        if (this.printTree) {
-            console.log(tree.toStringTree(parser.ruleNames));
-        }
-
-        this.traverse(pipelineInfo, parser, tree, pipelineInfo, pipelineInfo.ranges, null);
-
-        pipelineInfo.syntaxErrors = parserErrorListener.errors.length;
-        pipelineInfo.lexerErrors = lexerErrorListener.errors.length;
-        pipelineInfo.syntaxErrorDetails = parserErrorListener.errors;
-        pipelineInfo.lexerErrorDetails = lexerErrorListener.errors;
-        pipelineInfo.hasErrors = pipelineInfo.syntaxErrors > 0 || pipelineInfo.lexerErrors > 0;
-
-        return pipelineInfo;
-    }
-
-    traverse(pipelineInfo, parser, node, configs, ranges, parent) {
-        if (!node) {
-            return;
-        }
-
-        const ruleName = parser.ruleNames[node.ruleIndex] || 'unknown';
-
-        if (node.start && node.stop) {
-            const range = new Range(node.start.line, node.start.column, node.stop.line, node.stop.column);
-            ranges.push(range);
-        }
-
-        switch (ruleName) {
-            case 'keyValue':
-                this.handleKeyValue(pipelineInfo, node, configs);
-                break;
-            case 'listItem':
-                this.handleListItem(pipelineInfo, node, configs);
-                break;
-            case 'value':
-                this.handleValue(pipelineInfo, node, configs, parent);
-                break;
-            default:
-                break;
-        }
-
-        if (node.children) {
-            for (const child of node.children) {
-                this.traverse(pipelineInfo, parser, child, configs, ranges, node);
-            }
-        }
-    }
-
-    handleKeyValue(pipelineInfo, node, configs) {
-        if (!node.children || node.children.length < 3) {
-            return;
-        }
-
-        const keyNode = node.children[0];
-        const valueNode = node.children[2];
-
-        if (keyNode && valueNode) {
-            const key = keyNode.getText();
-            const value = valueNode.getText();
-
-            switch (key) {
-                case 'name':
-                    configs.name = value;
-                    break;
-                case 'trigger':
-                    configs.trigger = this.extractNestedConfig(valueNode);
-                    break;
-                case 'parameters':
-                    configs.parameters = this.extractListConfig(valueNode);
-                    break;
-                case 'variables':
-                    configs.variables = this.extractListConfig(valueNode);
-                    break;
-                case 'stages':
-                    configs.stages = this.extractListConfig(valueNode);
-                    break;
-                case 'jobs':
-                    configs.jobs = this.extractListConfig(valueNode);
-                    break;
-                case 'steps':
-                    configs.steps = this.extractListConfig(valueNode);
-                    break;
-                case 'extends':
-                    configs.extends = this.extractNestedConfig(valueNode);
-                    break;
-                case 'resources':
-                    configs.resources = this.extractNestedConfig(valueNode);
-                    break;
-                default:
-                    break;
-            }
-
-            if (this.isExpression(value)) {
-                configs.expressions.push({
-                    key,
-                    value,
-                    type: this.getExpressionType(value),
-                    functions: this.extractFunctions(value),
-                    line: node.start ? node.start.line : 0,
-                });
-            }
-        }
-    }
-
-    handleListItem(pipelineInfo, node, configs) {
-        if (node.children && node.children.length > 1) {
-            const itemContent = node.children[1];
-            if (itemContent) {
-                const itemValue = itemContent.getText();
-                if (this.isExpression(itemValue)) {
-                    configs.expressions.push({
-                        type: this.getExpressionType(itemValue),
-                        value: itemValue,
-                        functions: this.extractFunctions(itemValue),
-                        line: node.start ? node.start.line : 0,
-                    });
-                }
-            }
-        }
-    }
-
-    handleValue(pipelineInfo, node, configs) {
-        const value = node.getText();
-        if (this.isExpression(value)) {
-            configs.expressions.push({
-                type: this.getExpressionType(value),
-                value,
-                functions: this.extractFunctions(value),
-                line: node.start ? node.start.line : 0,
-            });
-        }
-    }
-
-    isExpression(text) {
-        if (!text || typeof text !== 'string') {
-            return false;
-        }
-        return text.includes('${{') || text.includes('$[') || text.includes('$(');
-    }
-
-    getExpressionType(text) {
-        if (text.includes('${{')) {
-            return 'compile-time';
-        }
-        if (text.includes('$[')) {
-            return 'runtime';
-        }
-        if (text.includes('$(')) {
-            return 'variable';
-        }
-        return 'unknown';
-    }
-
-    extractFunctions(text) {
-        const functions = [];
-        const functionPattern = /([a-zA-Z_]\w*)\s*\(/g;
-        let match;
-        while ((match = functionPattern.exec(text)) !== null) {
-            functions.push(match[1]);
-        }
-        return functions;
-    }
-
-    extractNestedConfig(node) {
-        if (node.children) {
-            return { raw: node.getText() };
-        }
-        return {};
-    }
-
-    extractListConfig(node) {
-        if (node.children) {
-            return [{ raw: node.getText() }];
-        }
-        return [];
     }
 
     expandPipelineFromFile(filePath, overrides = {}) {
@@ -278,15 +24,87 @@ class AzurePipelineParser {
 
     expandPipelineToString(sourceText, overrides = {}) {
         const { document } = this.expandPipeline(sourceText, overrides);
-        return YAML.stringify(document, { lineWidth: 0 });
+
+        // Extract and remove quote styles metadata
+        const quoteStyles = document.__quoteStyles || new Map();
+        delete document.__quoteStyles;
+
+        // Extract scripts that had ${{}} expressions before expansion
+        const scriptsWithExpressions = document.__scriptsWithExpressions || new Set();
+        delete document.__scriptsWithExpressions;
+        const scriptsWithLastLineExpressions = document.__scriptsWithLastLineExpressions || new Set();
+        delete document.__scriptsWithLastLineExpressions;
+
+        // Create YAML document and restore quote styles
+        const yamlDoc = YAML.parseDocument(YAML.stringify(document));
+        this.restoreQuoteStyles(yamlDoc.contents, [], quoteStyles);
+
+        // Always apply block scalar styles to control formatting
+        // When azureCompatible=false, use literal style to preserve exact formatting
+        // When azureCompatible=true, apply Azure-specific transformations
+        const azureCompatible = overrides.azureCompatible || false;
+        console.log(`Azure Pipeline Compatibility Mode: ${azureCompatible}`);
+        this.applyBlockScalarStyles(
+            yamlDoc.contents,
+            scriptsWithExpressions,
+            scriptsWithLastLineExpressions,
+            azureCompatible,
+        );
+        let output = yamlDoc.toString({
+            lineWidth: 0,
+            indent: 2,
+            defaultStringType: 'PLAIN',
+            defaultKeyType: 'PLAIN',
+            simpleKeys: false,
+            aliasDuplicateObjects: false, // Disable YAML anchors/aliases for Azure Pipelines compatibility
+        });
+
+        // Remove quotes from plain numbers in YAML value positions
+        // Preserves JSON syntax by detecting quoted keys (e.g., "name": 42)
+        output = output.replace(/^(\s*(?:-\s+)?[^":\n]+:\s*)["'](\d+(?:\.\d+)?)["']/gm, (match, prefix, num) => {
+            // Skip if prefix contains quotes (JSON key syntax)
+            if (prefix.includes('"')) {
+                return match;
+            }
+            // Unquote the number
+            return prefix + num;
+        });
+
+        // Convert boolean markers to unquoted capitalized booleans (Azure format)
+        output = output.replace(/(['"]?)__(?:TRUE|FALSE)__\1/g, (match, quote) =>
+            quote
+                ? `${quote}${match.includes('TRUE') ? 'True' : 'False'}${quote}`
+                : match.includes('TRUE')
+                  ? 'True'
+                  : 'False',
+        );
+
+        // Handle trailing newlines and blank line removal based on mode
+        if (azureCompatible) {
+            // Remove extra blank lines between sections
+            output = output.replace(/^(\S.+)\n\n(\s*-\s)/gm, '$1\n$2');
+            output = output.replace(/^(\S.+)\n\n(\s*\w+:)/gm, '$1\n$2');
+
+            if (!output.endsWith('\n\n\n')) {
+                output = output.replace(/\n*$/, '\n\n\n');
+            }
+        } else {
+            output = output.replace(/\n*$/, '\n');
+        }
+        return output;
     }
 
     expandPipeline(sourceText, overrides = {}) {
         const normalized = this.preprocessCompileTimeExpressions(sourceText);
 
         let document;
+        let quoteStyles = new Map();
         try {
-            document = YAML.parse(normalized) || {};
+            // Parse as document to extract quote information
+            const yamlDoc = YAML.parseDocument(normalized);
+            this.extractQuoteStyles(yamlDoc.contents, [], quoteStyles);
+
+            document = yamlDoc.toJSON() || {};
         } catch (error) {
             throw new Error(`Failed to parse YAML: ${error.message}`);
         }
@@ -294,12 +112,387 @@ class AzurePipelineParser {
         document = this.restoreCompileTimeExpressions(document);
 
         const context = this.buildExecutionContext(document, overrides);
+
+        // Store quote styles in context so they're available during template expansion
+        context.quoteStyles = quoteStyles;
+
         const expandedDocument = this.expandNode(document, context);
+
+        // Merge quote styles from all templates (context-aware hashes don't conflict)
+        const allQuoteStyles = new Map(quoteStyles);
+        if (context.templateQuoteStyles) {
+            for (const [, templateStyles] of context.templateQuoteStyles.entries()) {
+                for (const [key, style] of templateStyles.entries()) {
+                    // Context hashes and globs can be safely merged
+                    if (!allQuoteStyles.has(key)) {
+                        allQuoteStyles.set(key, style);
+                    }
+                }
+            }
+        }
+
+        // Store quote styles for later restoration
+        expandedDocument.__quoteStyles = allQuoteStyles;
+
+        // Store scripts that had ${{}} expressions for block scalar style determination
+        expandedDocument.__scriptsWithExpressions = context.scriptsWithExpressions || new Set();
+        expandedDocument.__scriptsWithLastLineExpressions = context.scriptsWithLastLineExpressions || new Set();
 
         return {
             document: expandedDocument,
             context,
         };
+    }
+
+    /**
+     * Extract quote styles from YAML AST.
+     * Uses path-based matching for exact preservation, with context-aware hash fallback.
+     * Context is determined by displayName/task/name in the ancestor chain.
+     * @param {object} node - YAML AST node
+     * @param {array} path - Current path in the document
+     * @param {Map} quoteStyles - Map to store quote styles
+     * @param {string} context - Context identifier from ancestor (displayName or task)
+     */
+    extractQuoteStyles(node, path, quoteStyles, context = '') {
+        if (!node) return;
+
+        if (node.items && node.constructor.name === 'YAMLMap') {
+            // Extract context identifier from this map (displayName has highest priority)
+            let currentContext = context;
+            let foundTask = '';
+            for (const pair of node.items) {
+                if (pair.key && pair.value && typeof pair.value.value === 'string') {
+                    const keyName = pair.key.value;
+                    if (keyName === 'displayName') {
+                        currentContext = pair.value.value;
+                        break; // displayName has highest priority
+                    } else if (keyName === 'task' || keyName === 'name') {
+                        foundTask = pair.value.value; // store but keep looking for displayName
+                    }
+                }
+            }
+            if (currentContext === context && foundTask) {
+                currentContext = foundTask; // use task/name only if no displayName found
+            }
+
+            for (const pair of node.items) {
+                if (pair.key && pair.key.value) {
+                    const keyPath = [...path, pair.key.value];
+                    if (pair.value && typeof pair.value.value === 'string') {
+                        const quoteType = pair.value.type;
+                        const keyName = pair.key.value;
+                        const valueContent = pair.value.value;
+
+                        if (quoteType === 'QUOTE_SINGLE' || quoteType === 'QUOTE_DOUBLE') {
+                            // Store by exact path
+                            quoteStyles.set(keyPath.join('.'), quoteType);
+
+                            // Store context-aware hash (context:key:value) - most reliable
+                            if (currentContext) {
+                                quoteStyles.set(`__ctx:${currentContext}:${keyName}:${valueContent}`, quoteType);
+                            }
+
+                            // Track empty strings
+                            if (valueContent === '') {
+                                if (!quoteStyles.has('__empty_string')) {
+                                    quoteStyles.set('__empty_string', quoteType);
+                                }
+                            }
+
+                            // Track glob patterns (these are unique enough to not conflict)
+                            if (valueContent.length > 2 && /\*\*|[*/]\/|\/[*/]/.test(valueContent)) {
+                                if (!quoteStyles.has(`__glob:${valueContent}`)) {
+                                    quoteStyles.set(`__glob:${valueContent}`, quoteType);
+                                }
+                            }
+                        }
+                    }
+
+                    if (pair.value) {
+                        this.extractQuoteStyles(pair.value, keyPath, quoteStyles, currentContext);
+                    }
+                }
+            }
+        } else if (node.items && node.constructor.name === 'YAMLSeq') {
+            node.items.forEach((item, index) => {
+                const itemPath = [...path, index];
+                this.extractQuoteStyles(item, itemPath, quoteStyles, context);
+            });
+        }
+    }
+
+    /**
+     * Restore quote styles using path match, then context-aware hash.
+     * @param {object} node - YAML AST node
+     * @param {array} path - Current path in the document
+     * @param {Map} quoteStyles - Map of stored quote styles
+     * @param {string} context - Context identifier from ancestor
+     */
+    restoreQuoteStyles(node, path, quoteStyles, context = '') {
+        if (!node) return;
+
+        if (node.items && node.constructor.name === 'YAMLMap') {
+            // Extract context identifier from this map (displayName has highest priority)
+            let currentContext = context;
+            let foundTask = '';
+            for (const pair of node.items) {
+                if (pair.key && pair.value && typeof pair.value.value === 'string') {
+                    const keyName = pair.key.value;
+                    if (keyName === 'displayName') {
+                        currentContext = pair.value.value;
+                        break;
+                    } else if (keyName === 'task' || keyName === 'name') {
+                        foundTask = pair.value.value;
+                    }
+                }
+            }
+            if (currentContext === context && foundTask) {
+                currentContext = foundTask;
+            }
+
+            for (const pair of node.items) {
+                if (pair.key && pair.key.value && pair.value) {
+                    const keyPath = [...path, pair.key.value];
+                    const pathKey = keyPath.join('.');
+
+                    // Try exact path first
+                    let quoteStyle = quoteStyles.get(pathKey);
+
+                    if (!quoteStyle && typeof pair.value.value === 'string') {
+                        const keyName = pair.key.value;
+                        const valueContent = pair.value.value;
+
+                        // Try context-aware hash (most reliable for cross-template)
+                        if (currentContext) {
+                            quoteStyle = quoteStyles.get(`__ctx:${currentContext}:${keyName}:${valueContent}`);
+                        }
+
+                        // Glob patterns (unique enough to be safe)
+                        if (!quoteStyle && valueContent.length > 2 && /\*\*|[*/]\/|\/[*/]/.test(valueContent)) {
+                            quoteStyle = quoteStyles.get(`__glob:${valueContent}`);
+                        }
+
+                        // Empty strings
+                        if (!quoteStyle && valueContent === '') {
+                            quoteStyle = quoteStyles.get('__empty_string');
+                        }
+                    }
+
+                    if (quoteStyle && pair.value.value !== undefined) {
+                        pair.value.type = quoteStyle;
+                    }
+
+                    this.restoreQuoteStyles(pair.value, keyPath, quoteStyles, currentContext);
+                }
+            }
+        } else if (node.items && node.constructor.name === 'YAMLSeq') {
+            node.items.forEach((item, index) => {
+                const itemPath = [...path, index];
+                this.restoreQuoteStyles(item, itemPath, quoteStyles, context);
+            });
+        }
+    }
+
+    /**
+     * Apply Azure-compatible block scalar styles to script values.
+     * Azure Azure DevOps uses heuristics to choose between > (folded) and | (literal).
+     * Our heuristic priority:
+     * - Keep > (folded) if source already uses it
+     * - Use > (folded) if content originally had ${{}} expressions (tracked during expansion)
+     * - Use | (literal) otherwise for scripts - preserves newlines
+     * @param {object} node - YAML AST node
+     * @param {Set} scriptsWithExpressions - Set of script content hashes that had ${{}} before expansion
+     * @param {Set} scriptsWithLastLineExpressions - Set of script content where last line had ${{}} before expansion
+     * @param {boolean} azureCompatible - Whether to apply Azure-compatible transformations (empty lines, chomping)
+     */
+    applyBlockScalarStyles(
+        node,
+        scriptsWithExpressions = new Set(),
+        scriptsWithLastLineExpressions = new Set(),
+        azureCompatible = false,
+    ) {
+        if (!node) return;
+
+        if (node.items && node.constructor.name === 'YAMLMap') {
+            for (const pair of node.items) {
+                if (!pair.key?.value || !pair.value) continue;
+
+                const { value } = pair;
+                if (typeof value.value !== 'string' || !value.value.includes('\n')) {
+                    this.applyBlockScalarStyles(
+                        value,
+                        scriptsWithExpressions,
+                        scriptsWithLastLineExpressions,
+                        azureCompatible,
+                    );
+                    continue;
+                }
+
+                let content = value.value;
+
+                // Handle trailing spaces in Azure mode - force double quotes
+                if (azureCompatible && this.hasTrailingSpaces(content)) {
+                    value.type = 'QUOTE_DOUBLE';
+                    this.applyBlockScalarStyles(
+                        value,
+                        scriptsWithExpressions,
+                        scriptsWithLastLineExpressions,
+                        azureCompatible,
+                    );
+                    continue;
+                }
+
+                // Apply block scalar styles
+                if (value.type !== 'QUOTE_DOUBLE') {
+                    const trimmedKey = content.replace(/\s+$/, '');
+                    const hadExpressions = scriptsWithExpressions.has(trimmedKey);
+                    const hasHeredoc = /<<[-]?\s*['"]?(\w+)['"]?/.test(content);
+
+                    // Determine block scalar type
+                    if (hasHeredoc && azureCompatible && hadExpressions) {
+                        content = this.addEmptyLinesInHeredoc(content);
+                        value.value = content;
+                        value.type = 'BLOCK_FOLDED';
+                    } else {
+                        value.type = hadExpressions && azureCompatible ? 'BLOCK_FOLDED' : 'BLOCK_LITERAL';
+                    }
+
+                    // Normalize trailing newlines
+                    value.value = this.normalizeTrailingNewlines(content, azureCompatible);
+                }
+
+                this.applyBlockScalarStyles(
+                    value,
+                    scriptsWithExpressions,
+                    scriptsWithLastLineExpressions,
+                    azureCompatible,
+                );
+            }
+        } else if (node.items && node.constructor.name === 'YAMLSeq') {
+            node.items.forEach((item) =>
+                this.applyBlockScalarStyles(
+                    item,
+                    scriptsWithExpressions,
+                    scriptsWithLastLineExpressions,
+                    azureCompatible,
+                ),
+            );
+        }
+    }
+
+    hasTrailingSpaces(content) {
+        const lines = content.split('\n');
+        return lines.some((line, idx) => (idx < lines.length - 1 || line !== '' ? /[ \t]$/.test(line) : false));
+    }
+
+    normalizeTrailingNewlines(content, azureCompatible) {
+        if (azureCompatible) {
+            return /\n[ \t]*\n\s*$/.test(content) ? content.replace(/\n+$/, '') + '\n\n' : content;
+        }
+        return /\n\n+$/.test(content) ? content.replace(/\n+$/, '') + '\n' : content;
+    }
+
+    /**
+     * Check if the last non-empty line is an Azure compile-time variable expression
+     * Used to determine if "keep" (+) chomping should be applied BEFORE expansion
+     * The line must end with }} to be considered a template expression line
+     * @param {string} content - The block scalar content (before expansion)
+     * @returns {boolean} - True if last non-empty line ends with }}
+     */
+    lastLineHasTemplateExpression(content) {
+        if (!content) return false;
+
+        // Split into lines and find last non-empty line
+        const lines = content.split('\n');
+        for (let i = lines.length - 1; i >= 0; i--) {
+            const line = lines[i].trim();
+            if (line) {
+                // Check if this line ends with }} (is a compile-time variable expression)
+                // This matches lines like: ${{ parameters.properties }}
+                return line.endsWith('}}');
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Add empty lines between lines in heredoc content so folded style preserves newlines
+     * @param {string} content - Script content with heredoc
+     * @returns {string} - Modified content with empty lines in heredoc
+     */
+    addEmptyLinesInHeredoc(content) {
+        // Match heredoc pattern: <<EOF or <<-EOF or <<'EOF' or <<"EOF"
+        const heredocRegex = /<<[-]?\s*['"]?(\w+)['"]?/g;
+        let result = content;
+        let match;
+
+        // Find all heredocs and their delimiters
+        const heredocs = [];
+        while ((match = heredocRegex.exec(content)) !== null) {
+            heredocs.push({
+                delimiter: match[1],
+                startIndex: match.index,
+            });
+        }
+
+        // Process each heredoc from last to first (to preserve indices)
+        for (let i = heredocs.length - 1; i >= 0; i--) {
+            const { delimiter, startIndex } = heredocs[i];
+
+            // Find the start of heredoc content (after the <<DELIM line)
+            const startLineEnd = result.indexOf('\n', startIndex);
+            if (startLineEnd === -1) continue;
+
+            // Find the end delimiter (must be on its own line or with leading whitespace for <<-)
+            const delimiterRegex = new RegExp(`^[ \\t]*${delimiter}[ \\t]*$`, 'm');
+            const endMatch = delimiterRegex.exec(result.slice(startLineEnd + 1));
+            if (!endMatch) continue;
+
+            const contentStart = startLineEnd + 1;
+            const contentEnd = startLineEnd + 1 + endMatch.index;
+
+            // Get heredoc content
+            const heredocContent = result.slice(contentStart, contentEnd);
+
+            // Check if heredoc already has blank lines between content lines
+            // If so, don't add more (avoids doubling when content was previously formatted with folded style)
+            const lines = heredocContent.split('\n');
+            let hasExistingBlankLines = false;
+            for (let j = 1; j < lines.length; j++) {
+                if (lines[j].trim() === '' && j > 0 && lines[j - 1].trim() !== '') {
+                    hasExistingBlankLines = true;
+                    break;
+                }
+            }
+
+            // Only add blank lines if none exist
+            if (!hasExistingBlankLines) {
+                // Build result: add blank line only between consecutive non-empty lines
+                const spacedLines = [];
+                for (let j = 0; j < lines.length; j++) {
+                    const line = lines[j];
+                    const isEmptyLine = line.trim() === '';
+
+                    if (j > 0 && !isEmptyLine) {
+                        // Check if previous line was non-empty (need to add blank between them)
+                        const prevLine = lines[j - 1];
+                        const prevWasEmpty = prevLine.trim() === '';
+
+                        if (!prevWasEmpty) {
+                            // Two consecutive non-empty lines - add blank line between
+                            spacedLines.push('');
+                        }
+                    }
+                    spacedLines.push(line);
+                }
+                const spacedContent = spacedLines.join('\n');
+
+                // Replace the heredoc content
+                result = result.slice(0, contentStart) + spacedContent + result.slice(contentEnd);
+            }
+        }
+
+        return result;
     }
 
     preprocessCompileTimeExpressions(sourceText) {
@@ -359,6 +552,8 @@ class AzurePipelineParser {
             repositoryBaseDir,
             resourceLocations,
             templateStack: overrides.templateStack || [],
+            scriptsWithExpressions: new Set(), // Track scripts that had ${{}} before expansion
+            scriptsWithLastLineExpressions: new Set(), // Track scripts that had ${{}} on last line before expansion
         };
     }
 
@@ -377,7 +572,7 @@ class AzurePipelineParser {
             if (key === 'repositories') {
                 continue;
             }
-            normalized[key] = this.cloneResourceValue(value);
+            normalized[key] = this.deepClone(value);
         }
 
         return normalized;
@@ -390,7 +585,7 @@ class AzurePipelineParser {
             if (key === 'repositories') {
                 continue;
             }
-            merged[key] = this.cloneResourceValue(value);
+            merged[key] = this.deepClone(value);
         }
 
         merged.repositories = this.mergeRepositoryConfigs(baseResources.repositories, overrideResources.repositories);
@@ -399,7 +594,7 @@ class AzurePipelineParser {
             if (key === 'repositories') {
                 continue;
             }
-            merged[key] = this.cloneResourceValue(value);
+            merged[key] = this.deepClone(value);
         }
 
         return merged;
@@ -415,7 +610,7 @@ class AzurePipelineParser {
         if (Array.isArray(value)) {
             value.forEach((entry) => {
                 if (entry && typeof entry === 'object') {
-                    list.push(this.cloneResourceEntry(entry));
+                    list.push(this.deepClone(entry));
                 }
             });
         } else if (typeof value === 'object') {
@@ -423,7 +618,7 @@ class AzurePipelineParser {
                 if (!entry || typeof entry !== 'object') {
                     continue;
                 }
-                const cloned = this.cloneResourceEntry(entry);
+                const cloned = this.deepClone(entry);
                 if (!cloned.repository && key) {
                     cloned.repository = key;
                 }
@@ -450,7 +645,7 @@ class AzurePipelineParser {
                 return;
             }
 
-            const clone = this.cloneResourceEntry(entry);
+            const clone = this.deepClone(entry);
             const matchCriteria = clone.__match && typeof clone.__match === 'object' ? clone.__match : undefined;
             if (matchCriteria) {
                 delete clone.__match;
@@ -489,7 +684,7 @@ class AzurePipelineParser {
         baseList.forEach((entry) => addEntry(entry, 'base'));
         overrideList.forEach((entry) => addEntry(entry, 'override'));
 
-        const mergedList = mergedOrder.map((key) => this.cloneResourceEntry(mergedMap.get(key)));
+        const mergedList = mergedOrder.map((key) => this.deepClone(mergedMap.get(key)));
         return this.attachRepositoryAliases(mergedList);
     }
 
@@ -552,16 +747,9 @@ class AzurePipelineParser {
         return true;
     }
 
-    cloneResourceEntry(entry) {
-        if (!entry || typeof entry !== 'object') {
-            return entry;
-        }
-        return JSON.parse(JSON.stringify(entry));
-    }
-
-    cloneResourceValue(value) {
-        if (value === undefined) {
-            return undefined;
+    deepClone(value) {
+        if (value === undefined || value === null || typeof value !== 'object') {
+            return value;
         }
         return JSON.parse(JSON.stringify(value));
     }
@@ -675,19 +863,30 @@ class AzurePipelineParser {
                             }
                             break;
                         case 'boolean':
-                            // Accept booleans and boolean-like strings
+                            // Accept booleans, boolean-like strings, and boolean markers
                             if (typeof actualValue === 'boolean') {
                                 typeValid = true;
                             } else if (typeof actualValue === 'string') {
                                 const lower = actualValue.toLowerCase();
-                                typeValid = lower === 'true' || lower === 'false';
+                                typeValid =
+                                    lower === 'true' ||
+                                    lower === 'false' ||
+                                    lower === '__true__' ||
+                                    lower === '__false__';
                             } else {
                                 typeValid = false;
                             }
                             break;
                         case 'object':
                             // In Azure DevOps, 'object' type accepts both objects and arrays
-                            typeValid = typeof actualValue === 'object' && actualValue !== null;
+                            // Special case: dependsOn can be a string, array, or object
+                            if (name === 'dependsOn') {
+                                typeValid =
+                                    typeof actualValue === 'string' ||
+                                    (typeof actualValue === 'object' && actualValue !== null);
+                            } else {
+                                typeValid = typeof actualValue === 'object' && actualValue !== null;
+                            }
                             break;
                         case 'step':
                         case 'steplist':
@@ -868,41 +1067,45 @@ class AzurePipelineParser {
         return result;
     }
 
-    expandNode(node, context) {
+    expandNode(node, context, parentKey = null) {
         if (Array.isArray(node)) {
-            return this.expandArray(node, context);
+            return this.expandArray(node, context, parentKey);
         }
         if (node && typeof node === 'object') {
-            return this.expandObject(node, context);
+            return this.expandObject(node, context, parentKey);
         }
         return this.expandScalar(node, context);
     }
 
-    expandArray(array, context) {
+    expandArray(array, context, parentKey = null) {
         const result = [];
+        const isVariablesArray = parentKey === 'variables';
+
         for (let index = 0; index < array.length; index += 1) {
             const element = array[index];
-
-            if (process.env.ADO_YAML_DEBUG && typeof element === 'object' && element !== null) {
-                const keys = Object.keys(element);
-                if (keys.length > 0 && keys[0].includes('if') && keys[0].includes('parameters')) {
-                    console.log('[debug] Array element with conditional-like key:', keys[0].substring(0, 100));
-                    console.log('[debug] isConditionalDirective:', this.isConditionalDirective(keys[0]));
-                }
-            }
 
             if (this.isTemplateReference(element)) {
                 const templateItems = this.expandTemplateReference(element, context);
                 result.push(...templateItems);
+
+                // If we're in a variables array, add template variables to context
+                // This makes them available within the same scope (job/stage/global)
+                if (isVariablesArray && Array.isArray(templateItems)) {
+                    for (const item of templateItems) {
+                        if (item && typeof item === 'object' && !Array.isArray(item)) {
+                            const varName = item.name;
+                            const varValue = this.pickFirstDefined(item.value, item.default);
+                            if (varName && varValue !== undefined) {
+                                context.variables[varName] = varValue;
+                            }
+                        }
+                    }
+                }
                 continue;
             }
 
             if (this.isSingleKeyObject(element)) {
                 const key = Object.keys(element)[0];
-
-                if (process.env.ADO_YAML_DEBUG && this.isConditionalDirective(key)) {
-                    console.log('[debug] Processing conditional in array, key length:', key.length);
-                }
 
                 if (this.isEachDirective(key)) {
                     const applied = this.applyEachDirective(key, element[key], context);
@@ -924,24 +1127,8 @@ class AzurePipelineParser {
             }
 
             if (Array.isArray(expandedElement)) {
-                if (process.env.DEBUG_PARSER && expandedElement.length > 0) {
-                    console.log('[debug] Expanded array element, checking', expandedElement.length, 'items');
-                    console.log(
-                        '[debug] First item type:',
-                        typeof expandedElement[0],
-                        'isTemplate:',
-                        this.isTemplateReference(expandedElement[0]),
-                    );
-                    if (typeof expandedElement[0] === 'object' && expandedElement[0] !== null) {
-                        console.log('[debug] First item keys:', Object.keys(expandedElement[0]));
-                    }
-                }
-                // Recursively expand any template references in the expanded array
                 for (const item of expandedElement) {
                     if (this.isTemplateReference(item)) {
-                        if (process.env.DEBUG_PARSER) {
-                            console.log('[debug] Found template reference in expanded array:', item.template);
-                        }
                         const templateItems = this.expandTemplateReference(item, context);
                         result.push(...templateItems);
                     } else {
@@ -951,34 +1138,32 @@ class AzurePipelineParser {
             } else {
                 result.push(expandedElement);
             }
+
+            // If we're in a variables array, extract the variable and add it to context
+            // This allows forward references within the same variables section
+            if (
+                isVariablesArray &&
+                expandedElement &&
+                typeof expandedElement === 'object' &&
+                !Array.isArray(expandedElement)
+            ) {
+                const varName = expandedElement.name;
+                const varValue = this.pickFirstDefined(expandedElement.value, expandedElement.default);
+                if (varName && varValue !== undefined) {
+                    // Update the context so subsequent variables can reference this one
+                    context.variables[varName] = varValue;
+                }
+            }
         }
         return result;
     }
 
-    expandObject(object, context) {
+    expandObject(object, context, parentKey = null) {
         const entries = Object.entries(object);
         const result = {};
 
-        if (process.env.DEBUG_PARSER && entries.length < 20) {
-            const keys = entries.map(([k]) => (typeof k === 'string' ? k.substring(0, 40) : k));
-            if (keys.some((k) => typeof k === 'string' && k.includes('{{') && k.length < 30)) {
-                console.log(
-                    '[debug] expandObject keys with {{:',
-                    JSON.stringify(keys.filter((k) => typeof k === 'string' && k.includes('{{'))),
-                );
-            }
-        }
-
         for (let index = 0; index < entries.length; index += 1) {
             const [rawKey, value] = entries[index];
-
-            if (
-                process.env.DEBUG_PARSER &&
-                typeof rawKey === 'string' &&
-                (rawKey.includes('insert') || rawKey.includes('AZURE'))
-            ) {
-                console.log('[debug] expandObject rawKey:', JSON.stringify(rawKey));
-            }
 
             if (typeof rawKey === 'string' && this.isEachDirective(rawKey)) {
                 const eachResult = this.expandEachEntries(entries, index, context);
@@ -997,23 +1182,8 @@ class AzurePipelineParser {
             // Handle ${{ insert }} directive to merge object properties
             if (typeof rawKey === 'string' && this.isFullExpression(rawKey.trim())) {
                 const expr = this.stripExpressionDelimiters(rawKey.trim());
-                if (process.env.DEBUG_PARSER) {
-                    console.log('[debug] Full expression key - rawKey:', rawKey, 'expr:', expr.substring(0, 50));
-                }
                 if (expr.trim() === 'insert') {
-                    // Use expandNodePreservingTemplates to avoid expanding template references prematurely
                     const expandedValue = this.expandNodePreservingTemplates(value, context);
-                    if (process.env.DEBUG_PARSER) {
-                        console.log('[debug] Insert directive: merging', Object.keys(expandedValue || {}));
-                        if (expandedValue && expandedValue.preSteps) {
-                            console.log(
-                                '[debug] Insert: preSteps is array:',
-                                Array.isArray(expandedValue.preSteps),
-                                'length:',
-                                expandedValue.preSteps.length,
-                            );
-                        }
-                    }
                     if (expandedValue && typeof expandedValue === 'object' && !Array.isArray(expandedValue)) {
                         Object.assign(result, expandedValue);
                         continue;
@@ -1023,16 +1193,167 @@ class AzurePipelineParser {
 
             const key = typeof rawKey === 'string' ? this.replaceExpressionsInString(rawKey, context) : rawKey;
 
-            if (process.env.DEBUG_PARSER && typeof rawKey === 'string' && rawKey.includes('insert')) {
-                console.log('[debug] Key contains insert - rawKey:', rawKey, 'expanded:', key);
-            }
+            // Track if any multiline string values have ${{}} before expansion
+            const originalHadExpressions = typeof value === 'string' && value.includes('${{') && value.includes('\n');
+            // Track if last line has ${{}} - used to determine + chomping
+            const originalLastLineHadExpression = originalHadExpressions && this.lastLineHasTemplateExpression(value);
 
-            const expandedValue = this.expandNode(value, context);
+            // Also check if original value is a single-line full expression that might expand to multiline
+            // Pattern: value is just "${{ ... }}" (with possible whitespace)
+            const isSingleLineFullExpression =
+                typeof value === 'string' && !value.includes('\n') && /^\s*\$\{\{.*\}\}\s*$/.test(value.trim());
+
+            const expandedValue = this.expandNode(value, context, key);
             if (expandedValue === undefined) {
                 continue;
             }
 
+            // If this value had ${{}} expressions, track it for block scalar style
+            // Use trimmed content as key (trailing whitespace may change through YAML round-trip)
+            if (originalHadExpressions && typeof expandedValue === 'string') {
+                if (!context.scriptsWithExpressions) {
+                    context.scriptsWithExpressions = new Set();
+                }
+                const contentKey = expandedValue.replace(/\s+$/, '');
+                context.scriptsWithExpressions.add(contentKey);
+
+                // If last line had ${{}} expression, track for + chomping
+                if (originalLastLineHadExpression) {
+                    if (!context.scriptsWithLastLineExpressions) {
+                        context.scriptsWithLastLineExpressions = new Set();
+                    }
+                    context.scriptsWithLastLineExpressions.add(contentKey);
+                }
+            }
+
+            // If original was a single-line full expression that expanded to multiline,
+            // also track for + chomping (the whole value was a template expression)
+            if (isSingleLineFullExpression && typeof expandedValue === 'string' && expandedValue.includes('\n')) {
+                if (!context.scriptsWithExpressions) {
+                    context.scriptsWithExpressions = new Set();
+                }
+                const contentKey = expandedValue.replace(/\s+$/, '');
+                context.scriptsWithExpressions.add(contentKey);
+
+                if (!context.scriptsWithLastLineExpressions) {
+                    context.scriptsWithLastLineExpressions = new Set();
+                }
+                context.scriptsWithLastLineExpressions.add(contentKey);
+            }
+
             result[key] = expandedValue;
+        }
+
+        // Convert bash/script/pwsh/powershell/checkout shortcuts to task format (like Azure Pipelines does)
+        // Do this AFTER all properties have been collected
+        // Skip if: already converted (has task/inputs/targetType) OR we're inside an inputs object (parentKey === 'inputs')
+        if (
+            (result.bash || result.script || result.pwsh || result.powershell || result.checkout) &&
+            !result.task &&
+            !result.inputs &&
+            !result.targetType &&
+            parentKey !== 'inputs'
+        ) {
+            const shorthandKey = result.bash
+                ? 'bash'
+                : result.script
+                  ? 'script'
+                  : result.pwsh
+                    ? 'pwsh'
+                    : result.powershell
+                      ? 'powershell'
+                      : 'checkout';
+
+            const taskType =
+                shorthandKey === 'script'
+                    ? 'CmdLine@2'
+                    : shorthandKey === 'pwsh' || shorthandKey === 'powershell'
+                      ? 'PowerShell@2'
+                      : shorthandKey === 'checkout'
+                        ? '6d15af64-176c-496d-b583-fd2ae21d4df4@1'
+                        : 'Bash@3';
+
+            const shorthandValue = result[shorthandKey];
+            delete result[shorthandKey];
+
+            // Filter out properties that are already task-related or shouldn't be copied
+            const otherProps = {};
+            for (const [key, value] of Object.entries(result)) {
+                // Skip task-related properties that shouldn't be at the task level
+                if (key !== 'task' && key !== 'inputs') {
+                    otherProps[key] = value;
+                }
+            }
+
+            // Build task structure
+            const taskResult = { task: taskType };
+
+            if (shorthandKey === 'checkout') {
+                // Separate task-level properties from input properties
+                const { condition, displayName, ...inputProps } = otherProps;
+
+                // Task-level properties (in desired order)
+                if (displayName) taskResult.displayName = displayName;
+                if (condition !== undefined) {
+                    taskResult.condition = condition;
+                } else if (shorthandValue === 'none') {
+                    // Set condition: false when repository is 'none' (unless already specified)
+                    taskResult.condition = false;
+                }
+
+                // For checkout, most properties go into inputs
+                taskResult.inputs = {
+                    repository: shorthandValue,
+                    ...inputProps,
+                };
+
+                return taskResult;
+            } else {
+                // For bash/script/pwsh/powershell, other properties stay at task level
+                // Extract workingDirectory to place it inside inputs
+                const { workingDirectory, ...remainingProps } = otherProps;
+
+                Object.assign(taskResult, remainingProps);
+                const inputs = {};
+                if (shorthandKey === 'bash' || shorthandKey === 'pwsh' || shorthandKey === 'powershell') {
+                    inputs.targetType = 'inline';
+                }
+                inputs.script = shorthandValue;
+                if (shorthandKey === 'pwsh') {
+                    inputs.pwsh = true;
+                }
+
+                // Add workingDirectory inside inputs for bash tasks if present
+                if (workingDirectory !== undefined) {
+                    inputs.workingDirectory = workingDirectory;
+                }
+
+                taskResult.inputs = inputs;
+
+                return taskResult;
+            }
+        }
+
+        // Convert pool string to object format for Azure Pipelines compatibility
+        if (result.pool && typeof result.pool === 'string') {
+            result.pool = {
+                name: result.pool,
+            };
+        }
+
+        // Convert dependsOn string to array format for consistent YAML formatting
+        // Azure Pipelines accepts both, but we normalize to array for consistency
+        if (result.dependsOn && typeof result.dependsOn === 'string') {
+            result.dependsOn = [result.dependsOn];
+        }
+
+        // Set condition: false for checkout tasks with repository: none
+        if (
+            result.task === '6d15af64-176c-496d-b583-fd2ae21d4df4@1' &&
+            result.inputs?.repository === 'none' &&
+            !result.condition
+        ) {
+            result.condition = false;
         }
 
         return result;
@@ -1047,45 +1368,14 @@ class AzurePipelineParser {
         if (this.isFullExpression(trimmed)) {
             const expr = this.stripExpressionDelimiters(trimmed);
             const result = this.evaluateExpression(expr, context);
-            if (process.env.DEBUG_PARSER && expr.includes('preSteps')) {
-                console.log('[debug] expandScalar preSteps expression:', expr);
-                console.log(
-                    '[debug] result type:',
-                    typeof result,
-                    'isArray:',
-                    Array.isArray(result),
-                    'length:',
-                    result ? result.length : 'N/A',
-                );
-                if (Array.isArray(result)) {
-                    for (let i = 0; i < Math.min(2, result.length); i++) {
-                        console.log(
-                            `[debug] result[${i}] type:`,
-                            typeof result[i],
-                            'isTemplate:',
-                            result[i] && typeof result[i] === 'object' && 'template' in result[i],
-                        );
-                        if (result[i] && typeof result[i] === 'object') {
-                            console.log(`[debug] result[${i}] keys:`, Object.keys(result[i]));
-                        }
-                    }
-                }
-            }
             // If the expression evaluates to a template reference, expand it
             if (this.isTemplateReference(result)) {
-                if (process.env.DEBUG_PARSER) {
-                    console.log('[debug] expandScalar: expression resolved to template reference:', result.template);
-                }
-                // Template references in array context should be expanded and their items spread
-                // Return the template reference as-is and let the caller handle expansion
-                // Actually, we need to expand it here since we're in scalar context
                 const expanded = this.expandTemplateReference(result, context);
-                if (process.env.DEBUG_PARSER) {
-                    console.log('[debug] expandScalar: expanded template to', expanded.length, 'items');
-                }
-                // If we're in a scalar position but got multiple items, return them as array
-                // The caller (expandArray) will handle spreading them
                 return expanded.length === 1 ? expanded[0] : expanded;
+            }
+            // Azure Azure Pipelines outputs booleans from expressions as "True"/"False"
+            if (typeof result === 'boolean') {
+                return this.returnBoolean(result);
             }
             return result;
         }
@@ -1107,67 +1397,22 @@ class AzurePipelineParser {
             const [key] = Object.keys(element);
             const body = element[key];
 
-            if (this.isIfDirective(key)) {
-                // Only process this IF if we haven't taken a branch yet, OR if this is the first condition
-                // This allows multiple independent IF conditions, but respects IF-ELSEIF-ELSE chains
-                if (index !== startIndex && !this.isElseIfDirective(key) && !this.isElseDirective(key)) {
-                    // This is a new independent IF, not part of the current IF-ELSEIF-ELSE chain
-                    break;
-                }
-
-                const condition = this.parseIfCondition(key);
-                const result = this.evaluateExpression(condition, context);
-                if (process.env.ADO_YAML_DEBUG === '1') {
-                    console.log('[debug] IF condition:', condition, '=>', result);
-                    console.log('[debug] branchTaken:', branchTaken, ', toBoolean(result):', this.toBoolean(result));
-                    if (result) {
-                        console.log('[debug] Branch body type:', Array.isArray(body) ? 'array' : typeof body);
-                        if (Array.isArray(body)) {
-                            console.log('[debug] Branch body length:', body.length);
-                            if (body.length > 0) {
-                                console.log('[debug] First item:', JSON.stringify(body[0]).substring(0, 200));
-                            }
-                        }
-                    }
-                }
-                if (!branchTaken && this.toBoolean(result)) {
-                    items = this.flattenBranchValue(body, context);
-                    branchTaken = true;
-                    if (process.env.ADO_YAML_DEBUG === '1') {
-                        console.log('[debug] Branch taken, returned', items.length, 'items');
-                        if (items.length > 0 && items[0]) {
-                            console.log('[debug] First returned item type:', typeof items[0]);
-                            if (typeof items[0] === 'object' && items[0] !== null) {
-                                console.log('[debug] First returned item keys:', Object.keys(items[0]).slice(0, 5));
-                            }
-                        }
-                    }
-                }
-            } else if (this.isElseIfDirective(key)) {
-                const condition = this.parseElseIfCondition(key);
-                const result = this.evaluateExpression(condition, context);
-                if (process.env.ADO_YAML_DEBUG === '1') {
-                    console.log('[debug] ELSEIF condition:', condition, '=>', result);
-                }
-                if (!branchTaken && this.toBoolean(result)) {
-                    items = this.flattenBranchValue(body, context);
-                    branchTaken = true;
-                }
-            } else if (this.isElseDirective(key)) {
-                if (process.env.ADO_YAML_DEBUG === '1') {
-                    console.log('[debug] ELSE clause');
-                }
-                if (!branchTaken) {
-                    items = this.flattenBranchValue(body, context);
-                    branchTaken = true;
-                }
-                index += 1;
-                break;
-            } else {
+            if (!this.isConditionalDirective(key)) {
                 break;
             }
 
+            // New IF chain starts - break if not the first element
+            if (this.isIfDirective(key) && index !== startIndex) {
+                break;
+            }
+
+            if (!branchTaken && this.evaluateConditional(key, context)) {
+                items = this.flattenBranchValue(body, context);
+                branchTaken = true;
+            }
+
             index += 1;
+            if (this.isElseDirective(key)) break;
         }
 
         return {
@@ -1187,39 +1432,13 @@ class AzurePipelineParser {
                 break;
             }
 
-            if (this.isIfDirective(key)) {
-                const condition = this.parseIfCondition(key);
-                const result = this.evaluateExpression(condition, context);
-                if (process.env.ADO_YAML_DEBUG === '1') {
-                    console.log('[debug] IF (object) condition:', condition, '=>', result);
-                }
-                if (!branchTaken && this.toBoolean(result)) {
-                    merged = this.expandConditionalMappingBranch(body, context);
-                    branchTaken = true;
-                }
-            } else if (this.isElseIfDirective(key)) {
-                const condition = this.parseElseIfCondition(key);
-                const result = this.evaluateExpression(condition, context);
-                if (process.env.ADO_YAML_DEBUG === '1') {
-                    console.log('[debug] ELSEIF (object) condition:', condition, '=>', result);
-                }
-                if (!branchTaken && this.toBoolean(result)) {
-                    merged = this.expandConditionalMappingBranch(body, context);
-                    branchTaken = true;
-                }
-            } else if (this.isElseDirective(key)) {
-                if (process.env.ADO_YAML_DEBUG === '1') {
-                    console.log('[debug] ELSE (object) clause');
-                }
-                if (!branchTaken) {
-                    merged = this.expandConditionalMappingBranch(body, context);
-                    branchTaken = true;
-                }
-                index += 1;
-                break;
+            if (!branchTaken && this.evaluateConditional(key, context)) {
+                merged = this.expandConditionalMappingBranch(body, context);
+                branchTaken = true;
             }
 
             index += 1;
+            if (this.isElseDirective(key)) break;
         }
 
         return {
@@ -1387,16 +1606,39 @@ class AzurePipelineParser {
             return input;
         }
 
-        return input.replace(/\$\{\{\s*(.+?)\s*\}\}/g, (match, expr) => {
+        let result = input.replace(/\$\{\{\s*(.+?)\s*\}\}/g, (match, expr) => {
             const value = this.evaluateExpression(expr, context);
             if (value === undefined || value === null) {
+                // Check if this is a parameter reference that might be a runtime variable
+                // If so, convert it to a runtime variable reference format
+                if (expr.trim().startsWith('parameters.')) {
+                    const paramName = expr.trim().substring('parameters.'.length);
+                    // Return as runtime variable $(paramName) instead of empty string
+                    return `$(${paramName})`;
+                }
                 return '';
             }
             if (typeof value === 'object') {
                 return JSON.stringify(value);
             }
+            // Handle boolean markers - convert to proper case
+            if (typeof value === 'string') {
+                const lower = value.toLowerCase();
+                if (lower === '__true__') return 'True';
+                if (lower === '__false__') return 'False';
+            }
+            // Handle JavaScript booleans
+            if (typeof value === 'boolean') {
+                return this.returnBoolean(value);
+            }
             return String(value);
         });
+
+        // Clean up whitespace-only lines (from expressions expanding to empty)
+        // Removes spaces/tabs but preserves the newline character for >+ chomping
+        result = result.replace(/^[ \t]+$/gm, '');
+
+        return result;
     }
 
     evaluateExpression(expression, context) {
@@ -1429,45 +1671,44 @@ class AzurePipelineParser {
     evaluateFunction(name, args) {
         const fn = name.toLowerCase();
         switch (fn) {
-            // Comparison functions
             case 'eq':
-                const result = this.compareValues(args[0], args[1]) === 0;
-                if (process.env.ADO_YAML_DEBUG === '1') {
-                    console.log('[debug] eq(', args[0], ',', args[1], ') =>', result);
-                }
-                return result;
+                return this.returnBoolean(this.compareValues(args[0], args[1]) === 0);
             case 'ne':
-                return this.compareValues(args[0], args[1]) !== 0;
+                return this.returnBoolean(this.compareValues(args[0], args[1]) !== 0);
             case 'gt':
-                return this.compareValues(args[0], args[1]) > 0;
+                return this.returnBoolean(this.compareValues(args[0], args[1]) > 0);
             case 'ge':
-                return this.compareValues(args[0], args[1]) >= 0;
+                return this.returnBoolean(this.compareValues(args[0], args[1]) >= 0);
             case 'lt':
-                return this.compareValues(args[0], args[1]) < 0;
+                return this.returnBoolean(this.compareValues(args[0], args[1]) < 0);
             case 'le':
-                return this.compareValues(args[0], args[1]) <= 0;
+                return this.returnBoolean(this.compareValues(args[0], args[1]) <= 0);
 
             // Logical functions
             case 'and':
-                return args.every((arg) => this.toBoolean(arg));
+                return this.returnBoolean(args.every((arg) => this.toBoolean(arg)));
             case 'or':
-                return args.some((arg) => this.toBoolean(arg));
+                return this.returnBoolean(args.some((arg) => this.toBoolean(arg)));
             case 'not':
-                return !this.toBoolean(args[0]);
+                return this.returnBoolean(!this.toBoolean(args[0]));
             case 'xor':
-                return this.toBoolean(args[0]) !== this.toBoolean(args[1]);
+                return this.returnBoolean(this.toBoolean(args[0]) !== this.toBoolean(args[1]));
 
             // Containment functions
             case 'coalesce':
                 return args.find((arg) => arg !== undefined && arg !== null && arg !== '');
             case 'contains':
-                return this.contains(args[0], args[1]);
+                return this.returnBoolean(this.contains(args[0], args[1]));
             case 'containsvalue':
-                return this.containsValue(args[0], args[1]);
+                return this.returnBoolean(this.containsValue(args[0], args[1]));
             case 'in':
-                return args.slice(1).some((candidate) => this.compareValues(args[0], candidate) === 0);
+                return this.returnBoolean(
+                    args.slice(1).some((candidate) => this.compareValues(args[0], candidate) === 0),
+                );
             case 'notin':
-                return !args.slice(1).some((candidate) => this.compareValues(args[0], candidate) === 0);
+                return this.returnBoolean(
+                    !args.slice(1).some((candidate) => this.compareValues(args[0], candidate) === 0),
+                );
 
             // String functions
             case 'lower':
@@ -1475,9 +1716,9 @@ class AzurePipelineParser {
             case 'upper':
                 return typeof args[0] === 'string' ? args[0].toUpperCase() : args[0];
             case 'startswith':
-                return this.startsWith(args[0], args[1]);
+                return this.returnBoolean(this.startsWith(args[0], args[1]));
             case 'endswith':
-                return this.endsWith(args[0], args[1]);
+                return this.returnBoolean(this.endsWith(args[0], args[1]));
             case 'trim':
                 return typeof args[0] === 'string' ? args[0].trim() : args[0];
             case 'replace':
@@ -1507,15 +1748,15 @@ class AzurePipelineParser {
 
             // Job status check functions
             case 'always':
-                return true;
+                return this.returnBoolean(true);
             case 'canceled':
-                return this.isCanceled(args);
+                return this.returnBoolean(this.isCanceled(args));
             case 'failed':
-                return this.isFailed(args);
+                return this.returnBoolean(this.isFailed(args));
             case 'succeeded':
-                return this.isSucceeded(args);
+                return this.returnBoolean(this.isSucceeded(args));
             case 'succeededorfailed':
-                return this.isSucceededOrFailed(args);
+                return this.returnBoolean(this.isSucceededOrFailed(args));
 
             default:
                 return undefined;
@@ -1642,7 +1883,16 @@ class AzurePipelineParser {
             return 'null';
         }
         try {
-            return JSON.stringify(value, null, 2);
+            // Convert booleans to "True"/"False" and numeric strings to numbers (Azure format)
+            return JSON.stringify(
+                value,
+                (key, val) => {
+                    if (typeof val === 'boolean') return val ? 'True' : 'False';
+                    if (typeof val === 'string' && /^-?\d+(\.\d+)?$/.test(val)) return parseFloat(val);
+                    return val;
+                },
+                2,
+            );
         } catch (error) {
             return String(value);
         }
@@ -1711,16 +1961,31 @@ class AzurePipelineParser {
         }
 
         try {
-            const ast = jsep(expr);
+            const preprocessed = this.preprocessExpressionString(expr);
+            const ast = jsep(preprocessed);
             this.expressionCache.set(expr, ast);
             return ast;
         } catch (error) {
-            if (process.env.ADO_YAML_DEBUG === '1') {
-                console.log('[debug] failed to parse expression:', expr, '-', error.message);
-            }
             this.expressionCache.set(expr, null);
             return null;
         }
+    }
+
+    preprocessExpressionString(expr) {
+        if (typeof expr !== 'string') {
+            return expr;
+        }
+
+        // Fix unescaped backslashes in string literals for Azure Pipelines compatibility
+        // Azure Pipelines allows '\' in strings, but JavaScript requires '\\'
+        // Use regex to find string literals and escape single backslashes within them
+
+        return expr.replace(/(['"])((?:\\.|(?!\1).)*?)\1/g, (match, quote, content) => {
+            // Process the string content to escape single backslashes
+            // Replace single backslash with double, but preserve existing escape sequences
+            const escaped = content.replace(/\\(?![\\'"nrtbfv0xu])/g, '\\\\');
+            return quote + escaped + quote;
+        });
     }
 
     evaluateAst(node, context) {
@@ -1974,8 +2239,11 @@ class AzurePipelineParser {
                     return '';
                 }
                 const lowered = trimmed.toLowerCase();
-                if (lowered === 'true' || lowered === 'false') {
-                    return lowered === 'true';
+                if (lowered === 'true' || lowered === '__true__') {
+                    return true;
+                }
+                if (lowered === 'false' || lowered === '__false__') {
+                    return false;
                 }
                 if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) {
                     return Number(trimmed);
@@ -2032,23 +2300,7 @@ class AzurePipelineParser {
         }
 
         if (Object.prototype.hasOwnProperty.call(context.parameters, first)) {
-            const value = this.walkSegments(context.parameters[first], rest);
-            if (process.env.DEBUG_PARSER && first === 'preSteps') {
-                console.log(
-                    '[debug] resolveContextValue preSteps:',
-                    Array.isArray(value),
-                    value ? value.length : 'null/undef',
-                );
-                if (Array.isArray(value) && value.length > 0) {
-                    console.log(
-                        '[debug] preSteps[0] type:',
-                        typeof value[0],
-                        'has template:',
-                        value[0] && typeof value[0] === 'object' && 'template' in value[0],
-                    );
-                }
-            }
-            return value;
+            return this.walkSegments(context.parameters[first], rest);
         }
 
         if (Object.prototype.hasOwnProperty.call(context.variables, first)) {
@@ -2099,14 +2351,19 @@ class AzurePipelineParser {
         }
         if (typeof value === 'string') {
             const lowered = value.toLowerCase();
-            if (lowered === 'true') {
+            if (lowered === '__true__' || lowered === 'true') {
                 return true;
             }
-            if (lowered === 'false' || lowered.length === 0) {
+            if (lowered === '__false__' || lowered === 'false' || lowered.length === 0) {
                 return false;
             }
         }
         return Boolean(value);
+    }
+
+    /** Returns boolean as marker string (__TRUE__/__FALSE__) for Azure-compatible output. */
+    returnBoolean(value) {
+        return value ? '__TRUE__' : '__FALSE__';
     }
 
     createChildContext(parent, locals) {
@@ -2118,13 +2375,15 @@ class AzurePipelineParser {
             baseDir: parent.baseDir,
             repositoryBaseDir: parent.repositoryBaseDir,
             resourceLocations: parent.resourceLocations || {},
+            scriptsWithExpressions: parent.scriptsWithExpressions, // Preserve scripts tracking
+            scriptsWithLastLineExpressions: parent.scriptsWithLastLineExpressions, // Preserve last line tracking
         };
     }
 
     createTemplateContext(parent, parameterOverrides, baseDir, options = {}) {
         return {
             parameters: { ...parent.parameters, ...parameterOverrides },
-            variables: parent.variables,
+            variables: { ...parent.variables }, // Preserve variables from parent context (includes overrides)
             resources: parent.resources,
             locals: { ...parent.locals },
             baseDir: baseDir || parent.baseDir,
@@ -2132,6 +2391,10 @@ class AzurePipelineParser {
                 options.repositoryBaseDir !== undefined ? options.repositoryBaseDir : parent.repositoryBaseDir,
             resourceLocations: parent.resourceLocations || {},
             templateStack: parent.templateStack || [],
+            quoteStyles: parent.quoteStyles, // Preserve quote styles
+            templateQuoteStyles: parent.templateQuoteStyles, // Preserve template quote styles map
+            scriptsWithExpressions: parent.scriptsWithExpressions, // Preserve scripts tracking
+            scriptsWithLastLineExpressions: parent.scriptsWithLastLineExpressions, // Preserve last line tracking
         };
     }
 
@@ -2162,10 +2425,6 @@ class AzurePipelineParser {
 
         if (!templatePathValue || typeof templatePathValue !== 'string') {
             return [];
-        }
-
-        if (process.env.ADO_YAML_DEBUG === '1') {
-            console.log('[debug] expandTemplateReference ->', templatePathValue);
         }
 
         const repositoryRef = this.parseRepositoryTemplateReference(templatePathValue);
@@ -2235,14 +2494,24 @@ class AzurePipelineParser {
         }
 
         const templateSource = fs.readFileSync(resolvedPath, 'utf8');
-        if (process.env.ADO_YAML_DEBUG === '1') {
-            console.log('[debug] resolved template path ->', resolvedPath);
-        }
         const normalizedSource = this.preprocessCompileTimeExpressions(templateSource);
 
         let templateDocument;
         try {
-            templateDocument = YAML.parse(normalizedSource) || {};
+            // Parse as document to extract quote styles
+            const yamlDoc = YAML.parseDocument(normalizedSource);
+            const templateQuoteStyles = new Map();
+            this.extractQuoteStyles(yamlDoc.contents, [], templateQuoteStyles);
+
+            // Merge template quote styles into context
+            if (context.quoteStyles && templateQuoteStyles.size > 0) {
+                if (!context.templateQuoteStyles) {
+                    context.templateQuoteStyles = new Map();
+                }
+                context.templateQuoteStyles.set(resolvedPath, templateQuoteStyles);
+            }
+
+            templateDocument = yamlDoc.toJSON() || {};
         } catch (error) {
             throw new Error(`Failed to parse template '${templatePathValue}': ${error.message}`);
         }
@@ -2252,60 +2521,18 @@ class AzurePipelineParser {
         const defaultParameters = this.extractParameters(templateDocument);
         const providedParameters = this.normalizeTemplateParameters(node.parameters, context);
 
-        // Build template path for error messages
         const templateDisplayPath = repositoryRef
             ? `${repositoryRef.templatePath}@${repositoryRef.repository}`
             : templatePathValue;
 
-        // Update context with template stack for error reporting
         const updatedContext = {
             ...context,
             templateStack: [...(context.templateStack || []), templateDisplayPath],
         };
 
-        // Validate that all required parameters (without defaults) are provided
         this.validateTemplateParameters(templateDocument, providedParameters, templatePathValue, updatedContext);
 
         const mergedParameters = { ...defaultParameters, ...providedParameters };
-
-        if (process.env.DEBUG_PARSER && templatePathValue && templatePathValue.includes('windows-client-v0')) {
-            const bp = providedParameters.buildParams;
-            console.log('[debug] windows-client-v0 - buildParams keys:', bp ? Object.keys(bp) : 'no buildParams');
-            if (bp && bp.preSteps) {
-                console.log(
-                    '[debug] buildParams.preSteps isArray:',
-                    Array.isArray(bp.preSteps),
-                    'length:',
-                    bp.preSteps.length,
-                );
-                if (Array.isArray(bp.preSteps) && bp.preSteps.length > 0) {
-                    console.log('[debug] preSteps[0] has template:', bp.preSteps[0] && 'template' in bp.preSteps[0]);
-                }
-            } else {
-                console.log('[debug] buildParams HAS NO preSteps!');
-            }
-        }
-
-        if (process.env.ADO_YAML_DEBUG === '1') {
-            console.log('[debug] merged template parameters keys:', Object.keys(mergedParameters));
-        }
-
-        if (process.env.DEBUG_PARSER && mergedParameters.preSteps) {
-            console.log(
-                '[debug] Template has preSteps parameter, isArray:',
-                Array.isArray(mergedParameters.preSteps),
-                'length:',
-                mergedParameters.preSteps.length,
-            );
-            if (Array.isArray(mergedParameters.preSteps) && mergedParameters.preSteps.length > 0) {
-                console.log(
-                    '[debug] preSteps[0] has template:',
-                    mergedParameters.preSteps[0] &&
-                        typeof mergedParameters.preSteps[0] === 'object' &&
-                        'template' in mergedParameters.preSteps[0],
-                );
-            }
-        }
 
         const templateContext = this.createTemplateContext(updatedContext, mergedParameters, templateBaseDir, {
             repositoryBaseDir: repositoryBaseDirectoryForContext,
@@ -2518,34 +2745,108 @@ class AzurePipelineParser {
     }
 
     expandNodePreservingTemplates(node, context) {
-        // Like expandNode, but preserves template references so they can be expanded later
         if (node === null || node === undefined) {
             return node;
         }
 
+        // Helper to push expanded values into result array
+        const pushExpanded = (result, expanded) => {
+            if (expanded === null || expanded === undefined) return;
+            if (Array.isArray(expanded)) {
+                result.push(...expanded);
+            } else {
+                result.push(expanded);
+            }
+        };
+
         if (Array.isArray(node)) {
-            const result = node.map((item) => {
+            const result = [];
+            let i = 0;
+
+            while (i < node.length) {
+                const item = node[i];
+
                 if (this.isTemplateReference(item)) {
-                    if (process.env.DEBUG_PARSER) {
-                        console.log(
-                            '[debug] expandNodePreservingTemplates: preserving template reference:',
-                            item.template,
-                        );
-                    }
-                    return item;
+                    result.push(item);
+                    i++;
+                    continue;
                 }
-                return this.expandNodePreservingTemplates(item, context);
-            });
-            if (process.env.DEBUG_PARSER && result.length > 0) {
-                console.log('[debug] expandNodePreservingTemplates: array result length:', result.length);
+
+                if (typeof item === 'object' && item !== null && !Array.isArray(item)) {
+                    const entries = Object.entries(item);
+
+                    // Handle if/elseif/else conditional chains
+                    if (entries.length > 0 && this.isConditionalDirective(entries[0][0])) {
+                        let branchTaken = false;
+                        let j = i;
+
+                        while (j < node.length) {
+                            const chainItem = node[j];
+                            if (typeof chainItem !== 'object' || chainItem === null || Array.isArray(chainItem)) break;
+
+                            const chainEntries = Object.entries(chainItem);
+                            if (chainEntries.length !== 1) break;
+
+                            const [condKey, condBody] = chainEntries[0];
+                            if (!this.isConditionalDirective(condKey)) break;
+
+                            const shouldExecute =
+                                !branchTaken &&
+                                (this.isElseDirective(condKey) ||
+                                    this.toBoolean(
+                                        this.evaluateExpression(
+                                            this.isIfDirective(condKey)
+                                                ? this.parseIfCondition(condKey)
+                                                : this.parseElseIfCondition(condKey),
+                                            context,
+                                        ),
+                                    ));
+
+                            if (shouldExecute) {
+                                pushExpanded(result, this.expandNodePreservingTemplates(condBody, context));
+                                branchTaken = true;
+                            }
+
+                            j++;
+                            if (this.isElseDirective(condKey)) break;
+                        }
+                        i = j;
+                        continue;
+                    }
+
+                    // Handle ${{ insert }} directive
+                    if (entries.length === 1) {
+                        const [key, value] = entries[0];
+                        if (typeof key === 'string' && this.isFullExpression(key.trim())) {
+                            const expr = this.stripExpressionDelimiters(key.trim()).trim();
+                            if (expr === 'insert') {
+                                pushExpanded(result, this.expandNodePreservingTemplates(value, context));
+                                i++;
+                                continue;
+                            }
+                        }
+                    }
+                }
+
+                const expanded = this.expandNodePreservingTemplates(item, context);
+                if (expanded !== null && expanded !== undefined) {
+                    if (
+                        typeof expanded === 'object' &&
+                        !Array.isArray(expanded) &&
+                        Object.keys(expanded).length === 0
+                    ) {
+                        i++;
+                        continue;
+                    }
+                    result.push(expanded);
+                }
+                i++;
             }
             return result;
         }
 
         if (typeof node === 'object') {
-            // Preserve template references at object level
             if (this.isTemplateReference(node)) {
-                // Still expand expressions in the template path and parameters
                 const result = { template: node.template };
                 if (node.parameters) {
                     result.parameters = this.expandNodePreservingTemplates(node.parameters, context);
@@ -2554,28 +2855,53 @@ class AzurePipelineParser {
             }
 
             const result = {};
-            for (const [key, value] of Object.entries(node)) {
+            const entries = Object.entries(node);
+            let i = 0;
+
+            while (i < entries.length) {
+                const [key, value] = entries[i];
+
+                if (typeof key === 'string' && this.isConditionalDirective(key)) {
+                    let branchTaken = false;
+                    let j = i;
+
+                    while (j < entries.length) {
+                        const [condKey, condBody] = entries[j];
+                        if (typeof condKey !== 'string' || !this.isConditionalDirective(condKey)) {
+                            break;
+                        }
+
+                        if (!branchTaken && this.evaluateConditional(condKey, context)) {
+                            const expanded = this.expandNodePreservingTemplates(condBody, context);
+                            if (expanded && typeof expanded === 'object' && !Array.isArray(expanded)) {
+                                Object.assign(result, expanded);
+                            }
+                            branchTaken = true;
+                        }
+
+                        j++;
+                        if (this.isElseDirective(condKey)) break;
+                    }
+                    i = j;
+                    continue;
+                }
+
                 // Handle ${{ insert }} directive
                 if (typeof key === 'string' && this.isFullExpression(key.trim())) {
                     const expr = this.stripExpressionDelimiters(key.trim());
                     if (expr.trim() === 'insert') {
-                        // Expand the value and merge its properties into result
                         const expandedValue = this.expandNodePreservingTemplates(value, context);
-                        if (process.env.DEBUG_PARSER) {
-                            console.log(
-                                '[debug] expandNodePreservingTemplates: ${{ insert }} merging',
-                                Object.keys(expandedValue || {}),
-                            );
-                        }
                         if (expandedValue && typeof expandedValue === 'object' && !Array.isArray(expandedValue)) {
                             Object.assign(result, expandedValue);
-                            continue;
                         }
+                        i++;
+                        continue;
                     }
                 }
 
                 const expandedKey = typeof key === 'string' ? this.replaceExpressionsInString(key, context) : key;
                 result[expandedKey] = this.expandNodePreservingTemplates(value, context);
+                i++;
             }
             return result;
         }
@@ -2662,8 +2988,23 @@ class AzurePipelineParser {
         return [];
     }
 
+    /** Evaluates a conditional directive key and returns true if the branch should execute. */
+    evaluateConditional(condKey, context) {
+        if (this.isElseDirective(condKey)) {
+            return true;
+        }
+        const condition = this.isIfDirective(condKey)
+            ? this.parseIfCondition(condKey)
+            : this.parseElseIfCondition(condKey);
+        return this.toBoolean(this.evaluateExpression(condition, context));
+    }
+
     isFullExpression(text) {
-        return /^\$\{\{.*\}\}$/.test(text);
+        if (!text || !text.startsWith('${{') || !text.endsWith('}}')) {
+            return false;
+        }
+        const withoutOuter = text.slice(3, -2);
+        return !withoutOuter.includes('}}');
     }
 
     stripExpressionDelimiters(expr) {
@@ -2723,8 +3064,6 @@ class AzurePipelineParser {
 
 module.exports = {
     AzurePipelineParser,
-    PipelineConfig,
-    Range,
 };
 
 if (require.main === module) {

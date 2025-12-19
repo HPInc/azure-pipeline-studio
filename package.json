@@ -3,6 +3,7 @@
     "onLanguage:yaml",
     "onLanguage:yml",
     "onCommand:azurePipelineStudio.showRenderedYaml",
+    "onCommand:azurePipelineStudio.showRenderedYamlAzureCompatible",
     "onCommand:azurePipelineStudio.configureResourceLocations",
     "onCommand:azurePipelineStudio.formatOriginalYaml"
   ],
@@ -17,19 +18,31 @@
     "commands": [
       {
         "command": "azurePipelineStudio.showRenderedYaml",
-        "title": "Azure Pipeline Studio: Show Rendered YAML"
+        "title": "Expand Pipeline (Standard)"
+      },
+      {
+        "command": "azurePipelineStudio.showRenderedYamlAzureCompatible",
+        "title": "Expand Pipeline (Azure Compatible)"
       },
       {
         "command": "azurePipelineStudio.configureResourceLocations",
-        "title": "Azure Pipeline Studio: Configure Resource Locations"
+        "title": "Configure Resource Locations"
       },
       {
         "command": "azurePipelineStudio.formatOriginalYaml",
-        "title": "Azure Pipeline Studio: Format YAML"
+        "title": "Format YAML"
       }
     ],
     "configuration": {
       "properties": {
+        "azurePipelineStudio.expansion.variables": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "Set Azure Pipeline compile-time variables (like Build.Reason, Build.SourceBranch, etc.) that will be available during template expansion. Example: {\"Build.Reason\": \"Manual\", \"Build.SourceBranch\": \"refs/heads/main\"}",
+          "type": "object"
+        },
         "azurePipelineStudio.format.blankLinesBetweenSections": {
           "default": 1,
           "description": "Number of blank lines between root-level sections (trigger, variables, resources, etc.).",
@@ -138,6 +151,10 @@
           "group": "2_render@1"
         },
         {
+          "command": "azurePipelineStudio.showRenderedYamlAzureCompatible",
+          "group": "2_render@2"
+        },
+        {
           "command": "azurePipelineStudio.configureResourceLocations",
           "group": "3_config@1"
         }
@@ -158,7 +175,6 @@
     ]
   },
   "dependencies": {
-    "antlr4": "^4.13.2",
     "jsep": "^1.4.0",
     "minimist": "^1.2.8",
     "yaml": "^2.8.2"
@@ -181,7 +197,7 @@
   },
   "icon": "icon.png",
   "license": "MIT",
-  "main": "./extension.js",
+  "main": "./extension-bundle.js",
   "name": "azure-pipeline-studio",
   "overrides": {
     "glob": "^10.0.0",
@@ -195,12 +211,11 @@
   "scripts": {
     "build:dev": "webpack --mode none",
     "build:prod": "webpack --mode production",
-    "compile": "java -jar /usr/local/lib/antlr-4.13.2-complete.jar -Dlanguage=JavaScript AzurePipelineParser.g4 AzurePipelineLexer.g4 -o generated -Xexact-output-dir -visitor && npx babel generated --out-dir generated-cjs",
     "test": "node tests/run-tests.js",
     "test:all": "./tests/run-all-tests.sh",
     "test:integration": "node tests/test-integration-expressions.js",
     "test:module": "node tests/test-azure-expressions-module.js"
   },
   "type": "commonjs",
-  "version": "1.0.2"
+  "version": "1.0.3"
 }
