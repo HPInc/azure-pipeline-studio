@@ -326,20 +326,25 @@ class AzurePipelineParser {
                         let content = pair.value.value;
 
                         // Check if any line has trailing spaces (not including final newline)
-                        const lines = content.split('\n');
-                        const hasTrailingSpaces = lines.some((line, idx) => {
-                            // Skip the last line if it's empty (just the final newline)
-                            if (idx === lines.length - 1 && line === '') return false;
-                            // Check if line ends with space or tab
-                            return /[ \t]$/.test(line);
-                        });
+                        // Only apply special handling for trailing spaces in azureCompatible mode
+                        if (azureCompatible) {
+                            const lines = content.split('\n');
+                            const hasTrailingSpaces = lines.some((line, idx) => {
+                                // Skip the last line if it's empty (just the final newline)
+                                if (idx === lines.length - 1 && line === '') return false;
+                                // Check if line ends with space or tab
+                                return /[ \t]$/.test(line);
+                            });
 
-                        // If there are trailing spaces, force single-line quoted format
-                        if (hasTrailingSpaces) {
-                            // Keep as plain scalar with newlines preserved - YAML library will quote it
-                            pair.value.type = 'QUOTE_DOUBLE';
-                            // Content stays as-is with actual newlines
-                        } else {
+                            // If there are trailing spaces, force single-line quoted format
+                            if (hasTrailingSpaces) {
+                                // Keep as plain scalar with newlines preserved - YAML library will quote it
+                                pair.value.type = 'QUOTE_DOUBLE';
+                                // Content stays as-is with actual newlines
+                            }
+                        }
+
+                        if (pair.value.type !== 'QUOTE_DOUBLE') {
                             // Check if this value originally had ${{}} expressions
                             // Use trimmed content as key (trailing whitespace may change through YAML round-trip)
                             const contentKey = content.replace(/\s+$/, '');
@@ -396,6 +401,13 @@ class AzurePipelineParser {
                                 if (endsWithBlankLine) {
                                     const trimmedEnd = content.replace(/\n+$/, '');
                                     pair.value.value = trimmedEnd + '\n\n';
+                                }
+                            } else {
+                                // In non-Azure mode, normalize trailing newlines to avoid + chomping
+                                // Replace multiple trailing newlines with single newline for clip chomping (|)
+                                if (/\n\n+$/.test(content)) {
+                                    const trimmedEnd = content.replace(/\n+$/, '');
+                                    pair.value.value = trimmedEnd + '\n';
                                 }
                             }
                         }
