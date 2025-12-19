@@ -42,12 +42,13 @@ class AzurePipelineParser {
         // Always apply block scalar styles to control formatting
         // When azureCompatible=false, use literal style to preserve exact formatting
         // When azureCompatible=true, apply Azure-specific transformations
-        const azurePipelineCompatibility = overrides.azureCompatible || false;
+        const azureCompatible = overrides.azureCompatible || false;
+        console.log(`Azure Pipeline Compatibility Mode: ${azureCompatible}`);
         this.applyBlockScalarStyles(
             yamlDoc.contents,
             scriptsWithExpressions,
             scriptsWithLastLineExpressions,
-            azurePipelineCompatibility,
+            azureCompatible,
         );
         let output = yamlDoc.toString({
             lineWidth: 0,
@@ -78,21 +79,17 @@ class AzurePipelineParser {
                   : 'False',
         );
 
-        // In azurePipelineCompatibility mode, remove extra blank lines between sections
-        // Azure's output doesn't have blank lines between top-level elements
-        if (azurePipelineCompatibility) {
-            // Remove blank lines before array items and keys, but preserve blank lines
-            // that follow indented content (part of block scalar with + chomping)
-            // Pattern: non-indented line + blank line + next element -> remove blank line
+        // Handle trailing newlines and blank line removal based on mode
+        if (azureCompatible) {
+            // Remove extra blank lines between sections
             output = output.replace(/^(\S.+)\n\n(\s*-\s)/gm, '$1\n$2');
             output = output.replace(/^(\S.+)\n\n(\s*\w+:)/gm, '$1\n$2');
-            // Note: Lines starting with whitespace (^\s+) are left unchanged to preserve
-            // block scalar content with + chomping indicator
 
-            // Add 2 empty lines at the end of file (Azure format)
             if (!output.endsWith('\n\n\n')) {
                 output = output.replace(/\n*$/, '\n\n\n');
             }
+        } else {
+            output = output.replace(/\n*$/, '\n');
         }
         return output;
     }
@@ -318,108 +315,58 @@ class AzurePipelineParser {
 
         if (node.items && node.constructor.name === 'YAMLMap') {
             for (const pair of node.items) {
-                if (pair.key && pair.key.value && pair.value) {
-                    const keyName = pair.key.value;
+                if (!pair.key?.value || !pair.value) continue;
 
-                    // Apply block scalar style to any multiline string value
-                    if (typeof pair.value.value === 'string' && pair.value.value.includes('\n')) {
-                        let content = pair.value.value;
-
-                        // Check if any line has trailing spaces (not including final newline)
-                        // Only apply special handling for trailing spaces in azureCompatible mode
-                        if (azureCompatible) {
-                            const lines = content.split('\n');
-                            const hasTrailingSpaces = lines.some((line, idx) => {
-                                // Skip the last line if it's empty (just the final newline)
-                                if (idx === lines.length - 1 && line === '') return false;
-                                // Check if line ends with space or tab
-                                return /[ \t]$/.test(line);
-                            });
-
-                            // If there are trailing spaces, force single-line quoted format
-                            if (hasTrailingSpaces) {
-                                // Keep as plain scalar with newlines preserved - YAML library will quote it
-                                pair.value.type = 'QUOTE_DOUBLE';
-                                // Content stays as-is with actual newlines
-                            }
-                        }
-
-                        if (pair.value.type !== 'QUOTE_DOUBLE') {
-                            // Check if this value originally had ${{}} expressions
-                            // Use trimmed content as key (trailing whitespace may change through YAML round-trip)
-                            const contentKey = content.replace(/\s+$/, '');
-                            const hadExpressions = scriptsWithExpressions.has(contentKey);
-
-                            // Check if last line originally had ${{}} - triggers "keep" chomping (+)
-                            // This is tracked BEFORE expansion since ${{}} won't be present after
-                            const hadLastLineExpression = scriptsWithLastLineExpressions.has(contentKey);
-
-                            // Check for heredoc
-                            const hasHeredoc = /<<[-]?\s*['"]?(\w+)['"]?/.test(content);
-
-                            // Only change style for script-related keys or keys that had expressions
-                            const isScriptKey =
-                                keyName === 'script' ||
-                                keyName === 'bash' ||
-                                keyName === 'powershell' ||
-                                keyName === 'pwsh';
-
-                            if (isScriptKey || hadExpressions) {
-                                if (hasHeredoc) {
-                                    // Scripts with heredocs
-                                    if (azureCompatible && hadExpressions) {
-                                        // Azure mode with expressions: add empty lines and use folded style
-                                        content = this.addEmptyLinesInHeredoc(content);
-                                        pair.value.value = content;
-                                        pair.value.type = 'BLOCK_FOLDED';
-                                    } else {
-                                        // Standard mode: use literal style to avoid blank lines from folded style
-                                        pair.value.type = 'BLOCK_LITERAL';
-                                    }
-                                } else if (hadExpressions) {
-                                    // Value had ${{}} expressions (no heredocs)
-                                    if (azureCompatible) {
-                                        // Azure mode: use folded style (>) which adds blank lines
-                                        pair.value.type = 'BLOCK_FOLDED';
-                                    } else {
-                                        // Standard mode: use literal style (|) to preserve exact formatting
-                                        pair.value.type = 'BLOCK_LITERAL';
-                                    }
-                                } else {
-                                    // No expressions - use literal style (|) to preserve newlines
-                                    pair.value.type = 'BLOCK_LITERAL';
-                                }
-                            }
-
-                            // Check if content ends with a blank line (indicates expression expanded to empty)
-                            // Pattern matches: newline + optional whitespace + newline + optional trailing whitespace
-                            // Only apply special chomping handling in azureCompatible mode
-                            if (azureCompatible) {
-                                const endsWithBlankLine = /\n[ \t]*\n\s*$/.test(content);
-
-                                // If content ends with blank line, ensure + chomping by adding \n\n
-                                if (endsWithBlankLine) {
-                                    const trimmedEnd = content.replace(/\n+$/, '');
-                                    pair.value.value = trimmedEnd + '\n\n';
-                                }
-                            } else {
-                                // In non-Azure mode, normalize trailing newlines to avoid + chomping
-                                // Replace multiple trailing newlines with single newline for clip chomping (|)
-                                if (/\n\n+$/.test(content)) {
-                                    const trimmedEnd = content.replace(/\n+$/, '');
-                                    pair.value.value = trimmedEnd + '\n';
-                                }
-                            }
-                        }
-                    }
-
+                const { value } = pair;
+                if (typeof value.value !== 'string' || !value.value.includes('\n')) {
                     this.applyBlockScalarStyles(
-                        pair.value,
+                        value,
                         scriptsWithExpressions,
                         scriptsWithLastLineExpressions,
                         azureCompatible,
                     );
+                    continue;
                 }
+
+                let content = value.value;
+
+                // Handle trailing spaces in Azure mode - force double quotes
+                if (azureCompatible && this.hasTrailingSpaces(content)) {
+                    value.type = 'QUOTE_DOUBLE';
+                    this.applyBlockScalarStyles(
+                        value,
+                        scriptsWithExpressions,
+                        scriptsWithLastLineExpressions,
+                        azureCompatible,
+                    );
+                    continue;
+                }
+
+                // Apply block scalar styles
+                if (value.type !== 'QUOTE_DOUBLE') {
+                    const trimmedKey = content.replace(/\s+$/, '');
+                    const hadExpressions = scriptsWithExpressions.has(trimmedKey);
+                    const hasHeredoc = /<<[-]?\s*['"]?(\w+)['"]?/.test(content);
+
+                    // Determine block scalar type
+                    if (hasHeredoc && azureCompatible && hadExpressions) {
+                        content = this.addEmptyLinesInHeredoc(content);
+                        value.value = content;
+                        value.type = 'BLOCK_FOLDED';
+                    } else {
+                        value.type = hadExpressions && azureCompatible ? 'BLOCK_FOLDED' : 'BLOCK_LITERAL';
+                    }
+
+                    // Normalize trailing newlines
+                    value.value = this.normalizeTrailingNewlines(content, azureCompatible);
+                }
+
+                this.applyBlockScalarStyles(
+                    value,
+                    scriptsWithExpressions,
+                    scriptsWithLastLineExpressions,
+                    azureCompatible,
+                );
             }
         } else if (node.items && node.constructor.name === 'YAMLSeq') {
             node.items.forEach((item) =>
@@ -431,6 +378,18 @@ class AzurePipelineParser {
                 ),
             );
         }
+    }
+
+    hasTrailingSpaces(content) {
+        const lines = content.split('\n');
+        return lines.some((line, idx) => (idx < lines.length - 1 || line !== '' ? /[ \t]$/.test(line) : false));
+    }
+
+    normalizeTrailingNewlines(content, azureCompatible) {
+        if (azureCompatible) {
+            return /\n[ \t]*\n\s*$/.test(content) ? content.replace(/\n+$/, '') + '\n\n' : content;
+        }
+        return /\n\n+$/.test(content) ? content.replace(/\n+$/, '') + '\n' : content;
     }
 
     /**

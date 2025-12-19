@@ -35,11 +35,6 @@
     ],
     "configuration": {
       "properties": {
-        "azurePipelineStudio.expansion.expandTemplates": {
-          "default": false,
-          "description": "Expand template references and parameters when showing rendered YAML.",
-          "type": "boolean"
-        },
         "azurePipelineStudio.expansion.variables": {
           "additionalProperties": {
             "type": "string"
@@ -47,11 +42,6 @@
           "default": {},
           "description": "Set Azure Pipeline compile-time variables (like Build.Reason, Build.SourceBranch, etc.) that will be available during template expansion. Example: {\"Build.Reason\": \"Manual\", \"Build.SourceBranch\": \"refs/heads/main\"}",
           "type": "object"
-        },
-        "azurePipelineStudio.format.azureCompatible": {
-          "default": false,
-          "description": "Format output to match Microsoft's Azure DevOps template expansion style (converts bash: | to script: >- with blank lines, converts task inputs to single-line format). Only applies when ${{}} expressions are present.",
-          "type": "boolean"
         },
         "azurePipelineStudio.format.blankLinesBetweenSections": {
           "default": 1,
@@ -207,7 +197,7 @@
   },
   "icon": "icon.png",
   "license": "MIT",
-  "main": "./extension.js",
+  "main": "./extension-bundle.js",
   "name": "azure-pipeline-studio",
   "overrides": {
     "glob": "^10.0.0",

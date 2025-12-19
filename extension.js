@@ -23,7 +23,6 @@ function activate(context) {
     console.log('Azure Pipeline YAML Parser extension is now active!');
 
     const parser = new AzurePipelineParser();
-    let lastFormattingWarning;
     let lastRenderedDocument;
     const renderedScheme = 'ado-pipeline-expanded';
     const renderedContent = new Map();
@@ -57,86 +56,51 @@ function activate(context) {
             firstBlockBlankLines: 2,
             betweenSectionBlankLines: 1,
             normalizeAzureVariablePaths: true,
-            azureCompatible: false,
             newlineFormat: '\n',
         };
 
-        if (!vscode) {
-            return defaults;
-        }
+        if (!vscode) return defaults;
 
         try {
-            const config = vscode.workspace.getConfiguration(
-                'azurePipelineStudio',
-                document ? document.uri : undefined,
-            );
-            const noArrayIndent = config.get('format.noArrayIndent');
-            const indentSetting = config.get('format.indent');
-            const lineWidthSetting = config.get('format.lineWidth');
-            const forceQuotesSetting = config.get('format.forceQuotes');
-            const sortKeysSetting = config.get('format.sortKeys');
-            const firstBlockBlankSetting = config.get('format.firstBlockBlankLines');
-            const blankLinesBetweenSectionsSetting = config.get('format.blankLinesBetweenSections');
-            const stepSpacingSetting = config.get('format.stepSpacing');
-            const normalizeAzureVariablePathsSetting = config.get('format.normalizeAzureVariablePaths');
-            const newlineFormatSetting = config.get('format.newlineFormat');
-            const azureCompatibleSetting = config.get('format.azureCompatible');
-
+            const config = vscode.workspace.getConfiguration('azurePipelineStudio', document?.uri);
             const result = { ...defaults };
 
-            if (typeof noArrayIndent === 'boolean') {
-                result.noArrayIndent = noArrayIndent;
+            const booleanSettings = [
+                'noArrayIndent',
+                'forceQuotes',
+                'sortKeys',
+                'stepSpacing',
+                'normalizeAzureVariablePaths',
+            ];
+            booleanSettings.forEach((key) => {
+                const value = config.get(`format.${key}`);
+                if (typeof value === 'boolean') result[key] = value;
+            });
+
+            const indent = config.get('format.indent');
+            if (Number.isInteger(indent) && indent > 0 && indent <= 8) {
+                result.indent = indent;
             }
 
-            if (Number.isInteger(indentSetting) && indentSetting > 0 && indentSetting <= 8) {
-                result.indent = indentSetting;
+            const lineWidth = config.get('format.lineWidth');
+            if (typeof lineWidth === 'number' && lineWidth >= 0) {
+                result.lineWidth = lineWidth;
             }
 
-            if (typeof lineWidthSetting === 'number' && lineWidthSetting >= 0) {
-                result.lineWidth = lineWidthSetting;
-            }
+            const integerSettings = [
+                { key: 'firstBlockBlankLines', min: 0, max: 4 },
+                { key: 'betweenSectionBlankLines', min: 0, max: 4 },
+            ];
+            integerSettings.forEach(({ key, min, max }) => {
+                const value = config.get(`format.${key}`);
+                if (Number.isInteger(value) && value >= min && value <= max) {
+                    result[key] = value;
+                }
+            });
 
-            if (typeof forceQuotesSetting === 'boolean') {
-                result.forceQuotes = forceQuotesSetting;
-            }
-
-            if (typeof sortKeysSetting === 'boolean') {
-                result.sortKeys = sortKeysSetting;
-            }
-
-            if (
-                Number.isInteger(firstBlockBlankSetting) &&
-                firstBlockBlankSetting >= 0 &&
-                firstBlockBlankSetting <= 4
-            ) {
-                result.firstBlockBlankLines = firstBlockBlankSetting;
-            }
-
-            if (
-                Number.isInteger(blankLinesBetweenSectionsSetting) &&
-                blankLinesBetweenSectionsSetting >= 0 &&
-                blankLinesBetweenSectionsSetting <= 4
-            ) {
-                result.betweenSectionBlankLines = blankLinesBetweenSectionsSetting;
-            }
-
-            if (typeof stepSpacingSetting === 'boolean') {
-                result.stepSpacing = stepSpacingSetting;
-            }
-
-            if (typeof normalizeAzureVariablePathsSetting === 'boolean') {
-                result.normalizeAzureVariablePaths = normalizeAzureVariablePathsSetting;
-            }
-
-            if (typeof azureCompatibleSetting === 'boolean') {
-                result.azureCompatible = azureCompatibleSetting;
-            }
-
-            if (
-                typeof newlineFormatSetting === 'string' &&
-                (newlineFormatSetting === '\n' || newlineFormatSetting === '\r\n')
-            ) {
-                result.newlineFormat = newlineFormatSetting;
+            const newlineFormat = config.get('format.newlineFormat');
+            if (newlineFormat === '\n' || newlineFormat === '\r\n') {
+                result.newlineFormat = newlineFormat;
             }
 
             return result;
@@ -154,6 +118,7 @@ function activate(context) {
         const originalText = document.getText();
         const formatOptions = getFormatSettings(document);
         formatOptions.fileName = document.fileName;
+        formatOptions.wasExpanded = false;
         const formatResult = formatYaml(originalText, formatOptions);
 
         if (formatResult.error) {
@@ -189,61 +154,34 @@ function activate(context) {
     };
 
     const renderYamlDocument = async (document, options = {}) => {
-        if (!document) {
-            return;
-        }
+        if (!document) return;
 
         lastRenderedDocument = document;
         const sourceText = document.getText();
+
         try {
-            // Check if template expansion is enabled
             const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
-            const expandTemplates = config.get('expansion.expandTemplates', true);
             const compileTimeVariables = config.get('expansion.variables', {});
+            const resourceOverrides = buildResourceOverridesForDocument(document);
+            const azureCompatible = options.azureCompatible ?? false;
 
-            let yamlToFormat = sourceText;
-            if (expandTemplates) {
-                const resourceOverrides = buildResourceOverridesForDocument(document);
-                const formatSettings = getFormatSettings(document);
-                // Allow command to override azureCompatible setting
-                const azureCompatible =
-                    options.azureCompatible !== undefined ? options.azureCompatible : formatSettings.azureCompatible;
-                const parserOverrides = {
-                    fileName: document.fileName,
-                    azureCompatible: azureCompatible,
-                };
-                if (resourceOverrides) {
-                    parserOverrides.resources = resourceOverrides;
-                }
-                // Add compile-time variables if any are configured
-                if (compileTimeVariables && Object.keys(compileTimeVariables).length > 0) {
-                    parserOverrides.variables = compileTimeVariables;
-                }
-                yamlToFormat = parser.expandPipelineToString(sourceText, parserOverrides);
-            }
+            const parserOverrides = {
+                fileName: document.fileName,
+                azureCompatible,
+                ...(resourceOverrides && { resources: resourceOverrides }),
+                ...(Object.keys(compileTimeVariables).length && { variables: compileTimeVariables }),
+            };
 
-            const formatSettings = getFormatSettings(document);
-            formatSettings.fileName = document.fileName;
-            // Allow command to override azureCompatible setting
-            if (options.azureCompatible !== undefined) {
-                formatSettings.azureCompatible = options.azureCompatible;
-            }
-            // Mark that expansion happened for Microsoft compatibility mode
-            if (expandTemplates) {
-                formatSettings.wasExpanded = true;
-            }
+            console.log('Parser overrides:', JSON.stringify(parserOverrides, null, 2));
+            const expandedYaml = parser.expandPipelineToString(sourceText, parserOverrides);
 
-            // Debug logging
-            console.log('[Azure Pipeline Studio] Rendering with settings:', {
-                expandTemplates,
-                azureCompatible: formatSettings.azureCompatible,
-                indent: formatSettings.indent,
-                stepSpacing: formatSettings.stepSpacing,
-            });
+            const formatOptions = getFormatSettings(document);
+            formatOptions.fileName = document.fileName;
+            formatOptions.wasExpanded = true;
+            const formatted = formatYaml(expandedYaml, formatOptions);
 
-            const formatResult = formatYaml(yamlToFormat, formatSettings);
             const targetUri = getRenderTargetUri(document);
-            renderedContent.set(targetUri.toString(), formatResult.text);
+            renderedContent.set(targetUri.toString(), formatted.text);
             renderedEmitter.fire(targetUri);
 
             if (!options.silent) {
@@ -254,23 +192,13 @@ function activate(context) {
                     preserveFocus: true,
                 });
             }
-
-            if (formatResult.warning && formatResult.warning !== lastFormattingWarning) {
-                lastFormattingWarning = formatResult.warning;
-                vscode.window.showWarningMessage(formatResult.warning);
-            } else if (!formatResult.warning && lastFormattingWarning) {
-                lastFormattingWarning = undefined;
-            }
         } catch (error) {
             console.error('Error expanding pipeline:', error);
-
-            // Clear the rendering window and show the error
             const targetUri = getRenderTargetUri(document);
             const errorMessage = `# Error Expanding Azure Pipeline\n\n${error.message}\n\n---\n\n${error.stack || ''}`;
             renderedContent.set(targetUri.toString(), errorMessage);
             renderedEmitter.fire(targetUri);
 
-            // Also open the error in the render window if not already visible
             if (!options.silent) {
                 const targetDoc = await vscode.workspace.openTextDocument(targetUri);
                 await vscode.window.showTextDocument(targetDoc, {
@@ -280,71 +208,51 @@ function activate(context) {
                 });
             }
 
-            // Show error notification
-            if (vscode && vscode.window) {
-                vscode.window.showErrorMessage(`Failed to expand Azure Pipeline: ${error.message}`);
-            }
+            vscode.window.showErrorMessage(`Failed to expand Azure Pipeline: ${error.message}`);
         }
     };
 
     function buildResourceOverridesForDocument(document) {
-        if (!vscode || !document) {
-            return undefined;
-        }
+        if (!vscode || !document) return undefined;
 
         const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
         const configuredResources = config.get('resourceLocations');
-        if (!Array.isArray(configuredResources) || configuredResources.length === 0) {
+
+        if (!Array.isArray(configuredResources) || !configuredResources.length) {
             return undefined;
         }
 
         const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
-        const workspaceDir = workspaceFolder ? workspaceFolder.uri.fsPath : undefined;
+        const workspaceDir = workspaceFolder?.uri.fsPath;
         const documentDir = document.fileName ? path.dirname(document.fileName) : undefined;
-
         const repositories = {};
 
-        configuredResources.forEach((entry) => {
-            if (!entry || typeof entry !== 'object') {
-                return;
-            }
+        for (const entry of configuredResources) {
+            if (!entry || typeof entry !== 'object') continue;
 
-            const alias =
-                typeof entry.repository === 'string' && entry.repository.trim().length
-                    ? entry.repository.trim()
-                    : undefined;
+            const alias = entry.repository?.trim();
             const rawPath = pickFirstString(entry.path, entry.location);
-
-            if (!alias || !rawPath) {
-                return;
-            }
+            if (!alias || !rawPath) continue;
 
             const resolvedPath = resolveConfiguredPath(rawPath, workspaceDir, documentDir);
-            if (!resolvedPath) {
-                return;
-            }
+            if (!resolvedPath) continue;
 
             const overrideEntry = { location: resolvedPath };
             const matchCriteria = {};
 
             ['repository', 'name', 'endpoint', 'ref', 'type'].forEach((key) => {
-                if (typeof entry[key] === 'string' && entry[key].trim().length) {
-                    matchCriteria[key] = entry[key].trim();
-                }
+                const value = entry[key]?.trim();
+                if (value) matchCriteria[key] = value;
             });
 
-            if (Object.keys(matchCriteria).length > 0) {
+            if (Object.keys(matchCriteria).length) {
                 overrideEntry.__match = matchCriteria;
             }
 
             repositories[alias] = overrideEntry;
-        });
-
-        if (!Object.keys(repositories).length) {
-            return undefined;
         }
 
-        return { repositories };
+        return Object.keys(repositories).length ? { repositories } : undefined;
     }
 
     const shouldRenderDocument = (document) => {
@@ -362,7 +270,7 @@ function activate(context) {
             return;
         }
 
-        await renderYamlDocument(editor.document);
+        await renderYamlDocument(editor.document, { azureCompatible: false });
     });
     context.subscriptions.push(commandDisposable);
 
@@ -726,7 +634,7 @@ function buildFormatOptionsFromCli(entries) {
             return;
         }
 
-        const booleanOptions = ['noArrayIndent', 'forceQuotes', 'sortKeys', 'stepSpacing', 'azureCompatible'];
+        const booleanOptions = ['noArrayIndent', 'forceQuotes', 'sortKeys', 'stepSpacing'];
         const integerOptions = {
             indent: [1, 8],
             lineWidth: [0, Number.MAX_SAFE_INTEGER],
@@ -870,6 +778,11 @@ if (require.main === module) {
 }
 
 function runCli(args) {
+    // Only run CLI logic when not in VS Code extension mode
+    if (vscode !== undefined) {
+        return;
+    }
+
     const usage =
         'Usage: node extension.js <file1> <file2> ...\n' +
         'Options:\n' +
@@ -881,11 +794,12 @@ function runCli(args) {
         '  -R, --format-recursive <path>    Format files recursively in directory\n' +
         '  -e, --extension <ext>        File extensions to format (default: .yml, .yaml)\n' +
         '  -x, --expand-templates       Expand Azure Pipeline template expressions (${{}},$[],$())\n' +
+        '  -a, --azure-compatible       Use Azure-compatible expansion mode (adds blank lines, etc.)\n' +
         '  -d, --debug                  Print files being formatted';
 
     const argv = minimist(args, {
         string: ['output', 'repo', 'format-option', 'format-recursive', 'extension', 'variables'],
-        boolean: ['help', 'expand-templates', 'debug'],
+        boolean: ['help', 'expand-templates', 'azure-compatible', 'debug'],
         alias: {
             h: 'help',
             o: 'output',
@@ -895,11 +809,13 @@ function runCli(args) {
             e: 'extension',
             v: 'variables',
             x: 'expand-templates',
+            a: 'azure-compatible',
             d: 'debug',
         },
         default: {
             extension: [],
             'expand-templates': false,
+            'azure-compatible': false,
             debug: false,
         },
     });
@@ -952,9 +868,6 @@ function runCli(args) {
 
     if (formatRecursive.length) {
         const formatOverrides = buildFormatOptionsFromCli(formatOption) || {};
-        if (argv['expand-templates']) {
-            formatOverrides.expandTemplates = true;
-        }
         const extensionFilters = extension.length ? extension : ['.yml', '.yaml'];
         const recursiveResult = formatFilesRecursively(formatRecursive, extensionFilters, formatOverrides);
         recursiveResult.formattedFiles.forEach((filePath) => {
@@ -998,9 +911,6 @@ function runCli(args) {
     }
 
     const formatOverrides = buildFormatOptionsFromCli(formatOption) || {};
-    if (argv['expand-templates']) {
-        formatOverrides.expandTemplates = true;
-    }
     const repositories = buildRepositoryOverridesFromCliEntries(repositoryEntries, process.cwd());
     // Use the variables map we parsed earlier
     const cliVariables = Object.keys(variablesMap).length > 0 ? variablesMap : undefined;
@@ -1025,7 +935,7 @@ function runCli(args) {
             if (argv['expand-templates'] && cliParser) {
                 const parserOptions = {
                     fileName: absolutePath,
-                    azureCompatible: formatOverrides.azureCompatible,
+                    azureCompatible: argv['azure-compatible'] || false,
                 };
                 if (repositories) {
                     // Convert repository mappings to resourceLocations format
@@ -1045,7 +955,7 @@ function runCli(args) {
                     }
                 }
                 try {
-                    yamlToFormat = cliParser.expandPipelineToString(sourceText, parserOptions);
+                    expandedYaml = cliParser.expandPipelineToString(sourceText, parserOptions);
                 } catch (expandError) {
                     console.error(`[${filePath}] Template expansion failed: ${expandError.message}`);
                     if (argv.debug) {
@@ -1064,7 +974,7 @@ function runCli(args) {
                 fileOptions.wasExpanded = true;
             }
 
-            const formatted = formatYaml(yamlToFormat, fileOptions);
+            const formatted = formatYaml(expandedYaml || yamlToFormat, fileOptions);
             if (formatted.error) {
                 console.error(`[${filePath}] ${formatted.error}`);
                 hasErrors = true;
