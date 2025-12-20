@@ -181,13 +181,10 @@
   },
   "description": "Azure DevOps Pipeline toolkit for rendering, formatting, and navigating YAML pipelines with template expansion.",
   "devDependencies": {
-    "@babel/cli": "^7.25.6",
-    "@babel/core": "^7.25.2",
-    "@babel/preset-env": "^7.25.3",
     "@types/vscode": "^1.64.0",
     "ajv": "^8.0.0",
-    "babel-loader": "^9.2.1",
     "copy-webpack-plugin": "^13.0.1",
+    "terser-webpack-plugin": "^5.3.16",
     "webpack": "^5.97.1",
     "webpack-cli": "^4.10.0"
   },
@@ -217,5 +214,5 @@
     "test:module": "node tests/test-azure-expressions-module.js"
   },
   "type": "commonjs",
-  "version": "1.0.3"
+  "version": "1.0.4"
 }

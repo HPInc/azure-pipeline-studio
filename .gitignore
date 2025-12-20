@@ -2,13 +2,4 @@
 /dist
 *.vsix
 /temp
-/generated
-/generated-cjs
-/.antlr
-input.json
-/tests/debug.txt
-/tests/output.txt
-.terragrunt-cache
-.terraform
-.terraform.lock.hcl
-terragrunt-debug.tfvars.json
+package-lock.json

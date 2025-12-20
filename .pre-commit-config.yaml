@@ -1,6 +1,6 @@
 repos:
 - repo: https://github.com/HPInc/azure-pipeline-studio
-  rev: v1.0.2
+  rev: v1.0.4
   hooks:
   - id: azure-pipeline-formatter
 - repo: local
@@ -12,6 +12,7 @@ repos:
     types: [ file ]
     files: \.(js)$
     args: [ --write ]
+    exclude: ^extension-bundle\.js$
 - repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
   rev: v2.12.0
   hooks:
@@ -23,6 +24,7 @@ repos:
   rev: v4.5.0
   hooks:
   - id: end-of-file-fixer
+    exclude: ^extension-bundle\.js$
   - id: check-added-large-files
     args: [ --maxkb=1000 ]
   - id: check-docstring-first
@@ -31,7 +33,7 @@ repos:
   - id: check-shebang-scripts-are-executable
   - id: pretty-format-json
     args: [ --autofix ]
-    exclude: ^.vscode
+    exclude: ^(.vscode|extension-bundle\.js)$
   - id: mixed-line-ending
     args: [ --fix=lf ]
 - repo: https://github.com/jumanjihouse/pre-commit-hooks
