@@ -132,9 +132,7 @@ for (let i = 0; i < test3Lines.length; i++) {
 }
 
 // Formatter adds blank lines for readability
-console.log(
-    `✓ Test 3: Found ${test3BlankLines} blank lines in complex nested structure (formatter adds for readability)`,
-);
+console.log(`✓ Test 3: Found ${test3BlankLines} blank lines in complex nested structure (formatter adds for readability)`);
 
 // Test 4: Verify formatter output structure
 const test4Input = `stages:

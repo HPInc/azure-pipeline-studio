@@ -221,9 +221,7 @@ steps:
     });
 
     const hasComments = result.text.includes('# Test all options');
-    const hasSpacing = result.text
-        .split('\n')
-        .some((line, i, lines) => line.trim() === '' && lines[i + 1] && lines[i + 1].includes('- bash:'));
+    const hasSpacing = result.text.split('\n').some((line, i, lines) => line.trim() === '' && lines[i + 1] && lines[i + 1].includes('- bash:'));
     const hasLongLine = result.text.split('\n').some((line) => line.length > 80);
 
     console.log(`   Comments preserved: ${hasComments}`);
@@ -368,16 +366,10 @@ runTest('Recursive Formatting Continues on Errors', () => {
         // Create valid files with intentionally poor formatting
         fs.writeFileSync(path.join(testDir, 'valid1.yml'), 'steps:\n-  task: Task1@1\n   displayName: Valid 1');
         fs.writeFileSync(path.join(testDir, 'valid2.yaml'), 'variables:\n  var1:  value1\nsteps:\n-  bash: echo test');
-        fs.writeFileSync(
-            path.join(testDir, 'subdir', 'valid3.yml'),
-            'parameters:\n  param1:  value1\nsteps:\n-  script: echo nested',
-        );
+        fs.writeFileSync(path.join(testDir, 'subdir', 'valid3.yml'), 'parameters:\n  param1:  value1\nsteps:\n-  script: echo nested');
 
         // Create invalid file
-        fs.writeFileSync(
-            path.join(testDir, 'invalid.yml'),
-            'steps:\n- task: [invalid yaml syntax::\n  unclosed: [bracket',
-        );
+        fs.writeFileSync(path.join(testDir, 'invalid.yml'), 'steps:\n- task: [invalid yaml syntax::\n  unclosed: [bracket');
 
         // Format recursively (pass empty array for extensions to use defaults)
         const result = formatFilesRecursively([testDir], [], {});
@@ -392,8 +384,7 @@ runTest('Recursive Formatting Continues on Errors', () => {
         const valid2Content = fs.readFileSync(path.join(testDir, 'valid2.yaml'), 'utf8');
         const valid3Content = fs.readFileSync(path.join(testDir, 'subdir', 'valid3.yml'), 'utf8');
 
-        const allValidFilesExist =
-            valid1Content.includes('Task1@1') && valid2Content.includes('var1:') && valid3Content.includes('param1:');
+        const allValidFilesExist = valid1Content.includes('Task1@1') && valid2Content.includes('var1:') && valid3Content.includes('param1:');
 
         console.log(`   All valid files processed: ${allValidFilesExist}`);
         console.log(`   At least one error recorded: ${result.errors.length >= 1}`);
@@ -439,10 +430,7 @@ steps:
     const preservesDollarBraces = result.text.includes('${{ parameters.testParam }}');
     const preservesDollarParens = result.text.includes('$(BuildNumber)');
     const preservesDollarBrackets = result.text.includes('$[variables.branch]');
-    const preservesAllSyntaxes =
-        result.text.includes('${{ parameters.version }}') &&
-        result.text.includes('$(BuildNumber)') &&
-        result.text.includes('$[variables.branch]');
+    const preservesAllSyntaxes = result.text.includes('${{ parameters.version }}') && result.text.includes('$(BuildNumber)') && result.text.includes('$[variables.branch]');
 
     console.log(`   ${{}} syntax preserved: ${preservesDollarBraces}`);
     console.log(`   $() syntax preserved: ${preservesDollarParens}`);

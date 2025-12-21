@@ -18,11 +18,7 @@ const testFiles = [
 ];
 
 // Try to find templates directory - it might be in different locations
-const possiblePaths = [
-    path.join(__dirname, '../../templates'),
-    path.join(__dirname, '../../../templates'),
-    '/root/workspace/templates',
-];
+const possiblePaths = [path.join(__dirname, '../../templates'), path.join(__dirname, '../../../templates'), '/root/workspace/templates'];
 
 let templatesRoot = null;
 for (const testPath of possiblePaths) {
@@ -60,9 +56,7 @@ for (const relPath of testFiles) {
     const isIdempotent = result1.text === result2.text && result2.text === result3.text;
 
     if (isIdempotent) {
-        console.log(
-            `✅ ${fileName.padEnd(45)} (${original.length.toString().padStart(4)} → ${result1.text.length.toString().padStart(4)} chars)`,
-        );
+        console.log(`✅ ${fileName.padEnd(45)} (${original.length.toString().padStart(4)} → ${result1.text.length.toString().padStart(4)} chars)`);
         passCount++;
     } else {
         console.log(`❌ ${fileName.padEnd(45)} - NOT IDEMPOTENT`);

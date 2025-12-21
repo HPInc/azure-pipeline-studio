@@ -98,8 +98,7 @@ testFiles.forEach((file) => {
 });
 
 const yamlSummary = `${passCount} passed`;
-const failSummary =
-    expectedFailCount > 0 ? `${expectedFailCount} expected failures, ${failCount} failed` : `${failCount} failed`;
+const failSummary = expectedFailCount > 0 ? `${expectedFailCount} expected failures, ${failCount} failed` : `${failCount} failed`;
 console.log(`\n📊 YAML Tests: ${yamlSummary}, ${failSummary}, ${testFiles.length} total\n`);
 
 // Run validation test scripts (test-*.js files)
@@ -122,9 +121,7 @@ if (validationTests.length > 0) {
             console.log(`❌ FAIL ${testScript} - Exit code ${err.status}`);
         }
     });
-    console.log(
-        `\n📊 Validation Tests: ${validationPassCount} passed, ${validationFailCount} failed, ${validationTests.length} total\n`,
-    );
+    console.log(`\n📊 Validation Tests: ${validationPassCount} passed, ${validationFailCount} failed, ${validationTests.length} total\n`);
 }
 
 // Run comprehensive formatter tests

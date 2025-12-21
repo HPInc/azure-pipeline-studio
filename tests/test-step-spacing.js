@@ -36,13 +36,7 @@ function countStepSpacing(text) {
 
         // Look for blank lines that appear before step items
         // Updated to include all Azure Pipeline step types
-        if (
-            line.trim() === '' &&
-            nextLine &&
-            nextLine.match(
-                /^\s*-\s+(task|bash|powershell|pwsh|script|sh|checkout|download|downloadBuild|getPackage|publish|reviewApp|template)/,
-            )
-        ) {
+        if (line.trim() === '' && nextLine && nextLine.match(/^\s*-\s+(task|bash|powershell|pwsh|script|sh|checkout|download|downloadBuild|getPackage|publish|reviewApp|template)/)) {
             blankCount++;
         }
     }

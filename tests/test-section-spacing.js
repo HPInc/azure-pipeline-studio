@@ -38,14 +38,10 @@ let hasBlankAfterTrigger = false;
 let hasTwoBlankBeforeStages = false;
 
 for (let i = 0; i < test1Lines.length; i++) {
-    if (test1Lines[i].trim() === 'resources:' && i + 4 < test1Lines.length && test1Lines[i + 4] === '')
-        hasBlankAfterResources = true;
-    if (test1Lines[i].includes('name:') && i + 1 < test1Lines.length && test1Lines[i + 1] === '')
-        hasBlankAfterName = true;
-    if (test1Lines[i].trim() === 'trigger:' && test1Lines.some((l, idx) => idx > i && idx < i + 5 && l === ''))
-        hasBlankAfterTrigger = true;
-    if (test1Lines[i].trim() === 'stages:' && i >= 2 && test1Lines[i - 1] === '' && test1Lines[i - 2] === '')
-        hasTwoBlankBeforeStages = true;
+    if (test1Lines[i].trim() === 'resources:' && i + 4 < test1Lines.length && test1Lines[i + 4] === '') hasBlankAfterResources = true;
+    if (test1Lines[i].includes('name:') && i + 1 < test1Lines.length && test1Lines[i + 1] === '') hasBlankAfterName = true;
+    if (test1Lines[i].trim() === 'trigger:' && test1Lines.some((l, idx) => idx > i && idx < i + 5 && l === '')) hasBlankAfterTrigger = true;
+    if (test1Lines[i].trim() === 'stages:' && i >= 2 && test1Lines[i - 1] === '' && test1Lines[i - 2] === '') hasTwoBlankBeforeStages = true;
 }
 
 assert(hasBlankAfterResources, 'Test 1: Should have blank line after resources section');
@@ -80,10 +76,7 @@ for (let i = 0; i < test2Lines.length; i++) {
 }
 
 assert(foundPipelineReportLine > 0, 'Test 2: Should find pipeline-report template');
-assert(
-    test2Lines[foundPipelineReportLine - 1] === '',
-    'Test 2: Should have blank line before second template at indent 4',
-);
+assert(test2Lines[foundPipelineReportLine - 1] === '', 'Test 2: Should have blank line before second template at indent 4');
 console.log('✅ PASS\n');
 
 // Test 3: Conditional expressions at indent 4 should have spacing
@@ -202,10 +195,7 @@ for (let i = 0; i < test6Lines.length; i++) {
 // Should have blank lines between each section
 assert(blankLineCount >= 4, `Test 6: Should have at least 4 blank lines (between sections), found ${blankLineCount}`);
 // Should have 1 blank line before stages: (betweenSectionBlankLines, since there are no parameters)
-assert(
-    stagesLineIndex > 0 && test6Lines[stagesLineIndex - 1] === '',
-    'Test 6: Should have at least 1 blank line before stages:',
-);
+assert(stagesLineIndex > 0 && test6Lines[stagesLineIndex - 1] === '', 'Test 6: Should have at least 1 blank line before stages:');
 console.log('✅ PASS\n');
 
 // Test 7: Idempotency of recent changes

@@ -48,9 +48,7 @@ const extraPropsLines = expanded1.split('\n');
 const extraPropsIdx = extraPropsLines.findIndex((l) => l.includes('extraProperties:'));
 if (extraPropsIdx >= 0) {
     // Check if there are blank lines in the content after the header
-    const hasBlankLines = extraPropsLines
-        .slice(extraPropsIdx + 1, extraPropsIdx + 10)
-        .some((line) => line.trim() === '' || /^\s+$/.test(line));
+    const hasBlankLines = extraPropsLines.slice(extraPropsIdx + 1, extraPropsIdx + 10).some((line) => line.trim() === '' || /^\s+$/.test(line));
     console.log('Content has blank lines (from empty expression):', hasBlankLines ? '✅' : '❌');
 } else {
     console.log('Could not find extraProperties block:', '❌');

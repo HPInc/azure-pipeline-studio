@@ -109,11 +109,7 @@ steps:
     for (let i = stagesIndex - 1; i >= 0 && lines[i].trim() === ''; i--) {
         blankCountStages++;
     }
-    assert.strictEqual(
-        blankCountStages,
-        2,
-        `Expected 2 blank lines before 'stages:' (first occurrence), got ${blankCountStages}`,
-    );
+    assert.strictEqual(blankCountStages, 2, `Expected 2 blank lines before 'stages:' (first occurrence), got ${blankCountStages}`);
 
     // Check jobs (formatter adds 1 blank line for nested sections)
     const jobsIndex = lines.findIndex((l) => l.trim() === 'jobs:');
@@ -121,11 +117,7 @@ steps:
     for (let i = jobsIndex - 1; i >= 0 && lines[i].trim() === ''; i--) {
         blankCountJobs++;
     }
-    assert.strictEqual(
-        blankCountJobs,
-        1,
-        `Expected 1 blank line before 'jobs:' (nested section spacing), got ${blankCountJobs}`,
-    );
+    assert.strictEqual(blankCountJobs, 1, `Expected 1 blank line before 'jobs:' (nested section spacing), got ${blankCountJobs}`);
 
     // Check steps (formatter adds 1 blank line for nested sections)
     const stepsIndex = lines.findIndex((l) => l.trim() === 'steps:');
@@ -133,11 +125,7 @@ steps:
     for (let i = stepsIndex - 1; i >= 0 && lines[i].trim() === ''; i--) {
         blankCountSteps++;
     }
-    assert.strictEqual(
-        blankCountSteps,
-        1,
-        `Expected 1 blank line before 'steps:' (nested section spacing), got ${blankCountSteps}`,
-    );
+    assert.strictEqual(blankCountSteps, 1, `Expected 1 blank line before 'steps:' (nested section spacing), got ${blankCountSteps}`);
 
     console.log('✓ firstBlockBlankLines applies to FIRST section only test passed');
 }

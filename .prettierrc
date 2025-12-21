@@ -6,5 +6,6 @@
   "singleQuote": true,
   "endOfLine": "lf",
   "bracketSpacing": true,
-  "printWidth": 120
+  "printWidth": 200,
+  "trailingComma": "es5"
 }

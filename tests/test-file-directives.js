@@ -19,8 +19,8 @@ function test(name, fn) {
 }
 
 // Test 1: Disable formatting with =false
-test('Disable formatting with # ado-yaml-format=false', () => {
-    const input = `# ado-yaml-format=false
+test('Disable formatting with # aps-format=false', () => {
+    const input = `# aps-format=false
 parameters:
 - name:    test
   default:   value
@@ -35,8 +35,8 @@ stages:
 });
 
 // Test 2: Disable formatting with : false
-test('Disable formatting with # ado-yaml-format: false', () => {
-    const input = `# ado-yaml-format: false
+test('Disable formatting with # aps-format: false', () => {
+    const input = `# aps-format: false
 parameters:
 - name:    test`;
 
@@ -46,7 +46,7 @@ parameters:
 
 // Test 3: Custom lineWidth directive
 test('Custom lineWidth via directive', () => {
-    const input = `# ado-yaml-format lineWidth=120
+    const input = `# aps-format lineWidth=120
 parameters:
   - name: test
     default: value`;
@@ -60,7 +60,7 @@ parameters:
 
 // Test 4: Multiple options in directive
 test('Multiple options in directive', () => {
-    const input = `# ado-yaml-format indent=4,lineWidth=100,forceQuotes=true
+    const input = `# aps-format indent=4,lineWidth=100,forceQuotes=true
 parameters:
   - name: test
     default: value`;
@@ -73,7 +73,7 @@ parameters:
 
 // Test 5: Newline format directive
 test('Newline format directive', () => {
-    const input = `# ado-yaml-format newline=\\r\\n
+    const input = `# aps-format newline=\\r\\n
 parameters:
   - name: test`;
 
@@ -91,7 +91,7 @@ test('Directive after 5 lines is ignored', () => {
 
 # Some comment
 # Another comment
-# ado-yaml-format=false
+# aps-format=false
 stages:
   - stage:   Build`;
 
@@ -117,7 +117,7 @@ test('No directive - normal formatting', () => {
 
 // Test 8: Boolean options in directive
 test('Boolean options in directive', () => {
-    const input = `# ado-yaml-format forceQuotes=true,sortKeys=true
+    const input = `# aps-format forceQuotes=true,sortKeys=true
 parameters:
   b: second
   a: first`;
@@ -131,7 +131,7 @@ parameters:
 // Test 9: Directive with comment before it
 test('Directive after initial comment', () => {
     const input = `# This is my pipeline
-# ado-yaml-format=false
+# aps-format=false
 parameters:
   - name:    test`;
 
@@ -144,7 +144,7 @@ parameters:
 
 // Test 10: Invalid directive is ignored
 test('Invalid directive is ignored', () => {
-    const input = `# ado-yaml-format invalidOption=xyz
+    const input = `# aps-format invalidOption=xyz
 parameters:
   - name:    test`;
 

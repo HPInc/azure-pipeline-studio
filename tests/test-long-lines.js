@@ -56,11 +56,7 @@ runTest('Long File Paths', () => {
 
     console.log(`   Found ${longLines.length} long lines (>80 chars)`);
 
-    return (
-        longLines.length > 0 &&
-        result.text.includes('MyVeryLongProjectNameWithManyFolders') &&
-        result.text.includes('application-artifacts-for-deployment')
-    );
+    return longLines.length > 0 && result.text.includes('MyVeryLongProjectNameWithManyFolders') && result.text.includes('application-artifacts-for-deployment');
 });
 
 // Test 3: Long URL Preservation
@@ -78,11 +74,7 @@ steps:
 
     console.log(`   Found ${veryLongLines.length} very long lines (>150 chars)`);
 
-    return (
-        veryLongLines.length > 0 &&
-        result.text.includes('database.windows.net') &&
-        result.text.includes('bulk-operations')
-    );
+    return veryLongLines.length > 0 && result.text.includes('database.windows.net') && result.text.includes('bulk-operations');
 });
 
 // Test 4: Python Code with Long Lines
@@ -112,11 +104,7 @@ runTest('Python Code Long Lines', () => {
 
     console.log(`   Found ${longLines.length} long lines in Python code`);
 
-    return (
-        longLines.length > 0 &&
-        result.text.includes('complex_processing_function') &&
-        result.text.includes('DefaultEndpointsProtocol=https')
-    );
+    return longLines.length > 0 && result.text.includes('complex_processing_function') && result.text.includes('DefaultEndpointsProtocol=https');
 });
 
 // Test 5: PowerShell Command Long Lines
@@ -153,11 +141,7 @@ steps:
 
     console.log(`   Found ${longLines.length} long YAML value lines`);
 
-    return (
-        longLines.length > 0 &&
-        result.text.includes('various stages and jobs') &&
-        result.text.includes('--no-dependencies')
-    );
+    return longLines.length > 0 && result.text.includes('various stages and jobs') && result.text.includes('--no-dependencies');
 });
 
 // Test 7: Mixed Long Content
@@ -186,12 +170,7 @@ steps:
 
     console.log(`   Found ${longLines.length} long lines across different content types`);
 
-    return (
-        longLines.length >= 3 &&
-        result.text.includes('implement-complex-data-processing') &&
-        result.text.includes('very-long-server-name') &&
-        result.text.includes('--self-contained true')
-    );
+    return longLines.length >= 3 && result.text.includes('implement-complex-data-processing') && result.text.includes('very-long-server-name') && result.text.includes('--self-contained true');
 });
 
 // Test 8: Line Width Configuration

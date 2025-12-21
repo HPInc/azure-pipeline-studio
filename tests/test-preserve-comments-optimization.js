@@ -37,18 +37,12 @@ runTest('Content line after comment block is preserved', () => {
     const result = formatYaml(input);
 
     // Verify all comments are preserved
-    assert(
-        result.text.includes('template: /projects/pssw-devops/stages/publish-v0.yaml'),
-        'First comment line should be preserved',
-    );
+    assert(result.text.includes('template: /projects/pssw-devops/stages/publish-v0.yaml'), 'First comment line should be preserved');
     assert(result.text.includes('stageName: Publish'), 'Second comment line should be preserved');
     assert(result.text.includes('publishParams'), 'Third comment line should be preserved');
 
     // Verify template line is preserved
-    assert(
-        result.text.includes('- template: /projects/pssw-devops/stages/report-status-v0.yaml'),
-        'Template line after comments should be preserved',
-    );
+    assert(result.text.includes('- template: /projects/pssw-devops/stages/report-status-v0.yaml'), 'Template line after comments should be preserved');
 
     // Verify blank line after comment block
     const lines = result.text.split('\n');
@@ -99,10 +93,7 @@ runTest('Parent-child relationship detected correctly', () => {
     // Next non-empty line should be a nested property (no blank between parent and child)
     const nextLine = lines[configIndex + 1];
     assert(nextLine.trim() !== '', 'Should not have blank line after parent key');
-    assert(
-        nextLine.includes('versionMajorMinor') || nextLine.includes('trunkBranch'),
-        'Next line should be nested property',
-    );
+    assert(nextLine.includes('versionMajorMinor') || nextLine.includes('trunkBranch'), 'Next line should be nested property');
 
     console.log('   ✓ No blank line between parent and nested children');
 });
@@ -252,10 +243,7 @@ stages:
     for (let i = varsIndex - 1; i >= 0 && lines[i].trim() === ''; i--) {
         blanksBeforeVars++;
     }
-    assert(
-        blanksBeforeVars === 2,
-        `Expected 2 blanks before variables (first section after params), got ${blanksBeforeVars}`,
-    );
+    assert(blanksBeforeVars === 2, `Expected 2 blanks before variables (first section after params), got ${blanksBeforeVars}`);
 
     // Should have at least 1 blank before stages (preserved from input)
     let blanksBeforeStages = 0;

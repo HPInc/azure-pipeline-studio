@@ -267,12 +267,12 @@ Control formatting per file using special comments in the first 5 lines:
 
 **Disable formatting:**
 ```yaml
-# ado-yaml-format=false
+# aps-format=false
 ```
 
 **Custom options:**
 ```yaml
-# ado-yaml-format indent=4,lineWidth=120,newline=\r\n
+# aps-format indent=4,lineWidth=120,newline=\r\n
 ```
 
 **Supported Options:**

@@ -33,39 +33,19 @@ function runTest(name, input, expected) {
 }
 
 // Test 1: Comments before list items stay at column 0 with noArrayIndent (yaml library default)
-runTest(
-    'Comments before list items at column 0',
-    'jobs:\n# Comment describing the job\n- job: A',
-    'jobs:\n# Comment describing the job\n- job: A',
-);
+runTest('Comments before list items at column 0', 'jobs:\n# Comment describing the job\n- job: A', 'jobs:\n# Comment describing the job\n- job: A');
 
 // Test 2: Inline comment after empty key moves to separate line (yaml library behavior)
-runTest(
-    'Inline comment after empty key moves to separate line',
-    'jobs: # Inline comment\n- job: A',
-    'jobs:\n# Inline comment\n- job: A',
-);
+runTest('Inline comment after empty key moves to separate line', 'jobs: # Inline comment\n- job: A', 'jobs:\n# Inline comment\n- job: A');
 
 // Test 3: Nested keys with comments at matching indent
-runTest(
-    'Nested keys with comments',
-    'stages:\n- stage: A\n  jobs:\n  # Job list\n  - job: Build',
-    'stages:\n- stage: A\n\n  jobs:\n  # Job list\n  - job: Build',
-);
+runTest('Nested keys with comments', 'stages:\n- stage: A\n  jobs:\n  # Job list\n  - job: Build', 'stages:\n- stage: A\n\n  jobs:\n  # Job list\n  - job: Build');
 
 // Test 4: Nested inline comments move to separate line (yaml library behavior)
-runTest(
-    'Nested inline comments move to separate line',
-    'stages:\n- stage: A\n  jobs: # Job list\n  - job: Build',
-    'stages:\n- stage: A\n\n  jobs:\n  # Job list\n  - job: Build',
-);
+runTest('Nested inline comments move to separate line', 'stages:\n- stage: A\n  jobs: # Job list\n  - job: Build', 'stages:\n- stage: A\n\n  jobs:\n  # Job list\n  - job: Build');
 
 // Test 5: Mixed comments - inline comments move to separate line (yaml library behavior)
-runTest(
-    'Mixed comments with formatting',
-    'variables: # Global vars\n  foo: bar\n\njobs:\n# Main job\n- job: Main',
-    'variables:\n  # Global vars\n  foo: bar\n\njobs:\n# Main job\n- job: Main',
-);
+runTest('Mixed comments with formatting', 'variables: # Global vars\n  foo: bar\n\njobs:\n# Main job\n- job: Main', 'variables:\n  # Global vars\n  foo: bar\n\njobs:\n# Main job\n- job: Main');
 
 // Test 6: Verify round-trip idempotency
 runTest('Round-trip idempotency', 'jobs:\n# Comment\n- job: A', 'jobs:\n# Comment\n- job: A');

@@ -34,9 +34,7 @@ try {
     const hasEnvironmentVar = expanded.includes('Environment is $(targetEnvironment)');
     const hasBuildSteps = expanded.includes('Build Solution');
     const hasPreStepsBefore = expanded.includes('Initialize Build') && expanded.includes('Nested Template Step 1');
-    const correctOrder =
-        expanded.indexOf('Initialize Build') < expanded.indexOf('Nested Template Step 1') &&
-        expanded.indexOf('Nested Template Step 1') < expanded.indexOf('Build Solution');
+    const correctOrder = expanded.indexOf('Initialize Build') < expanded.indexOf('Nested Template Step 1') && expanded.indexOf('Nested Template Step 1') < expanded.indexOf('Build Solution');
 
     console.log('\n✓ Validation checks:');
     console.log(`  - Nested template content found: ${hasNestedContent ? '✓' : '✗'}`);
