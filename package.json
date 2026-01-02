@@ -1,5 +1,6 @@
 {
   "activationEvents": [
+    "onLanguage:azure-pipelines",
     "onLanguage:yaml",
     "onLanguage:yml",
     "onCommand:azurePipelineStudio.showRenderedYaml",
@@ -214,5 +215,5 @@
     "test:module": "node tests/test-azure-expressions-module.js"
   },
   "type": "commonjs",
-  "version": "1.0.5"
+  "version": "1.0.6"
 }
