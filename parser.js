@@ -1195,15 +1195,8 @@ class AzurePipelineParser {
             // If original was a single-line full expression that expanded to multiline,
             // also track for + chomping (the whole value was a template expression)
             if (isSingleLineFullExpression && typeof expandedValue === 'string' && expandedValue.includes('\n')) {
-                if (!context.scriptsWithExpressions) {
-                    context.scriptsWithExpressions = new Set();
-                }
                 const contentKey = expandedValue.replace(/\s+$/, '');
                 context.scriptsWithExpressions.add(contentKey);
-
-                if (!context.scriptsWithLastLineExpressions) {
-                    context.scriptsWithLastLineExpressions = new Set();
-                }
                 context.scriptsWithLastLineExpressions.add(contentKey);
             }
 
@@ -1211,7 +1204,6 @@ class AzurePipelineParser {
         }
 
         // Convert bash/script/pwsh/powershell/checkout shortcuts to task format (like Azure Pipelines does)
-        // Do this AFTER all properties have been collected
         // Skip if: already converted (has task/inputs/targetType) OR we're inside an inputs object (parentKey === 'inputs')
         if (
             (result.bash || result.script || result.pwsh || result.powershell || result.checkout) &&
@@ -1220,84 +1212,52 @@ class AzurePipelineParser {
             !result.targetType &&
             parentKey !== 'inputs'
         ) {
-            const shorthandKey = result.bash
-                ? 'bash'
-                : result.script
-                  ? 'script'
-                  : result.pwsh
-                    ? 'pwsh'
-                    : result.powershell
-                      ? 'powershell'
-                      : 'checkout';
-
-            const taskType =
-                shorthandKey === 'script'
-                    ? 'CmdLine@2'
-                    : shorthandKey === 'pwsh' || shorthandKey === 'powershell'
-                      ? 'PowerShell@2'
-                      : shorthandKey === 'checkout'
-                        ? '6d15af64-176c-496d-b583-fd2ae21d4df4@1'
-                        : 'Bash@3';
-
+            const shorthandKey = ['bash', 'script', 'pwsh', 'powershell', 'checkout'].find((k) => result[k]);
             const shorthandValue = result[shorthandKey];
             delete result[shorthandKey];
 
-            // Filter out properties that are already task-related or shouldn't be copied
-            const otherProps = {};
-            for (const [key, value] of Object.entries(result)) {
-                // Skip task-related properties that shouldn't be at the task level
-                if (key !== 'task' && key !== 'inputs') {
-                    otherProps[key] = value;
-                }
-            }
+            // Map shorthand to task type
+            const taskTypeMap = {
+                script: 'CmdLine@2',
+                bash: 'Bash@3',
+                pwsh: 'PowerShell@2',
+                powershell: 'PowerShell@2',
+                checkout: '6d15af64-176c-496d-b583-fd2ae21d4df4@1',
+            };
 
-            // Build task structure
-            const taskResult = { task: taskType };
+            const taskResult = { task: taskTypeMap[shorthandKey] };
 
             if (shorthandKey === 'checkout') {
-                // Separate task-level properties from input properties
-                const { condition, displayName, ...inputProps } = otherProps;
+                // Checkout: extract condition and displayName to task level, rest to inputs
+                const { condition, displayName, ...inputProps } = result;
 
-                // Task-level properties (in desired order)
                 if (displayName) taskResult.displayName = displayName;
-                if (condition !== undefined) {
-                    taskResult.condition = condition;
-                } else if (shorthandValue === 'none') {
-                    // Set condition: false when repository is 'none' (unless already specified)
-                    taskResult.condition = false;
-                }
+                taskResult.condition =
+                    condition !== undefined ? condition : shorthandValue === 'none' ? false : undefined;
+                if (taskResult.condition === undefined) delete taskResult.condition;
 
-                // For checkout, most properties go into inputs
-                taskResult.inputs = {
-                    repository: shorthandValue,
-                    ...inputProps,
-                };
-
-                return taskResult;
+                taskResult.inputs = { repository: shorthandValue, ...inputProps };
             } else {
-                // For bash/script/pwsh/powershell, other properties stay at task level
-                // Extract workingDirectory to place it inside inputs
-                const { workingDirectory, ...remainingProps } = otherProps;
+                // Script tasks: extract workingDirectory to inputs, rest stays at task level
+                const { workingDirectory, ...taskProps } = result;
 
-                Object.assign(taskResult, remainingProps);
-                const inputs = {};
-                if (shorthandKey === 'bash' || shorthandKey === 'pwsh' || shorthandKey === 'powershell') {
-                    inputs.targetType = 'inline';
-                }
-                inputs.script = shorthandValue;
-                if (shorthandKey === 'pwsh') {
-                    inputs.pwsh = true;
+                Object.assign(taskResult, taskProps);
+
+                // Build inputs with targetType first when needed so it serializes in that order
+                let inputs;
+                if (shorthandKey !== 'script') {
+                    inputs = { targetType: 'inline', script: shorthandValue };
+                    if (shorthandKey === 'pwsh') inputs.pwsh = true;
+                } else {
+                    inputs = { script: shorthandValue };
                 }
 
-                // Add workingDirectory inside inputs for bash tasks if present
-                if (workingDirectory !== undefined) {
-                    inputs.workingDirectory = workingDirectory;
-                }
+                if (workingDirectory !== undefined) inputs.workingDirectory = workingDirectory;
 
                 taskResult.inputs = inputs;
-
-                return taskResult;
             }
+
+            return taskResult;
         }
 
         // Convert pool string to object format for Azure Pipelines compatibility
@@ -2374,12 +2334,12 @@ class AzurePipelineParser {
         return [];
     }
 
-    isSingleKeyObject(value) {
-        return value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 1;
+    isSingleKeyObject(element) {
+        return element && typeof element === 'object' && !Array.isArray(element) && Object.keys(element).length === 1;
     }
 
-    isTemplateReference(value) {
-        return value && typeof value === 'object' && !Array.isArray(value) && 'template' in value;
+    isTemplateReference(element) {
+        return element && typeof element === 'object' && !Array.isArray(element) && 'template' in element;
     }
 
     expandTemplateReference(node, context) {

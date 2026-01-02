@@ -24,7 +24,11 @@
       ],
       "program": "${workspaceFolder}/extension.js",
       "args": [
-        "tests/test-presteps.yml"
+        "/root/workspace/NCE/perform-sdk/codeway.yaml",
+        "-r", "templates=/root/workspace/templates/",
+        "-v", "Build.Reason=Manual",  "-v", "Build.SourceBranch=refs/heads/p1", "-v", "Build.SourceBranchName=p1", "-v", "System.TeamFoundationCollectionUri=https://dev.azure.com/hp", "-v", "System.TeamProject=OneClient",
+        "-x", "-f", "-a",
+        "-o", "/tmp/output.yaml"
       ]
     }
   ],

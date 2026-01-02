@@ -921,6 +921,7 @@ function formatYaml(content, options = {}) {
                   : 1,
         sectionSpacing: options && typeof options.sectionSpacing === 'boolean' ? options.sectionSpacing : false,
         wasExpanded: options && typeof options.wasExpanded === 'boolean' ? options.wasExpanded : false,
+        azureCompatible: options && typeof options.azureCompatible === 'boolean' ? options.azureCompatible : false,
     };
 
     try {
