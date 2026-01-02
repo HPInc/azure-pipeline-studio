@@ -95,21 +95,17 @@ class AzurePipelineParser {
     }
 
     expandPipeline(sourceText, overrides = {}) {
-        const normalized = this.preprocessCompileTimeExpressions(sourceText);
-
         let document;
         let quoteStyles = new Map();
         try {
             // Parse as document to extract quote information
-            const yamlDoc = YAML.parseDocument(normalized);
+            const yamlDoc = YAML.parseDocument(sourceText);
             this.extractQuoteStyles(yamlDoc.contents, [], quoteStyles);
 
             document = yamlDoc.toJSON() || {};
         } catch (error) {
             throw new Error(`Failed to parse YAML: ${error.message}`);
         }
-
-        document = this.restoreCompileTimeExpressions(document);
 
         const context = this.buildExecutionContext(document, overrides);
 
@@ -494,37 +490,6 @@ class AzurePipelineParser {
         }
 
         return result;
-    }
-
-    preprocessCompileTimeExpressions(sourceText) {
-        if (typeof sourceText !== 'string' || sourceText.length === 0) {
-            return sourceText;
-        }
-
-        return sourceText.replace(/\$\{\{([\s\S]*?)\}\}/g, (match) =>
-            match.replace(/\$\{\{/g, '__AZURE_EXPR_OPEN__').replace(/\}\}/g, '__AZURE_EXPR_CLOSE__'),
-        );
-    }
-
-    restoreCompileTimeExpressions(node) {
-        if (typeof node === 'string') {
-            return node.replace(/__AZURE_EXPR_OPEN__/g, '${{').replace(/__AZURE_EXPR_CLOSE__/g, '}}');
-        }
-
-        if (Array.isArray(node)) {
-            return node.map((item) => this.restoreCompileTimeExpressions(item));
-        }
-
-        if (node && typeof node === 'object') {
-            const restored = {};
-            for (const [key, value] of Object.entries(node)) {
-                const restoredKey = this.restoreCompileTimeExpressions(key);
-                restored[restoredKey] = this.restoreCompileTimeExpressions(value);
-            }
-            return restored;
-        }
-
-        return node;
     }
 
     buildExecutionContext(document, overrides) {
@@ -2495,12 +2460,11 @@ class AzurePipelineParser {
         }
 
         const templateSource = fs.readFileSync(resolvedPath, 'utf8');
-        const normalizedSource = this.preprocessCompileTimeExpressions(templateSource);
 
         let templateDocument;
         try {
             // Parse as document to extract quote styles
-            const yamlDoc = YAML.parseDocument(normalizedSource);
+            const yamlDoc = YAML.parseDocument(templateSource);
             const templateQuoteStyles = new Map();
             this.extractQuoteStyles(yamlDoc.contents, [], templateQuoteStyles);
 
@@ -2516,8 +2480,6 @@ class AzurePipelineParser {
         } catch (error) {
             throw new Error(`Failed to parse template '${templatePathValue}': ${error.message}`);
         }
-
-        templateDocument = this.restoreCompileTimeExpressions(templateDocument);
 
         const defaultParameters = this.extractParameters(templateDocument);
         const providedParameters = this.normalizeTemplateParameters(node.parameters, context);
