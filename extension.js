@@ -974,6 +974,7 @@ function runCli(args) {
             // Mark that expansion happened so Microsoft compatibility knows to apply transformations
             if (argv['expand-templates']) {
                 fileOptions.wasExpanded = true;
+                fileOptions.azureCompatible = argv['azure-compatible'] || false;
             }
 
             const formatted = formatYaml(yamlToFormat, fileOptions);
