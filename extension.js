@@ -34,7 +34,7 @@ function activate(context) {
         vscode.workspace.registerTextDocumentContentProvider(renderedScheme, {
             onDidChange: renderedEmitter.event,
             provideTextDocumentContent: (uri) => renderedContent.get(uri.toString()) || '',
-        })
+        }),
     );
 
     const getRenderTargetUri = (document) => {
@@ -66,7 +66,13 @@ function activate(context) {
             const config = vscode.workspace.getConfiguration('azurePipelineStudio', document?.uri);
             const result = { ...defaults };
 
-            const booleanSettings = ['noArrayIndent', 'forceQuotes', 'sortKeys', 'stepSpacing', 'normalizeAzureVariablePaths'];
+            const booleanSettings = [
+                'noArrayIndent',
+                'forceQuotes',
+                'sortKeys',
+                'stepSpacing',
+                'normalizeAzureVariablePaths',
+            ];
             booleanSettings.forEach((key) => {
                 const value = config.get(`format.${key}`);
                 if (typeof value === 'boolean') result[key] = value;
@@ -130,7 +136,9 @@ function activate(context) {
             return;
         }
 
-        const fullRange = document.validateRange(new vscode.Range(0, 0, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER));
+        const fullRange = document.validateRange(
+            new vscode.Range(0, 0, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER),
+        );
         const edit = new vscode.WorkspaceEdit();
         edit.replace(document.uri, fullRange, formatResult.text);
         const applied = await vscode.workspace.applyEdit(edit);
@@ -267,37 +275,46 @@ function activate(context) {
     });
     context.subscriptions.push(commandDisposable);
 
-    const commandAzureCompatibleDisposable = vscode.commands.registerCommand('azurePipelineStudio.showRenderedYamlAzureCompatible', async () => {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor || !shouldRenderDocument(editor.document)) {
-            vscode.window.showInformationMessage('Open an Azure Pipeline YAML file to view the expanded contents.');
-            return;
-        }
+    const commandAzureCompatibleDisposable = vscode.commands.registerCommand(
+        'azurePipelineStudio.showRenderedYamlAzureCompatible',
+        async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor || !shouldRenderDocument(editor.document)) {
+                vscode.window.showInformationMessage('Open an Azure Pipeline YAML file to view the expanded contents.');
+                return;
+            }
 
-        await renderYamlDocument(editor.document, { azureCompatible: true });
-    });
+            await renderYamlDocument(editor.document, { azureCompatible: true });
+        },
+    );
     context.subscriptions.push(commandAzureCompatibleDisposable);
 
-    const formatOriginalCommandDisposable = vscode.commands.registerCommand('azurePipelineStudio.formatOriginalYaml', async () => {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor || !shouldRenderDocument(editor.document)) {
-            vscode.window.showInformationMessage('Open an Azure Pipeline YAML file before formatting.');
-            return;
-        }
+    const formatOriginalCommandDisposable = vscode.commands.registerCommand(
+        'azurePipelineStudio.formatOriginalYaml',
+        async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor || !shouldRenderDocument(editor.document)) {
+                vscode.window.showInformationMessage('Open an Azure Pipeline YAML file before formatting.');
+                return;
+            }
 
-        await formatOriginalDocument(editor.document);
-    });
+            await formatOriginalDocument(editor.document);
+        },
+    );
     context.subscriptions.push(formatOriginalCommandDisposable);
 
-    const configureCommandDisposable = vscode.commands.registerCommand('azurePipelineStudio.configureResourceLocations', async () => {
-        try {
-            console.log('[Azure Pipeline Studio] Configure Resource Locations command triggered');
-            await handleConfigureResourceLocationRequest();
-        } catch (error) {
-            console.error('[Azure Pipeline Studio] Error in configure command:', error);
-            vscode.window.showErrorMessage(`Configuration error: ${error.message}`);
-        }
-    });
+    const configureCommandDisposable = vscode.commands.registerCommand(
+        'azurePipelineStudio.configureResourceLocations',
+        async () => {
+            try {
+                console.log('[Azure Pipeline Studio] Configure Resource Locations command triggered');
+                await handleConfigureResourceLocationRequest();
+            } catch (error) {
+                console.error('[Azure Pipeline Studio] Error in configure command:', error);
+                vscode.window.showErrorMessage(`Configuration error: ${error.message}`);
+            }
+        },
+    );
     context.subscriptions.push(configureCommandDisposable);
 
     context.subscriptions.push(
@@ -305,21 +322,28 @@ function activate(context) {
             if (document.uri.scheme === renderedScheme) {
                 renderedContent.delete(document.uri.toString());
             }
-        })
+        }),
     );
 
     async function handleConfigureResourceLocationRequest(initialAlias) {
         const targetDocument =
-            lastRenderedDocument || (vscode.window.activeTextEditor && shouldRenderDocument(vscode.window.activeTextEditor.document) ? vscode.window.activeTextEditor.document : undefined);
+            lastRenderedDocument ||
+            (vscode.window.activeTextEditor && shouldRenderDocument(vscode.window.activeTextEditor.document)
+                ? vscode.window.activeTextEditor.document
+                : undefined);
 
         if (!targetDocument) {
-            vscode.window.showInformationMessage('Open an Azure Pipeline YAML file before configuring resource locations.');
+            vscode.window.showInformationMessage(
+                'Open an Azure Pipeline YAML file before configuring resource locations.',
+            );
             return;
         }
 
         const config = vscode.workspace.getConfiguration('azurePipelineStudio', targetDocument.uri);
         const configuredResources = config.get('resourceLocations');
-        const existingEntries = Array.isArray(configuredResources) ? configuredResources.filter((entry) => entry && typeof entry === 'object') : [];
+        const existingEntries = Array.isArray(configuredResources)
+            ? configuredResources.filter((entry) => entry && typeof entry === 'object')
+            : [];
 
         const getRepositoryAlias = (entry) => {
             if (!entry || typeof entry !== 'object') {
@@ -411,7 +435,7 @@ function activate(context) {
             {
                 placeHolder: `Select how to specify location for repository '${alias}'`,
                 ignoreFocusOut: true,
-            }
+            },
         );
 
         if (!methodChoice) {
@@ -482,7 +506,9 @@ function activate(context) {
 
             await config.update('resourceLocations', updatedEntries, target);
 
-            console.log(`[Azure Pipeline Studio] Successfully saved repository '${alias}' location: ${sanitizedLocation}`);
+            console.log(
+                `[Azure Pipeline Studio] Successfully saved repository '${alias}' location: ${sanitizedLocation}`,
+            );
 
             vscode.window.showInformationMessage(`Repository '${alias}' location saved.`);
 
@@ -505,7 +531,7 @@ function activate(context) {
             }
 
             void renderYamlDocument(document, { silent: true });
-        })
+        }),
     );
 
     context.subscriptions.push(
@@ -524,7 +550,7 @@ function activate(context) {
             if (refreshOnSave) {
                 void renderYamlDocument(document, { silent: true });
             }
-        })
+        }),
     );
 }
 
@@ -551,7 +577,12 @@ function buildRepositoryOverridesFromCliEntries(entries, cwd) {
 
         const alias = entry.alias;
         const rawPath = entry.path;
-        if (typeof alias !== 'string' || !alias.trim().length || typeof rawPath !== 'string' || !rawPath.trim().length) {
+        if (
+            typeof alias !== 'string' ||
+            !alias.trim().length ||
+            typeof rawPath !== 'string' ||
+            !rawPath.trim().length
+        ) {
             return;
         }
 
@@ -634,7 +665,9 @@ function buildFormatOptionsFromCli(entries) {
 }
 
 function formatFilesRecursively(targets, extensions, formatOptions) {
-    const normalizedExtensions = new Set(Array.isArray(extensions) ? extensions.map((ext) => normalizeExtension(ext)).filter(Boolean) : []);
+    const normalizedExtensions = new Set(
+        Array.isArray(extensions) ? extensions.map((ext) => normalizeExtension(ext)).filter(Boolean) : [],
+    );
 
     if (!normalizedExtensions.size) {
         normalizedExtensions.add('.yml');
@@ -843,7 +876,9 @@ function runCli(args) {
             console.log(`Formatted: ${displayPath}`);
         });
 
-        console.log(`Processed ${recursiveResult.totalFiles} file(s); formatted ${recursiveResult.formattedFiles.length}.`);
+        console.log(
+            `Processed ${recursiveResult.totalFiles} file(s); formatted ${recursiveResult.formattedFiles.length}.`,
+        );
 
         recursiveResult.warnings.forEach((entry) => {
             const displayPath = path.relative(process.cwd(), entry.filePath) || entry.filePath;

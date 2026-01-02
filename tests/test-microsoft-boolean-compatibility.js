@@ -113,7 +113,10 @@ function runTest() {
     assert(orResultMatch, 'orResult should be False');
 
     // Original string values should be preserved as quoted strings
-    assert(output1.includes('value: "True"') || output1.includes("value: 'True'"), 'String literals with "True" should remain quoted');
+    assert(
+        output1.includes('value: "True"') || output1.includes("value: 'True'"),
+        'String literals with "True" should remain quoted',
+    );
 
     // Should NOT have any marker strings in output
     assert(output1.includes('__TRUE__') === false, 'Should not contain __TRUE__ marker');

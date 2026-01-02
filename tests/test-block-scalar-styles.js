@@ -90,7 +90,10 @@ steps:
 
     // Should use > (folded) style for pwsh with expressions
     // After shorthand conversion, pwsh becomes script in inputs
-    assert(output.includes('script: >') || output.includes('pwsh: >'), 'Should use folded style (>) for pwsh with expressions');
+    assert(
+        output.includes('script: >') || output.includes('pwsh: >'),
+        'Should use folded style (>) for pwsh with expressions',
+    );
 });
 
 // Test 4: Script in loop (${{ each }}) with expressions
@@ -159,7 +162,10 @@ steps:
 
     // Heredoc content should have empty lines added (for newline preservation)
     // The content between <<EOF and EOF should have blank lines between each line
-    assert(output.includes('Environment: production\n\n'), 'Heredoc content should have empty lines added for newline preservation');
+    assert(
+        output.includes('Environment: production\n\n'),
+        'Heredoc content should have empty lines added for newline preservation',
+    );
 });
 
 // Test 7: Non-script multiline value with expressions uses folded style

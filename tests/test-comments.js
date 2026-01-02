@@ -91,7 +91,8 @@ variables:
 
     const result = formatYaml(input);
 
-    const hasSpecialChars = result.text.includes('@#$%^&*') || result.text.includes('TODO:') || result.text.includes('->');
+    const hasSpecialChars =
+        result.text.includes('@#$%^&*') || result.text.includes('TODO:') || result.text.includes('->');
 
     console.log(`   Special characters preserved: ${hasSpecialChars}`);
     return hasSpecialChars;
@@ -131,7 +132,10 @@ runTest('Comments Before Array Items', () => {
 
     const result = formatYaml(input);
 
-    const hasArrayComments = result.text.includes('# Main production') || result.text.includes('# Development') || result.text.includes('# Feature branches');
+    const hasArrayComments =
+        result.text.includes('# Main production') ||
+        result.text.includes('# Development') ||
+        result.text.includes('# Feature branches');
 
     console.log(`   Array item comments preserved: ${hasArrayComments}`);
     return hasArrayComments;
@@ -163,7 +167,10 @@ stages:
     const result = formatYaml(input);
 
     const commentCount = (result.text.match(/#/g) || []).length;
-    const hasStructureComments = result.text.includes('# Build stage') || result.text.includes('# Primary build') || result.text.includes('# Restore dependencies');
+    const hasStructureComments =
+        result.text.includes('# Build stage') ||
+        result.text.includes('# Primary build') ||
+        result.text.includes('# Restore dependencies');
 
     console.log(`   Found ${commentCount} comment markers`);
     console.log(`   Structure comments preserved: ${hasStructureComments}`);

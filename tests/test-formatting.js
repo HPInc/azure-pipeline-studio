@@ -136,7 +136,10 @@ runTest('Python Code Block Preservation', () => {
 
     const result = formatYaml(input);
 
-    const hasPythonKeywords = result.text.includes('import os') && result.text.includes('def process_data') && result.text.includes('for item in data_list');
+    const hasPythonKeywords =
+        result.text.includes('import os') &&
+        result.text.includes('def process_data') &&
+        result.text.includes('for item in data_list');
 
     console.log(`   Python code preserved: ${hasPythonKeywords}`);
     return hasPythonKeywords && !result.error;
@@ -165,7 +168,11 @@ runTest('Bash Script Content Preservation', () => {
 
     const result = formatYaml(input);
 
-    const hasBashContent = result.text.includes('#!/bin/bash') && result.text.includes('set -e') && result.text.includes('dotnet restore') && result.text.includes('if [ $? -eq 0 ]');
+    const hasBashContent =
+        result.text.includes('#!/bin/bash') &&
+        result.text.includes('set -e') &&
+        result.text.includes('dotnet restore') &&
+        result.text.includes('if [ $? -eq 0 ]');
 
     console.log(`   Bash script preserved: ${hasBashContent}`);
     return hasBashContent && !result.error;

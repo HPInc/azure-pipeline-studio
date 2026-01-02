@@ -42,7 +42,14 @@ console.log('\n' + '='.repeat(60) + '\n');
 // Validate key features
 const hasComments = result.text.includes('# Test pipeline') && result.text.includes('# First step');
 // Step spacing adds blank lines before step blocks (including comments that precede steps)
-const hasStepSpacing = result.text.split('\n').some((line, i, lines) => line.trim() === '' && lines[i + 1] && (lines[i + 1].match(/^\s*-\s+(task|bash)/) || lines[i + 1].match(/^#\s/)));
+const hasStepSpacing = result.text
+    .split('\n')
+    .some(
+        (line, i, lines) =>
+            line.trim() === '' &&
+            lines[i + 1] &&
+            (lines[i + 1].match(/^\s*-\s+(task|bash)/) || lines[i + 1].match(/^#\s/)),
+    );
 const hasLongLines = result.text.split('\n').some((line) => line.length > 80);
 const noError = !result.error;
 

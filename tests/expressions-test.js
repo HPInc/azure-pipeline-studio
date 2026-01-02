@@ -40,7 +40,10 @@ console.log('trim("  hello  "):', parser.evaluateFunction('trim', ['  hello  '])
 console.log('replace("test.txt", ".txt", ".md"):', parser.evaluateFunction('replace', ['test.txt', '.txt', '.md'])); // 'test.md'
 console.log('split("a,b,c", ","):', parser.evaluateFunction('split', ['a,b,c', ','])); // ['a','b','c']
 console.log('join(";", ["a","b","c"]):', parser.evaluateFunction('join', [';', ['a', 'b', 'c']])); // 'a;b;c'
-console.log('format("Hello {0} {1}", "John", "Doe"):', parser.evaluateFunction('format', ['Hello {0} {1}', 'John', 'Doe'])); // 'Hello John Doe'
+console.log(
+    'format("Hello {0} {1}", "John", "Doe"):',
+    parser.evaluateFunction('format', ['Hello {0} {1}', 'John', 'Doe']),
+); // 'Hello John Doe'
 
 // Test other functions
 console.log('\n=== Other Functions ===');

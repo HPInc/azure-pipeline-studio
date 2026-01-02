@@ -96,7 +96,10 @@ empty:
 
     const test8Result = formatYaml(test8Input);
     assert.strictEqual(test8Result.error, undefined, 'Test 8 should not have errors');
-    assert(test8Result.text.includes('empty:') && test8Result.text.includes('# Comment at end'), 'Test 8: End comment preserved');
+    assert(
+        test8Result.text.includes('empty:') && test8Result.text.includes('# Comment at end'),
+        'Test 8: End comment preserved',
+    );
 
     // Test 9: Empty value with blank lines
     const test9Input = `default:
@@ -147,7 +150,10 @@ next: value`;
     const test12Result = formatYaml(test12Input);
     assert.strictEqual(test12Result.error, undefined, 'Test 12 should not have errors');
     assert(test12Result.text.includes('my-key-with-dashes:\n  # Comment'), 'Test 12: Dashed key preserved');
-    assert(test12Result.text.includes('my_key_with_underscores:\n  # Another comment'), 'Test 12: Underscored key preserved');
+    assert(
+        test12Result.text.includes('my_key_with_underscores:\n  # Another comment'),
+        'Test 12: Underscored key preserved',
+    );
     assert(test12Result.text.includes('my.key.with.dots:\n  # Yet another comment'), 'Test 12: Dotted key preserved');
 
     // Test 13: Key with value should not be affected
@@ -233,21 +239,47 @@ stages:
 
     testCases.forEach((testCase, index) => {
         const result1 = formatYaml(testCase.input);
-        assert.strictEqual(result1.error, undefined, `Idempotency test ${index + 1} (${testCase.name}): First format should not error`);
+        assert.strictEqual(
+            result1.error,
+            undefined,
+            `Idempotency test ${index + 1} (${testCase.name}): First format should not error`,
+        );
 
         const result2 = formatYaml(result1.text);
-        assert.strictEqual(result2.error, undefined, `Idempotency test ${index + 1} (${testCase.name}): Second format should not error`);
+        assert.strictEqual(
+            result2.error,
+            undefined,
+            `Idempotency test ${index + 1} (${testCase.name}): Second format should not error`,
+        );
 
         const result3 = formatYaml(result2.text);
-        assert.strictEqual(result3.error, undefined, `Idempotency test ${index + 1} (${testCase.name}): Third format should not error`);
+        assert.strictEqual(
+            result3.error,
+            undefined,
+            `Idempotency test ${index + 1} (${testCase.name}): Third format should not error`,
+        );
 
         // Check that all results are identical
-        assert.strictEqual(result1.text, result2.text, `Idempotency test ${index + 1} (${testCase.name}): First and second format should match`);
-        assert.strictEqual(result2.text, result3.text, `Idempotency test ${index + 1} (${testCase.name}): Second and third format should match`);
+        assert.strictEqual(
+            result1.text,
+            result2.text,
+            `Idempotency test ${index + 1} (${testCase.name}): First and second format should match`,
+        );
+        assert.strictEqual(
+            result2.text,
+            result3.text,
+            `Idempotency test ${index + 1} (${testCase.name}): Second and third format should match`,
+        );
 
         // Verify no placeholders remain
-        assert(!result1.text.includes('__EMPTY_VALUE_PLACEHOLDER__'), `Idempotency test ${index + 1} (${testCase.name}): No placeholders should remain in output`);
-        assert(!result1.text.includes('__COMMENT_'), `Idempotency test ${index + 1} (${testCase.name}): No comment IDs should remain in output`);
+        assert(
+            !result1.text.includes('__EMPTY_VALUE_PLACEHOLDER__'),
+            `Idempotency test ${index + 1} (${testCase.name}): No placeholders should remain in output`,
+        );
+        assert(
+            !result1.text.includes('__COMMENT_'),
+            `Idempotency test ${index + 1} (${testCase.name}): No comment IDs should remain in output`,
+        );
     });
 
     console.log('✅ PASS Idempotency tests');

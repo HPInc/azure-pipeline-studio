@@ -44,7 +44,12 @@ class AzurePipelineParser {
         // When azureCompatible=true, apply Azure-specific transformations
         const azureCompatible = overrides.azureCompatible || false;
         console.log(`Azure Compatibility mode: ${azureCompatible}`);
-        this.applyBlockScalarStyles(yamlDoc.contents, scriptsWithExpressions, scriptsWithLastLineExpressions, azureCompatible);
+        this.applyBlockScalarStyles(
+            yamlDoc.contents,
+            scriptsWithExpressions,
+            scriptsWithLastLineExpressions,
+            azureCompatible,
+        );
         let output = yamlDoc.toString({
             lineWidth: 0,
             indent: 2,
@@ -66,7 +71,13 @@ class AzurePipelineParser {
         });
 
         // Convert boolean markers to unquoted capitalized booleans (Azure format)
-        output = output.replace(/(['"]?)__(?:TRUE|FALSE)__\1/g, (match, quote) => (quote ? `${quote}${match.includes('TRUE') ? 'True' : 'False'}${quote}` : match.includes('TRUE') ? 'True' : 'False'));
+        output = output.replace(/(['"]?)__(?:TRUE|FALSE)__\1/g, (match, quote) =>
+            quote
+                ? `${quote}${match.includes('TRUE') ? 'True' : 'False'}${quote}`
+                : match.includes('TRUE')
+                  ? 'True'
+                  : 'False',
+        );
 
         // Handle trailing newlines and blank line removal based on mode
         if (azureCompatible) {
@@ -295,7 +306,12 @@ class AzurePipelineParser {
      * @param {Set} scriptsWithLastLineExpressions - Set of script content where last line had ${{}} before expansion
      * @param {boolean} azureCompatible - Whether to apply Azure-compatible transformations (empty lines, chomping)
      */
-    applyBlockScalarStyles(node, scriptsWithExpressions = new Set(), scriptsWithLastLineExpressions = new Set(), azureCompatible = false) {
+    applyBlockScalarStyles(
+        node,
+        scriptsWithExpressions = new Set(),
+        scriptsWithLastLineExpressions = new Set(),
+        azureCompatible = false,
+    ) {
         if (!node) return;
 
         if (node.items && node.constructor.name === 'YAMLMap') {
@@ -304,7 +320,12 @@ class AzurePipelineParser {
 
                 const { value } = pair;
                 if (typeof value.value !== 'string' || !value.value.includes('\n')) {
-                    this.applyBlockScalarStyles(value, scriptsWithExpressions, scriptsWithLastLineExpressions, azureCompatible);
+                    this.applyBlockScalarStyles(
+                        value,
+                        scriptsWithExpressions,
+                        scriptsWithLastLineExpressions,
+                        azureCompatible,
+                    );
                     continue;
                 }
 
@@ -313,7 +334,12 @@ class AzurePipelineParser {
                 // Handle trailing spaces in Azure mode - force double quotes
                 if (azureCompatible && this.hasTrailingSpaces(content)) {
                     value.type = 'QUOTE_DOUBLE';
-                    this.applyBlockScalarStyles(value, scriptsWithExpressions, scriptsWithLastLineExpressions, azureCompatible);
+                    this.applyBlockScalarStyles(
+                        value,
+                        scriptsWithExpressions,
+                        scriptsWithLastLineExpressions,
+                        azureCompatible,
+                    );
                     continue;
                 }
 
@@ -336,10 +362,22 @@ class AzurePipelineParser {
                     value.value = this.normalizeTrailingNewlines(content, azureCompatible);
                 }
 
-                this.applyBlockScalarStyles(value, scriptsWithExpressions, scriptsWithLastLineExpressions, azureCompatible);
+                this.applyBlockScalarStyles(
+                    value,
+                    scriptsWithExpressions,
+                    scriptsWithLastLineExpressions,
+                    azureCompatible,
+                );
             }
         } else if (node.items && node.constructor.name === 'YAMLSeq') {
-            node.items.forEach((item) => this.applyBlockScalarStyles(item, scriptsWithExpressions, scriptsWithLastLineExpressions, azureCompatible));
+            node.items.forEach((item) =>
+                this.applyBlockScalarStyles(
+                    item,
+                    scriptsWithExpressions,
+                    scriptsWithLastLineExpressions,
+                    azureCompatible,
+                ),
+            );
         }
     }
 
@@ -463,7 +501,9 @@ class AzurePipelineParser {
             return sourceText;
         }
 
-        return sourceText.replace(/\$\{\{([\s\S]*?)\}\}/g, (match) => match.replace(/\$\{\{/g, '__AZURE_EXPR_OPEN__').replace(/\}\}/g, '__AZURE_EXPR_CLOSE__'));
+        return sourceText.replace(/\$\{\{([\s\S]*?)\}\}/g, (match) =>
+            match.replace(/\$\{\{/g, '__AZURE_EXPR_OPEN__').replace(/\}\}/g, '__AZURE_EXPR_CLOSE__'),
+        );
     }
 
     restoreCompileTimeExpressions(node) {
@@ -490,7 +530,9 @@ class AzurePipelineParser {
     buildExecutionContext(document, overrides) {
         const parameters = this.extractParameters(document);
         const variables = this.extractVariables(document);
-        const resources = this.normalizeResourcesConfig(document && typeof document === 'object' ? document.resources : undefined);
+        const resources = this.normalizeResourcesConfig(
+            document && typeof document === 'object' ? document.resources : undefined,
+        );
 
         const overrideParameters = overrides.parameters || {};
         const overrideVariables = overrides.variables || {};
@@ -619,7 +661,12 @@ class AzurePipelineParser {
 
             const existing = mergedMap.get(key);
 
-            if (source === 'override' && existing && matchCriteria && !this.repositoryMatchesCriteria(existing, matchCriteria)) {
+            if (
+                source === 'override' &&
+                existing &&
+                matchCriteria &&
+                !this.repositoryMatchesCriteria(existing, matchCriteria)
+            ) {
                 return;
             }
 
@@ -801,7 +848,10 @@ class AzurePipelineParser {
                     switch (paramType) {
                         case 'string':
                             // Accept strings, numbers (will be converted to string), and booleans
-                            typeValid = typeof actualValue === 'string' || typeof actualValue === 'number' || typeof actualValue === 'boolean';
+                            typeValid =
+                                typeof actualValue === 'string' ||
+                                typeof actualValue === 'number' ||
+                                typeof actualValue === 'boolean';
                             break;
                         case 'number':
                             // Accept numbers and numeric strings
@@ -819,7 +869,11 @@ class AzurePipelineParser {
                                 typeValid = true;
                             } else if (typeof actualValue === 'string') {
                                 const lower = actualValue.toLowerCase();
-                                typeValid = lower === 'true' || lower === 'false' || lower === '__true__' || lower === '__false__';
+                                typeValid =
+                                    lower === 'true' ||
+                                    lower === 'false' ||
+                                    lower === '__true__' ||
+                                    lower === '__false__';
                             } else {
                                 typeValid = false;
                             }
@@ -828,7 +882,9 @@ class AzurePipelineParser {
                             // In Azure DevOps, 'object' type accepts both objects and arrays
                             // Special case: dependsOn can be a string, array, or object
                             if (name === 'dependsOn') {
-                                typeValid = typeof actualValue === 'string' || (typeof actualValue === 'object' && actualValue !== null);
+                                typeValid =
+                                    typeof actualValue === 'string' ||
+                                    (typeof actualValue === 'object' && actualValue !== null);
                             } else {
                                 typeValid = typeof actualValue === 'object' && actualValue !== null;
                             }
@@ -929,25 +985,41 @@ class AzurePipelineParser {
         if (missingRequired.length > 0) {
             const templateName = templatePath || 'template';
             const paramList = missingRequired.map((p) => `'${p}'`).join(', ');
-            errors.push(`Missing required parameter(s) for template '${templateName}': ${paramList}. ` + `These parameters do not have default values and must be provided when calling the template.`);
+            errors.push(
+                `Missing required parameter(s) for template '${templateName}': ${paramList}. ` +
+                    `These parameters do not have default values and must be provided when calling the template.`,
+            );
         }
 
         if (typeErrors.length > 0) {
             const templateName = templatePath || 'template';
-            const errorDetails = typeErrors.map((err) => `Parameter '${err.name}' expects type '${err.expected}' but received '${err.actual}' (value: ${JSON.stringify(err.value)})`).join('\n    ');
+            const errorDetails = typeErrors
+                .map(
+                    (err) =>
+                        `Parameter '${err.name}' expects type '${err.expected}' but received '${err.actual}' (value: ${JSON.stringify(err.value)})`,
+                )
+                .join('\n    ');
             errors.push(`Invalid parameter type(s) for template '${templateName}':\n    ${errorDetails}`);
         }
 
         if (invalidValues.length > 0) {
             const templateName = templatePath || 'template';
-            const errorDetails = invalidValues.map((err) => `Parameter '${err.name}' has value '${err.value}' which is not in allowed values: [${err.allowed.join(', ')}]`).join('\n    ');
+            const errorDetails = invalidValues
+                .map(
+                    (err) =>
+                        `Parameter '${err.name}' has value '${err.value}' which is not in allowed values: [${err.allowed.join(', ')}]`,
+                )
+                .join('\n    ');
             errors.push(`Invalid parameter value(s) for template '${templateName}':\n    ${errorDetails}`);
         }
 
         if (unknownParameters.length > 0) {
             const templateName = templatePath || 'template';
             const paramList = unknownParameters.map((p) => `'${p}'`).join(', ');
-            errors.push(`Unknown parameter(s) for template '${templateName}': ${paramList}. ` + `These parameters are not defined in the template.`);
+            errors.push(
+                `Unknown parameter(s) for template '${templateName}': ${paramList}. ` +
+                    `These parameters are not defined in the template.`,
+            );
         }
 
         if (errors.length > 0) {
@@ -1042,7 +1114,7 @@ class AzurePipelineParser {
                     continue;
                 }
 
-                if (this.isConditionalDirective(key)) {
+                if (key && this.isConditionalDirective(key)) {
                     const expanded = this.expandConditionalBlock(array, index, context);
                     result.push(...expanded.items);
                     index = expanded.nextIndex;
@@ -1070,7 +1142,12 @@ class AzurePipelineParser {
 
             // If we're in a variables array, extract the variable and add it to context
             // This allows forward references within the same variables section
-            if (isVariablesArray && expandedElement && typeof expandedElement === 'object' && !Array.isArray(expandedElement)) {
+            if (
+                isVariablesArray &&
+                expandedElement &&
+                typeof expandedElement === 'object' &&
+                !Array.isArray(expandedElement)
+            ) {
                 const varName = expandedElement.name;
                 const varValue = this.pickFirstDefined(expandedElement.value, expandedElement.default);
                 if (varName && varValue !== undefined) {
@@ -1124,7 +1201,8 @@ class AzurePipelineParser {
 
             // Also check if original value is a single-line full expression that might expand to multiline
             // Pattern: value is just "${{ ... }}" (with possible whitespace)
-            const isSingleLineFullExpression = typeof value === 'string' && !value.includes('\n') && /^\s*\$\{\{.*\}\}\s*$/.test(value.trim());
+            const isSingleLineFullExpression =
+                typeof value === 'string' && !value.includes('\n') && /^\s*\$\{\{.*\}\}\s*$/.test(value.trim());
 
             const expandedValue = this.expandNode(value, context, key);
             if (expandedValue === undefined) {
@@ -1170,8 +1248,22 @@ class AzurePipelineParser {
         // Convert bash/script/pwsh/powershell/checkout shortcuts to task format (like Azure Pipelines does)
         // Do this AFTER all properties have been collected
         // Skip if: already converted (has task/inputs/targetType) OR we're inside an inputs object (parentKey === 'inputs')
-        if ((result.bash || result.script || result.pwsh || result.powershell || result.checkout) && !result.task && !result.inputs && !result.targetType && parentKey !== 'inputs') {
-            const shorthandKey = result.bash ? 'bash' : result.script ? 'script' : result.pwsh ? 'pwsh' : result.powershell ? 'powershell' : 'checkout';
+        if (
+            (result.bash || result.script || result.pwsh || result.powershell || result.checkout) &&
+            !result.task &&
+            !result.inputs &&
+            !result.targetType &&
+            parentKey !== 'inputs'
+        ) {
+            const shorthandKey = result.bash
+                ? 'bash'
+                : result.script
+                  ? 'script'
+                  : result.pwsh
+                    ? 'pwsh'
+                    : result.powershell
+                      ? 'powershell'
+                      : 'checkout';
 
             const taskType =
                 shorthandKey === 'script'
@@ -1257,7 +1349,11 @@ class AzurePipelineParser {
         }
 
         // Set condition: false for checkout tasks with repository: none
-        if (result.task === '6d15af64-176c-496d-b583-fd2ae21d4df4@1' && result.inputs?.repository === 'none' && !result.condition) {
+        if (
+            result.task === '6d15af64-176c-496d-b583-fd2ae21d4df4@1' &&
+            result.inputs?.repository === 'none' &&
+            !result.condition
+        ) {
             result.condition = false;
         }
 
@@ -1607,9 +1703,13 @@ class AzurePipelineParser {
             case 'containsvalue':
                 return this.returnBoolean(this.containsValue(args[0], args[1]));
             case 'in':
-                return this.returnBoolean(args.slice(1).some((candidate) => this.compareValues(args[0], candidate) === 0));
+                return this.returnBoolean(
+                    args.slice(1).some((candidate) => this.compareValues(args[0], candidate) === 0),
+                );
             case 'notin':
-                return this.returnBoolean(!args.slice(1).some((candidate) => this.compareValues(args[0], candidate) === 0));
+                return this.returnBoolean(
+                    !args.slice(1).some((candidate) => this.compareValues(args[0], candidate) === 0),
+                );
 
             // String functions
             case 'lower':
@@ -1792,7 +1892,7 @@ class AzurePipelineParser {
                     if (typeof val === 'string' && /^-?\d+(\.\d+)?$/.test(val)) return parseFloat(val);
                     return val;
                 },
-                2
+                2,
             );
         } catch (error) {
             return String(value);
@@ -1907,7 +2007,11 @@ class AzurePipelineParser {
                 const obj = {};
                 node.properties.forEach((prop) => {
                     const keyNode = prop.key;
-                    const key = prop.computed ? this.evaluateAst(keyNode, context) : keyNode.type === 'Identifier' ? keyNode.name : this.evaluateAst(keyNode, context);
+                    const key = prop.computed
+                        ? this.evaluateAst(keyNode, context)
+                        : keyNode.type === 'Identifier'
+                          ? keyNode.name
+                          : this.evaluateAst(keyNode, context);
                     if (key === undefined) {
                         return;
                     }
@@ -1918,7 +2022,11 @@ class AzurePipelineParser {
             case 'UnaryExpression':
                 return this.evaluateUnary(node.operator, this.evaluateAst(node.argument, context));
             case 'BinaryExpression':
-                return this.evaluateBinary(node.operator, this.evaluateAst(node.left, context), this.evaluateAst(node.right, context));
+                return this.evaluateBinary(
+                    node.operator,
+                    this.evaluateAst(node.left, context),
+                    this.evaluateAst(node.right, context),
+                );
             case 'LogicalExpression': {
                 const left = this.evaluateAst(node.left, context);
                 if (node.operator === '&&') {
@@ -1933,13 +2041,19 @@ class AzurePipelineParser {
                 return undefined;
             }
             case 'ConditionalExpression':
-                return this.toBoolean(this.evaluateAst(node.test, context)) ? this.evaluateAst(node.consequent, context) : this.evaluateAst(node.alternate, context);
+                return this.toBoolean(this.evaluateAst(node.test, context))
+                    ? this.evaluateAst(node.consequent, context)
+                    : this.evaluateAst(node.alternate, context);
             case 'MemberExpression': {
                 const target = this.evaluateAst(node.object, context);
                 if (target === undefined || target === null) {
                     return undefined;
                 }
-                const property = node.computed ? this.evaluateAst(node.property, context) : node.property.type === 'Identifier' ? node.property.name : this.evaluateAst(node.property, context);
+                const property = node.computed
+                    ? this.evaluateAst(node.property, context)
+                    : node.property.type === 'Identifier'
+                      ? node.property.name
+                      : this.evaluateAst(node.property, context);
                 if (property === undefined || property === null) {
                     return undefined;
                 }
@@ -2029,7 +2143,11 @@ class AzurePipelineParser {
                 return {};
             }
 
-            const property = callee.computed ? this.evaluateAst(callee.property, context) : callee.property.type === 'Identifier' ? callee.property.name : this.evaluateAst(callee.property, context);
+            const property = callee.computed
+                ? this.evaluateAst(callee.property, context)
+                : callee.property.type === 'Identifier'
+                  ? callee.property.name
+                  : this.evaluateAst(callee.property, context);
 
             if (property === undefined || property === null) {
                 return {};
@@ -2270,7 +2388,8 @@ class AzurePipelineParser {
             resources: parent.resources,
             locals: { ...parent.locals },
             baseDir: baseDir || parent.baseDir,
-            repositoryBaseDir: options.repositoryBaseDir !== undefined ? options.repositoryBaseDir : parent.repositoryBaseDir,
+            repositoryBaseDir:
+                options.repositoryBaseDir !== undefined ? options.repositoryBaseDir : parent.repositoryBaseDir,
             resourceLocations: parent.resourceLocations || {},
             templateStack: parent.templateStack || [],
             quoteStyles: parent.quoteStyles, // Preserve quote styles
@@ -2300,7 +2419,10 @@ class AzurePipelineParser {
 
     expandTemplateReference(node, context) {
         const templateRaw = node.template;
-        const templatePathValue = typeof templateRaw === 'string' ? this.replaceExpressionsInString(templateRaw, context) : this.expandScalar(templateRaw, context);
+        const templatePathValue =
+            typeof templateRaw === 'string'
+                ? this.replaceExpressionsInString(templateRaw, context)
+                : this.expandScalar(templateRaw, context);
 
         if (!templatePathValue || typeof templatePathValue !== 'string') {
             return [];
@@ -2315,30 +2437,42 @@ class AzurePipelineParser {
         if (repositoryRef) {
             const repositoryEntry = this.resolveRepositoryEntry(repositoryRef.repository, context);
             if (!repositoryEntry) {
-                throw new Error(`Repository resource '${repositoryRef.repository}' is not defined for template '${templatePathValue}'.`);
+                throw new Error(
+                    `Repository resource '${repositoryRef.repository}' is not defined for template '${templatePathValue}'.`,
+                );
             }
 
             const repositoryLocation = this.resolveRepositoryLocation(repositoryEntry, context);
             if (!repositoryLocation) {
                 throw new Error(
                     `Repository resource '${repositoryRef.repository}' does not define a local location. ` +
-                        `Set a 'location' for this resource (for example via the 'azurePipelineStudio.resourceLocations' setting).`
+                        `Set a 'location' for this resource (for example via the 'azurePipelineStudio.resourceLocations' setting).`,
                 );
             }
 
             const repositoryBaseDirectory = this.resolveRepositoryBaseDirectory(repositoryLocation, context);
             repositoryBaseDirectoryForContext = repositoryBaseDirectory;
             const currentDirectory = context.baseDir || repositoryBaseDirectory;
-            resolvedPath = this.resolveTemplateWithinRepository(repositoryRef.templatePath, currentDirectory, repositoryBaseDirectory);
+            resolvedPath = this.resolveTemplateWithinRepository(
+                repositoryRef.templatePath,
+                currentDirectory,
+                repositoryBaseDirectory,
+            );
 
             if (!resolvedPath) {
-                throw new Error(`Template file not found for repository '${repositoryRef.repository}': ${repositoryRef.templatePath}`);
+                throw new Error(
+                    `Template file not found for repository '${repositoryRef.repository}': ${repositoryRef.templatePath}`,
+                );
             }
 
             templateBaseDir = path.dirname(resolvedPath);
         } else {
             const repositoryBaseDirectory = context.repositoryBaseDir || undefined;
-            const candidatePath = this.resolveTemplateWithinRepository(templatePathValue, context.baseDir, repositoryBaseDirectory);
+            const candidatePath = this.resolveTemplateWithinRepository(
+                templatePathValue,
+                context.baseDir,
+                repositoryBaseDirectory,
+            );
 
             if (candidatePath) {
                 resolvedPath = candidatePath;
@@ -2346,13 +2480,17 @@ class AzurePipelineParser {
                 repositoryBaseDirectoryForContext = repositoryBaseDirectoryForContext || repositoryBaseDirectory;
             } else {
                 const baseDir = context.baseDir || process.cwd();
-                resolvedPath = path.isAbsolute(templatePathValue) ? templatePathValue : path.resolve(baseDir, templatePathValue);
+                resolvedPath = path.isAbsolute(templatePathValue)
+                    ? templatePathValue
+                    : path.resolve(baseDir, templatePathValue);
                 templateBaseDir = path.dirname(resolvedPath);
             }
         }
 
         if (!fs.existsSync(resolvedPath)) {
-            const identifier = repositoryRef ? `${repositoryRef.templatePath}@${repositoryRef.repository}` : templatePathValue;
+            const identifier = repositoryRef
+                ? `${repositoryRef.templatePath}@${repositoryRef.repository}`
+                : templatePathValue;
             throw new Error(`Template file not found: ${identifier}`);
         }
 
@@ -2384,7 +2522,9 @@ class AzurePipelineParser {
         const defaultParameters = this.extractParameters(templateDocument);
         const providedParameters = this.normalizeTemplateParameters(node.parameters, context);
 
-        const templateDisplayPath = repositoryRef ? `${repositoryRef.templatePath}@${repositoryRef.repository}` : templatePathValue;
+        const templateDisplayPath = repositoryRef
+            ? `${repositoryRef.templatePath}@${repositoryRef.repository}`
+            : templatePathValue;
 
         const updatedContext = {
             ...context,
@@ -2449,7 +2589,11 @@ class AzurePipelineParser {
         // If found in YAML but has no location, supplement with external resourceLocations
         if (repositoryEntry && context.resourceLocations && context.resourceLocations[alias]) {
             // Check if the repository entry already has a location field
-            const hasLocation = repositoryEntry.location || repositoryEntry.path || repositoryEntry.directory || repositoryEntry.localPath;
+            const hasLocation =
+                repositoryEntry.location ||
+                repositoryEntry.path ||
+                repositoryEntry.directory ||
+                repositoryEntry.localPath;
 
             if (!hasLocation) {
                 // Add location from external resourceLocations
@@ -2477,7 +2621,12 @@ class AzurePipelineParser {
             return undefined;
         }
 
-        const location = [repositoryEntry.location, repositoryEntry.path, repositoryEntry.directory, repositoryEntry.localPath].find((value) => typeof value === 'string' && value.trim().length);
+        const location = [
+            repositoryEntry.location,
+            repositoryEntry.path,
+            repositoryEntry.directory,
+            repositoryEntry.localPath,
+        ].find((value) => typeof value === 'string' && value.trim().length);
 
         if (!location) {
             return undefined;
@@ -2499,7 +2648,11 @@ class AzurePipelineParser {
             // Preserve original value so callers can reference the resolved location later.
             repositoryEntry.__resolvedLocation = expanded;
 
-            if (!repositoryEntry.location || repositoryEntry.location === location || repositoryEntry.location === trimmed) {
+            if (
+                !repositoryEntry.location ||
+                repositoryEntry.location === location ||
+                repositoryEntry.location === trimmed
+            ) {
                 repositoryEntry.location = expanded;
             } else if (!repositoryEntry.localLocation) {
                 repositoryEntry.localLocation = expanded;
@@ -2528,7 +2681,9 @@ class AzurePipelineParser {
             return fallback;
         }
 
-        const absoluteLocation = path.isAbsolute(repositoryLocation) ? repositoryLocation : path.resolve(fallback, repositoryLocation);
+        const absoluteLocation = path.isAbsolute(repositoryLocation)
+            ? repositoryLocation
+            : path.resolve(fallback, repositoryLocation);
 
         try {
             const stat = fs.statSync(absoluteLocation);
@@ -2561,7 +2716,10 @@ class AzurePipelineParser {
             candidateBases.push(repositoryBaseDirectory);
         }
 
-        if (currentDirectory && (!repositoryBaseDirectory || path.normalize(repositoryBaseDirectory) !== path.normalize(currentDirectory))) {
+        if (
+            currentDirectory &&
+            (!repositoryBaseDirectory || path.normalize(repositoryBaseDirectory) !== path.normalize(currentDirectory))
+        ) {
             candidateBases.push(currentDirectory);
         }
 
@@ -2569,7 +2727,9 @@ class AzurePipelineParser {
             return undefined;
         }
 
-        const candidateFiles = candidateBases.map((base) => (parts.length ? path.resolve(base, ...parts) : path.normalize(base)));
+        const candidateFiles = candidateBases.map((base) =>
+            parts.length ? path.resolve(base, ...parts) : path.normalize(base),
+        );
 
         for (const candidate of candidateFiles) {
             try {
@@ -2634,7 +2794,14 @@ class AzurePipelineParser {
                             const shouldExecute =
                                 !branchTaken &&
                                 (this.isElseDirective(condKey) ||
-                                    this.toBoolean(this.evaluateExpression(this.isIfDirective(condKey) ? this.parseIfCondition(condKey) : this.parseElseIfCondition(condKey), context)));
+                                    this.toBoolean(
+                                        this.evaluateExpression(
+                                            this.isIfDirective(condKey)
+                                                ? this.parseIfCondition(condKey)
+                                                : this.parseElseIfCondition(condKey),
+                                            context,
+                                        ),
+                                    ));
 
                             if (shouldExecute) {
                                 pushExpanded(result, this.expandNodePreservingTemplates(condBody, context));
@@ -2664,7 +2831,11 @@ class AzurePipelineParser {
 
                 const expanded = this.expandNodePreservingTemplates(item, context);
                 if (expanded !== null && expanded !== undefined) {
-                    if (typeof expanded === 'object' && !Array.isArray(expanded) && Object.keys(expanded).length === 0) {
+                    if (
+                        typeof expanded === 'object' &&
+                        !Array.isArray(expanded) &&
+                        Object.keys(expanded).length === 0
+                    ) {
                         i++;
                         continue;
                     }
@@ -2823,7 +2994,9 @@ class AzurePipelineParser {
         if (this.isElseDirective(condKey)) {
             return true;
         }
-        const condition = this.isIfDirective(condKey) ? this.parseIfCondition(condKey) : this.parseElseIfCondition(condKey);
+        const condition = this.isIfDirective(condKey)
+            ? this.parseIfCondition(condKey)
+            : this.parseElseIfCondition(condKey);
         return this.toBoolean(this.evaluateExpression(condition, context));
     }
 

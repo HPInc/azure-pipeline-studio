@@ -8,7 +8,13 @@ console.log('🧪 Azure Pipeline YAML Formatter - Comprehensive Test Suite');
 console.log('===========================================================\n');
 
 const testDir = __dirname;
-const testScripts = ['test-formatting.js', 'test-comments.js', 'test-step-spacing.js', 'test-long-lines.js', 'test-error-handling.js'];
+const testScripts = [
+    'test-formatting.js',
+    'test-comments.js',
+    'test-step-spacing.js',
+    'test-long-lines.js',
+    'test-error-handling.js',
+];
 
 let totalTests = 0;
 let passedTests = 0;
