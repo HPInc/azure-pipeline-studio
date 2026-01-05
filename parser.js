@@ -16,6 +16,7 @@ const TASK_TYPE_MAP = Object.freeze({
 class AzurePipelineParser {
     constructor(options = {}) {
         this.expressionCache = new Map();
+        this.globQuotePattern = /\*\*|[*/]\/|\/[*/]/;
     }
 
     expandPipelineFromFile(filePath, overrides = {}) {
@@ -99,8 +100,6 @@ class AzurePipelineParser {
         return { document: expandedDocument, yaml: output, context };
     }
 
-    // expandPipelineFromString was inlined into expandPipelineFromString; no separate function needed.
-
     /**
      * Extract quote styles from YAML AST.
      * Uses path-based matching for exact preservation, with context-aware hash fallback.
@@ -111,64 +110,8 @@ class AzurePipelineParser {
      * @param {string} identifier - Identifier from ancestor
      */
     extractQuoteStyles(node, path, quoteStyles, identifier = '') {
-        if (!node) return;
-
-        // Hoist commonly used regex to avoid recompiling each iteration
-        const globPattern = /\*\*|[*/]\/|\/[*/]/;
-
-        if (node.items && node.constructor.name === 'YAMLMap') {
-            const currentIdentifier = this.getContextIdentifier(node, identifier);
-
-            for (const pair of node.items) {
-                const keyNode = pair.key;
-                if (!keyNode || !keyNode.value) continue;
-
-                // Mutate path in-place to avoid allocations
-                path.push(keyNode.value);
-
-                const valueNode = pair.value;
-                if (valueNode && typeof valueNode.value === 'string') {
-                    const quoteType = valueNode.type;
-                    if (quoteType === 'QUOTE_SINGLE' || quoteType === 'QUOTE_DOUBLE') {
-                        const keyName = keyNode.value;
-                        const valueContent = valueNode.value;
-
-                        // Store by exact path
-                        quoteStyles.set(path.join('.'), quoteType);
-
-                        // Store context-aware hash (context:key:value) - most reliable
-                        if (currentIdentifier) {
-                            quoteStyles.set(`__ctx:${currentIdentifier}:${keyName}:${valueContent}`, quoteType);
-                        }
-
-                        // Track empty strings
-                        if (valueContent === '' && !quoteStyles.has('__empty_string')) {
-                            quoteStyles.set('__empty_string', quoteType);
-                        }
-
-                        // Track glob patterns (these are unique enough to not conflict)
-                        if (valueContent.length > 2 && globPattern.test(valueContent)) {
-                            const globKey = `__glob:${valueContent}`;
-                            if (!quoteStyles.has(globKey)) {
-                                quoteStyles.set(globKey, quoteType);
-                            }
-                        }
-                    }
-                }
-
-                if (pair.value) {
-                    this.extractQuoteStyles(pair.value, path, quoteStyles, currentIdentifier);
-                }
-
-                path.pop();
-            }
-        } else if (node.items && node.constructor.name === 'YAMLSeq') {
-            for (let index = 0; index < node.items.length; index += 1) {
-                path.push(index);
-                this.extractQuoteStyles(node.items[index], path, quoteStyles, identifier);
-                path.pop();
-            }
-        }
+        const handler = this.buildQuoteHandler(this.setQuoteStyle.bind(this), {});
+        this.traverseQuoteStyleNodes(node, path, handler, identifier, quoteStyles);
     }
 
     /**
@@ -215,52 +158,162 @@ class AzurePipelineParser {
      * @param {string} identifier - Identifier from ancestor
      */
     restoreQuoteStyles(node, path, quoteStyles = new Map(), identifier = '') {
+        // Delegate to the generic traversal with a handler that applies stored styles
+        const handler = this.buildQuoteHandler(this.getQuoteStyle.bind(this), {
+            post: (quoteStyle, valueNode) => {
+                if (quoteStyle && valueNode && valueNode.value !== undefined) {
+                    valueNode.type = quoteStyle;
+                }
+            },
+        });
+        this.traverseQuoteStyleNodes(node, path, handler, identifier, quoteStyles);
+    }
+
+    /**
+     * Helper to capture quote style metadata for a single string value node.
+     * Extracts exact-path, context-aware, empty-string and glob pattern entries.
+     * @param {array} path - current path array (mutated externally)
+     * @param {object} keyNode - YAML key node
+     * @param {object} valueNode - YAML value node (string)
+     * @param {string} identifier - context identifier for context-aware keys
+     * @param {Map} quoteStyles - map to record styles into
+     */
+    setQuoteStyle(path, keyNode, valueNode, identifier, quoteStyles) {
+        const quoteType = valueNode.type;
+        if (quoteType !== 'QUOTE_SINGLE' && quoteType !== 'QUOTE_DOUBLE') return;
+        if (typeof valueNode.value !== 'string') return;
+
+        const keyName = keyNode.value;
+        const valueContent = valueNode.value;
+
+        // Store by exact path
+        quoteStyles.set(path.join('.'), quoteType);
+
+        // Context-aware hash (context:key:value)
+        if (identifier) {
+            quoteStyles.set(`__ctx:${identifier}:${keyName}:${valueContent}`, quoteType);
+        }
+
+        // Track empty strings
+        if (valueContent === '' && !quoteStyles.has('__empty_string')) {
+            quoteStyles.set('__empty_string', quoteType);
+        }
+
+        // Track glob patterns (unique enough to not conflict)
+        if (valueContent.length > 2 && this.globQuotePattern.test(valueContent)) {
+            const globKey = `__glob:${valueContent}`;
+            if (!quoteStyles.has(globKey)) quoteStyles.set(globKey, quoteType);
+        }
+    }
+
+    /**
+     * Lookup a quote style for a value using multiple fallbacks.
+     * Signature mirrors `setQuoteStyle`: (pathArray, keyNode, valueNode, identifier, quoteStyles)
+     * Fallback order:
+     * 1. exact path key
+     * 2. context-aware key (__ctx:id:key:value)
+     * 3. glob pattern key (__glob:value)
+     * 4. empty-string fallback (__empty_string)
+     * @param {array} pathArr - path array (will be joined)
+     * @param {object} keyNode - YAML key node
+     * @param {object} valueNode - YAML value node (may be undefined)
+     * @param {string} identifier - context identifier
+     * @param {Map} quoteStyles - map of captured styles
+     * @returns {string|undefined} - quote style token or undefined
+     */
+    getQuoteStyle(pathArr, keyNode, valueNode, identifier, quoteStyles) {
+        if (!quoteStyles) return undefined;
+
+        const pathKey = Array.isArray(pathArr) ? pathArr.join('.') : String(pathArr || '');
+        const keyName = keyNode && keyNode.value ? keyNode.value : undefined;
+        const valContent = valueNode && typeof valueNode.value === 'string' ? valueNode.value : undefined;
+
+        // Exact path first
+        let style = quoteStyles.get(pathKey);
+
+        if (!style && valContent !== undefined) {
+            if (identifier && keyName !== undefined) {
+                style = quoteStyles.get(`__ctx:${identifier}:${keyName}:${valContent}`);
+            }
+
+            if (!style && valContent.length > 2 && this.globQuotePattern.test(valContent)) {
+                style = quoteStyles.get(`__glob:${valContent}`);
+            }
+
+            if (!style && valContent === '') {
+                style = quoteStyles.get('__empty_string');
+            }
+        }
+
+        return style;
+    }
+
+    /**
+     * Generic YAMLMap/YAMLSeq traversal used by both extract and restore flows.
+     * The handler is invoked for each pair in a YAMLMap with signature
+     * (pair, pathArray, currentIdentifier, quoteStyles).
+     * @param {object} node - YAML AST node
+     * @param {array} path - current path array (mutated by traversal)
+     * @param {function} handler - function(pair, pathArray, currentIdentifier, quoteStyles)
+     * @param {string} identifier - incoming identifier fallback
+     * @param {Map} quoteStyles - map passed through to handlers
+     */
+    traverseQuoteStyleNodes(node, path, handler, identifier = '', quoteStyles = new Map()) {
         if (!node) return;
 
         if (node.items && node.constructor.name === 'YAMLMap') {
-            const globPattern = /\*\*|[*/]\/|\/[*/]/;
-            let currentIdentifier = this.getContextIdentifier(node, identifier);
-
+            const currentID = this.getContextIdentifier(node, identifier);
             for (const pair of node.items) {
-                if (!pair.key?.value || !pair.value) continue;
+                const keyNode = pair.key;
+                if (!keyNode || !keyNode.value) continue;
 
-                const keyName = pair.key.value;
-
-                // Build path efficiently by mutating the shared array
-                path.push(keyName);
-                const pathKey = path.join('.');
-
-                // Try exact path first
-                let quoteStyle = quoteStyles.get(pathKey);
-
-                // If not found and value is a string, try fallbacks
-                const valNode = pair.value;
-                const valContent = typeof valNode.value === 'string' ? valNode.value : undefined;
-                if (!quoteStyle && valContent !== undefined) {
-                    if (currentIdentifier) {
-                        quoteStyle = quoteStyles.get(`__ctx:${currentIdentifier}:${keyName}:${valContent}`);
-                    }
-                    if (!quoteStyle && valContent.length > 2 && globPattern.test(valContent)) {
-                        quoteStyle = quoteStyles.get(`__glob:${valContent}`);
-                    }
-                    if (!quoteStyle && valContent === '') {
-                        quoteStyle = quoteStyles.get('__empty_string');
-                    }
+                path.push(keyNode.value);
+                try {
+                    handler(pair, path, currentID, quoteStyles);
+                } catch (err) {
+                    // Handler should not break traversal; swallow errors
                 }
 
-                if (quoteStyle && valNode.value !== undefined) {
-                    valNode.type = quoteStyle;
+                if (pair.value) {
+                    this.traverseQuoteStyleNodes(pair.value, path, handler, currentID, quoteStyles);
                 }
-
-                this.restoreQuoteStyles(valNode, path, quoteStyles, currentIdentifier);
                 path.pop();
             }
         } else if (node.items && node.constructor.name === 'YAMLSeq') {
-            node.items.forEach((item, index) => {
-                const itemPath = [...path, index];
-                this.restoreQuoteStyles(item, itemPath, quoteStyles, identifier);
-            });
+            for (let index = 0; index < node.items.length; index += 1) {
+                path.push(index);
+                this.traverseQuoteStyleNodes(node.items[index], path, handler, identifier, quoteStyles);
+                path.pop();
+            }
         }
+    }
+
+    /**
+     * Build a generic handler for YAML mapping pairs that invokes an injected
+     * helper (e.g. `setQuoteStyle` or `getQuoteStyle`).
+     * @param {string} handlerKey - name of helper on `helpers` object
+     * @param {function} fallback - fallback function bound to `this`
+     * @param {object} options - { post: function }
+     * @returns {function} handler(pair, pathArr, currentID, quoteStyles, helpers)
+     */
+    buildQuoteHandler(func, options = {}) {
+        const { post: postFunc = null } = options;
+        return (pair, pathArr, currentID, qStyles) => {
+            const keyNode = pair.key;
+            const valueNode = pair.value;
+            if (!keyNode || !keyNode.value || !valueNode || typeof valueNode.value !== 'string') {
+                return;
+            }
+
+            const quoteStyle = func(pathArr, keyNode, valueNode, currentID, qStyles);
+            if (typeof postFunc === 'function') {
+                try {
+                    postFunc(quoteStyle, valueNode);
+                } catch (err) {
+                    // swallow post errors
+                }
+            }
+        };
     }
 
     /**
