@@ -46,10 +46,9 @@ class AzurePipelineParser {
             throw new Error(`Failed to parse YAML: ${error.message}`);
         }
         const context = this.buildExecutionContext(document, overrides);
-        const quoteResult = this.captureQuoteStyles(yamlDoc.contents, []);
-        context.quoteStyles = quoteResult ? quoteResult.quoteStyles : new Map();
-        context.quoteResult = quoteResult;
+        context.quoteResult = this.captureQuoteStyles(yamlDoc.contents, []);
         context.azureCompatible = overrides.azureCompatible || false;
+        context.templateQuoteStyles = new Map();
 
         const expandedDocument = this.expandNode(document, context);
         const finalYamlDoc = YAML.parseDocument(YAML.stringify(expandedDocument));
@@ -109,16 +108,16 @@ class AzurePipelineParser {
      * @param {object} node - YAML AST node
      * @param {array} path - Current path in the document
      * @param {Map} quoteStyles - Map to store quote styles
-     * @param {string} context - Context identifier from ancestor (displayName or task)
+     * @param {string} identifier - Identifier from ancestor
      */
-    extractQuoteStyles(node, path, quoteStyles, context = '') {
+    extractQuoteStyles(node, path, quoteStyles, identifier = '') {
         if (!node) return;
 
         // Hoist commonly used regex to avoid recompiling each iteration
         const globPattern = /\*\*|[*/]\/|\/[*/]/;
 
         if (node.items && node.constructor.name === 'YAMLMap') {
-            const currentContext = this.getContextIdentifier(node, context);
+            const currentIdentifier = this.getContextIdentifier(node, identifier);
 
             for (const pair of node.items) {
                 const keyNode = pair.key;
@@ -138,8 +137,8 @@ class AzurePipelineParser {
                         quoteStyles.set(path.join('.'), quoteType);
 
                         // Store context-aware hash (context:key:value) - most reliable
-                        if (currentContext) {
-                            quoteStyles.set(`__ctx:${currentContext}:${keyName}:${valueContent}`, quoteType);
+                        if (currentIdentifier) {
+                            quoteStyles.set(`__ctx:${currentIdentifier}:${keyName}:${valueContent}`, quoteType);
                         }
 
                         // Track empty strings
@@ -158,7 +157,7 @@ class AzurePipelineParser {
                 }
 
                 if (pair.value) {
-                    this.extractQuoteStyles(pair.value, path, quoteStyles, currentContext);
+                    this.extractQuoteStyles(pair.value, path, quoteStyles, currentIdentifier);
                 }
 
                 path.pop();
@@ -166,7 +165,7 @@ class AzurePipelineParser {
         } else if (node.items && node.constructor.name === 'YAMLSeq') {
             for (let index = 0; index < node.items.length; index += 1) {
                 path.push(index);
-                this.extractQuoteStyles(node.items[index], path, quoteStyles, context);
+                this.extractQuoteStyles(node.items[index], path, quoteStyles, identifier);
                 path.pop();
             }
         }
@@ -2242,6 +2241,8 @@ class AzurePipelineParser {
             resourceLocations: parent.resourceLocations || {},
             scriptsWithExpressions: parent.scriptsWithExpressions, // Preserve scripts tracking
             scriptsWithLastLineExpressions: parent.scriptsWithLastLineExpressions, // Preserve last line tracking
+            templateQuoteStyles: parent.templateQuoteStyles, // Preserve template quote styles map
+            quoteResult: parent.quoteResult, // Preserve captured quote result
         };
     }
 
@@ -2256,7 +2257,6 @@ class AzurePipelineParser {
                 options.repositoryBaseDir !== undefined ? options.repositoryBaseDir : parent.repositoryBaseDir,
             resourceLocations: parent.resourceLocations || {},
             templateStack: parent.templateStack || [],
-            quoteStyles: parent.quoteStyles, // Preserve quote styles
             templateQuoteStyles: parent.templateQuoteStyles, // Preserve template quote styles map
             scriptsWithExpressions: parent.scriptsWithExpressions, // Preserve scripts tracking
             scriptsWithLastLineExpressions: parent.scriptsWithLastLineExpressions, // Preserve last line tracking
@@ -2367,11 +2367,8 @@ class AzurePipelineParser {
             const templateQuoteStyles = new Map();
             this.extractQuoteStyles(yamlDoc.contents, [], templateQuoteStyles);
 
-            // Merge template quote styles into context
-            if (context.quoteStyles && templateQuoteStyles.size > 0) {
-                if (!context.templateQuoteStyles) {
-                    context.templateQuoteStyles = new Map();
-                }
+            // Register template quote styles so captureQuoteStyles.save() can merge them later
+            if (templateQuoteStyles.size > 0) {
                 context.templateQuoteStyles.set(resolvedPath, templateQuoteStyles);
             }
 
