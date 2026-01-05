@@ -18,10 +18,9 @@ class AzurePipelineParser {
         this.expressionCache = new Map();
     }
 
-    expandPipelineFromStringFromFile(filePath, overrides = {}) {
+    expandPipelineFromFile(filePath, overrides = {}) {
         const input = fs.readFileSync(filePath, 'utf8');
         const baseDir = path.dirname(filePath);
-        // Initialize template stack with root file
         const enhancedOverrides = {
             ...overrides,
             fileName: filePath,
@@ -37,69 +36,35 @@ class AzurePipelineParser {
     }
 
     expandPipeline(sourceText, overrides = {}) {
-        // Parse source, capture quote styles, build context and expand inlined here
         let yamlDoc = null;
         let document = {};
-        let captureResult = overrides.captureResult;
+
         try {
             yamlDoc = YAML.parseDocument(sourceText);
-            captureResult = captureResult || this.captureQuoteStyles(yamlDoc.contents, []);
             document = yamlDoc.toJSON() || {};
         } catch (error) {
             throw new Error(`Failed to parse YAML: ${error.message}`);
         }
-
-        // Build execution context and perform expansion
         const context = this.buildExecutionContext(document, overrides);
-        context.quoteStyles = captureResult ? captureResult.quoteStyles : new Map();
+        const quoteResult = this.captureQuoteStyles(yamlDoc.contents, []);
+        context.quoteStyles = quoteResult ? quoteResult.quoteStyles : new Map();
+        context.quoteResult = quoteResult;
+        context.azureCompatible = overrides.azureCompatible || false;
 
         const expandedDocument = this.expandNode(document, context);
-
-        expandedDocument.__scriptsWithExpressions = context.scriptsWithExpressions || new Set();
-        expandedDocument.__scriptsWithLastLineExpressions = context.scriptsWithLastLineExpressions || new Set();
-
-        // We have the expanded document already. Use captureResult.save to obtain merged quoteStyles
-        let mergedQuoteStyles = new Map();
-        if (captureResult && typeof captureResult.save === 'function') {
-            // save may return the merged map; if so, capture it to avoid object attach/detach
-            const maybeMap = captureResult.save(expandedDocument, context);
-            if (maybeMap && maybeMap instanceof Map) {
-                mergedQuoteStyles = maybeMap;
-            } else if (expandedDocument.__quoteStyles && expandedDocument.__quoteStyles instanceof Map) {
-                mergedQuoteStyles = expandedDocument.__quoteStyles;
-            }
-            // Remove attached meta to keep expandedDocument serializable
-            if (expandedDocument.__quoteStyles) delete expandedDocument.__quoteStyles;
-        }
-
-        // Extract scripts that had ${{}} expressions before expansion (they were set on expandedDocument)
-        const scriptsWithExpressions = expandedDocument.__scriptsWithExpressions || new Set();
-        delete expandedDocument.__scriptsWithExpressions;
-        const scriptsWithLastLineExpressions = expandedDocument.__scriptsWithLastLineExpressions || new Set();
-        delete expandedDocument.__scriptsWithLastLineExpressions;
-
-        // Create YAML document and restore quote styles using merged map
         const finalYamlDoc = YAML.parseDocument(YAML.stringify(expandedDocument));
-        this.restoreQuoteStyles(finalYamlDoc.contents, [], mergedQuoteStyles);
+        this.restoreQuoteStyles(finalYamlDoc.contents, [], context.mergedQuoteStyles);
 
-        // Always apply block scalar styles to control formatting
-        // When azureCompatible=false, use literal style to preserve exact formatting
-        // When azureCompatible=true, apply Azure-specific transformations
-        const azureCompatible = overrides.azureCompatible || false;
-        console.log(`Azure Compatibility mode: ${azureCompatible}`);
-        this.applyBlockScalarStyles(
-            finalYamlDoc.contents,
-            scriptsWithExpressions,
-            scriptsWithLastLineExpressions,
-            azureCompatible
-        );
+        console.log(`Azure Compatibility mode: ${context.azureCompatible}`);
+        this.applyBlockScalarStyles(finalYamlDoc.contents, context);
+
         let output = finalYamlDoc.toString({
             lineWidth: 0,
             indent: 2,
             defaultStringType: 'PLAIN',
             defaultKeyType: 'PLAIN',
             simpleKeys: false,
-            aliasDuplicateObjects: false, // Disable YAML anchors/aliases for Azure Pipelines compatibility
+            aliasDuplicateObjects: false,
         });
 
         // Remove quotes from plain numbers in YAML value positions
@@ -120,7 +85,7 @@ class AzurePipelineParser {
         });
 
         // Handle trailing newlines and blank line removal based on mode
-        if (azureCompatible) {
+        if (context.azureCompatible) {
             // Remove extra blank lines between sections
             output = output.replace(/^(\S.+)\n\n(\s*-\s)/gm, '$1\n$2');
             output = output.replace(/^(\S.+)\n\n(\s*\w+:)/gm, '$1\n$2');
@@ -248,14 +213,14 @@ class AzurePipelineParser {
      * @param {object} node - YAML AST node
      * @param {array} path - Current path in the document
      * @param {Map} quoteStyles - Map of stored quote styles
-     * @param {string} context - Context identifier from ancestor
+     * @param {string} identifier - Identifier from ancestor
      */
-    restoreQuoteStyles(node, path, quoteStyles, context = '') {
+    restoreQuoteStyles(node, path, quoteStyles = new Map(), identifier = '') {
         if (!node) return;
 
         if (node.items && node.constructor.name === 'YAMLMap') {
             const globPattern = /\*\*|[*/]\/|\/[*/]/;
-            let currentContext = this.getContextIdentifier(node, context);
+            let currentIdentifier = this.getContextIdentifier(node, identifier);
 
             for (const pair of node.items) {
                 if (!pair.key?.value || !pair.value) continue;
@@ -273,8 +238,8 @@ class AzurePipelineParser {
                 const valNode = pair.value;
                 const valContent = typeof valNode.value === 'string' ? valNode.value : undefined;
                 if (!quoteStyle && valContent !== undefined) {
-                    if (currentContext) {
-                        quoteStyle = quoteStyles.get(`__ctx:${currentContext}:${keyName}:${valContent}`);
+                    if (currentIdentifier) {
+                        quoteStyle = quoteStyles.get(`__ctx:${currentIdentifier}:${keyName}:${valContent}`);
                     }
                     if (!quoteStyle && valContent.length > 2 && globPattern.test(valContent)) {
                         quoteStyle = quoteStyles.get(`__glob:${valContent}`);
@@ -288,13 +253,13 @@ class AzurePipelineParser {
                     valNode.type = quoteStyle;
                 }
 
-                this.restoreQuoteStyles(valNode, path, quoteStyles, currentContext);
+                this.restoreQuoteStyles(valNode, path, quoteStyles, currentIdentifier);
                 path.pop();
             }
         } else if (node.items && node.constructor.name === 'YAMLSeq') {
             node.items.forEach((item, index) => {
                 const itemPath = [...path, index];
-                this.restoreQuoteStyles(item, itemPath, quoteStyles, context);
+                this.restoreQuoteStyles(item, itemPath, quoteStyles, identifier);
             });
         }
     }
@@ -307,7 +272,9 @@ class AzurePipelineParser {
      * @returns {string} context identifier
      */
     getContextIdentifier(node, fallback = '') {
-        if (!node || !node.items || node.constructor.name !== 'YAMLMap') return fallback;
+        if (!node || !node.items || node.constructor.name !== 'YAMLMap') {
+            return fallback;
+        }
 
         let current = fallback;
         let foundTask = '';
@@ -335,16 +302,9 @@ class AzurePipelineParser {
      * - Use > (folded) if content originally had ${{}} expressions (tracked during expansion)
      * - Use | (literal) otherwise for scripts - preserves newlines
      * @param {object} node - YAML AST node
-     * @param {Set} scriptsWithExpressions - Set of script content hashes that had ${{}} before expansion
-     * @param {Set} scriptsWithLastLineExpressions - Set of script content where last line had ${{}} before expansion
-     * @param {boolean} azureCompatible - Whether to apply Azure-compatible transformations (empty lines, chomping)
+     * @param {object} context - Expansion context
      */
-    applyBlockScalarStyles(
-        node,
-        scriptsWithExpressions = new Set(),
-        scriptsWithLastLineExpressions = new Set(),
-        azureCompatible = false
-    ) {
+    applyBlockScalarStyles(node, context = {}) {
         if (!node) return;
 
         if (node.items && node.constructor.name === 'YAMLMap') {
@@ -353,64 +313,42 @@ class AzurePipelineParser {
 
                 const { value } = pair;
                 if (typeof value.value !== 'string' || !value.value.includes('\n')) {
-                    this.applyBlockScalarStyles(
-                        value,
-                        scriptsWithExpressions,
-                        scriptsWithLastLineExpressions,
-                        azureCompatible
-                    );
+                    this.applyBlockScalarStyles(value, context);
                     continue;
                 }
 
                 let content = value.value;
 
                 // Handle trailing spaces in Azure mode - force double quotes
-                if (azureCompatible && this.hasTrailingSpaces(content)) {
+                if (context.azureCompatible && this.hasTrailingSpaces(content)) {
                     value.type = 'QUOTE_DOUBLE';
-                    this.applyBlockScalarStyles(
-                        value,
-                        scriptsWithExpressions,
-                        scriptsWithLastLineExpressions,
-                        azureCompatible
-                    );
+                    this.applyBlockScalarStyles(value, context);
                     continue;
                 }
 
                 // Apply block scalar styles
                 if (value.type !== 'QUOTE_DOUBLE') {
                     const trimmedKey = content.replace(/\s+$/, '');
-                    const hadExpressions = scriptsWithExpressions.has(trimmedKey);
+                    const hadExpressions = context.scriptsWithExpressions.has(trimmedKey);
                     const hasHeredoc = /<<[-]?\s*['"]?(\w+)['"]?/.test(content);
 
                     // Determine block scalar type
-                    if (hasHeredoc && azureCompatible && hadExpressions) {
+                    if (hasHeredoc && context.azureCompatible && hadExpressions) {
                         content = this.addEmptyLinesInHeredoc(content);
                         value.value = content;
                         value.type = 'BLOCK_FOLDED';
                     } else {
-                        value.type = hadExpressions && azureCompatible ? 'BLOCK_FOLDED' : 'BLOCK_LITERAL';
+                        value.type = hadExpressions && context.azureCompatible ? 'BLOCK_FOLDED' : 'BLOCK_LITERAL';
                     }
 
                     // Normalize trailing newlines
-                    value.value = this.normalizeTrailingNewlines(content, azureCompatible);
+                    value.value = this.normalizeTrailingNewlines(content, context.azureCompatible);
                 }
 
-                this.applyBlockScalarStyles(
-                    value,
-                    scriptsWithExpressions,
-                    scriptsWithLastLineExpressions,
-                    azureCompatible
-                );
+                this.applyBlockScalarStyles(value, context);
             }
         } else if (node.items && node.constructor.name === 'YAMLSeq') {
-            node.items.forEach((item) =>
-                this.applyBlockScalarStyles(
-                    item,
-                    scriptsWithExpressions,
-                    scriptsWithLastLineExpressions,
-                    azureCompatible
-                )
-            );
+            node.items.forEach((item) => this.applyBlockScalarStyles(item, context));
         }
     }
 
@@ -1019,18 +957,50 @@ class AzurePipelineParser {
     }
 
     expandNode(node, context, parentKey = null) {
+        let expanded;
         if (Array.isArray(node)) {
-            return this.expandArray(node, context, parentKey);
+            expanded = this.expandArray(node, context, parentKey);
+        } else if (node && typeof node === 'object') {
+            expanded = this.expandObject(node, context, parentKey);
+        } else {
+            expanded = this.expandScalar(node, context);
         }
-        if (node && typeof node === 'object') {
-            return this.expandObject(node, context, parentKey);
+
+        // If this is the root call (parentKey is null), handle all metadata
+        if (parentKey === null && expanded && typeof expanded === 'object' && !Array.isArray(expanded)) {
+            // Attach script metadata collected during expansion
+            expanded.__scriptsWithExpressions = context.scriptsWithExpressions || new Set();
+            expanded.__scriptsWithLastLineExpressions = context.scriptsWithLastLineExpressions || new Set();
+
+            // Save merged quote styles using quoteResult
+            let mergedQuoteStyles = new Map();
+            const quoteResult = context.quoteResult;
+            if (quoteResult && typeof quoteResult.save === 'function') {
+                const maybeMap = quoteResult.save(expanded, context);
+                if (maybeMap && maybeMap instanceof Map) {
+                    mergedQuoteStyles = maybeMap;
+                } else if (expanded.__quoteStyles && expanded.__quoteStyles instanceof Map) {
+                    mergedQuoteStyles = expanded.__quoteStyles;
+                }
+            }
+
+            // Extract and clean up all metadata from expanded document
+            context.scriptsWithExpressions = expanded.__scriptsWithExpressions || new Set();
+            delete expanded.__scriptsWithExpressions;
+            context.scriptsWithLastLineExpressions = expanded.__scriptsWithLastLineExpressions || new Set();
+            delete expanded.__scriptsWithLastLineExpressions;
+            if (expanded.__quoteStyles) delete expanded.__quoteStyles;
+
+            // Store merged quote styles in context for expandPipeline to use
+            context.mergedQuoteStyles = mergedQuoteStyles;
         }
-        return this.expandScalar(node, context);
+
+        return expanded;
     }
 
     expandArray(array, context, parentKey = null) {
         const result = [];
-        const isVariablesArray = parentKey === 'variables';
+        const isVarArray = parentKey === 'variables';
 
         for (let index = 0; index < array.length; index += 1) {
             const element = array[index];
@@ -1041,7 +1011,7 @@ class AzurePipelineParser {
 
                 // If we're in a variables array, add template variables to context
                 // This makes them available within the same scope (job/stage/global)
-                if (isVariablesArray && Array.isArray(templateItems)) {
+                if (isVarArray && Array.isArray(templateItems)) {
                     for (const item of templateItems) {
                         if (item && typeof item === 'object' && !Array.isArray(item)) {
                             const varName = item.name;
@@ -1072,13 +1042,13 @@ class AzurePipelineParser {
                 }
             }
 
-            const expandedElement = this.expandNode(element, context);
-            if (expandedElement === undefined) {
+            const expanded = this.expandNode(element, context);
+            if (expanded === undefined) {
                 continue;
             }
 
-            if (Array.isArray(expandedElement)) {
-                for (const item of expandedElement) {
+            if (Array.isArray(expanded)) {
+                for (const item of expanded) {
                     if (this.isTemplateReference(item)) {
                         const templateItems = this.expandTemplateReference(item, context);
                         result.push(...templateItems);
@@ -1087,25 +1057,19 @@ class AzurePipelineParser {
                     }
                 }
             } else {
-                result.push(expandedElement);
+                result.push(expanded);
             }
 
-            // If we're in a variables array, extract the variable and add it to context
-            // This allows forward references within the same variables section
-            if (
-                isVariablesArray &&
-                expandedElement &&
-                typeof expandedElement === 'object' &&
-                !Array.isArray(expandedElement)
-            ) {
-                const varName = expandedElement.name;
-                const varValue = this.pickFirstDefined(expandedElement.value, expandedElement.default);
+            if (isVarArray && expanded && typeof expanded === 'object' && !Array.isArray(expanded)) {
+                const varName = expanded.name;
+                const varValue = this.pickFirstDefined(expanded.value, expanded.default);
                 if (varName && varValue !== undefined) {
                     // Update the context so subsequent variables can reference this one
                     context.variables[varName] = varValue;
                 }
             }
         }
+
         return result;
     }
 
@@ -2975,7 +2939,7 @@ if (require.main === module) {
     const parserInstance = new AzurePipelineParser({ printTree: false });
 
     try {
-        const expanded = parserInstance.expandPipelineFromStringFromFile(filePath);
+        const expanded = parserInstance.expandPipelineFromFile(filePath);
         process.stdout.write(expanded);
     } catch (error) {
         console.error(`Failed to expand pipeline: ${error.message}`);
