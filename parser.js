@@ -4,6 +4,15 @@ const path = require('path');
 const YAML = require('yaml');
 const jsep = require('jsep');
 
+// Mapping of shorthand keys to Azure task identifiers
+const TASK_TYPE_MAP = Object.freeze({
+    script: 'CmdLine@2',
+    bash: 'Bash@3',
+    pwsh: 'PowerShell@2',
+    powershell: 'PowerShell@2',
+    checkout: '6d15af64-176c-496d-b583-fd2ae21d4df4@1',
+});
+
 class AzurePipelineParser {
     constructor(options = {}) {
         this.expressionCache = new Map();
@@ -1207,56 +1216,41 @@ class AzurePipelineParser {
             result[key] = expandedValue;
         }
 
-        // Convert bash/script/pwsh/powershell/checkout shortcuts to task format (like Azure Pipelines does)
-        // Skip if: already converted (has task/inputs/targetType) OR we're inside an inputs object (parentKey === 'inputs')
-        if (
-            (result.bash || result.script || result.pwsh || result.powershell || result.checkout) &&
-            !result.task &&
-            !result.inputs &&
-            !result.targetType &&
-            parentKey !== 'inputs'
-        ) {
-            const shortKey = ['bash', 'script', 'pwsh', 'powershell', 'checkout'].find((k) => result[k]);
+        // Convert shorthand (bash/script/pwsh/powershell/checkout) to task format when safe
+        // Inline the detection logic to avoid a separate helper function
+        const shortKey = ['bash', 'script', 'pwsh', 'powershell', 'checkout'].find((k) =>
+            Object.prototype.hasOwnProperty.call(result, k),
+        );
+
+        if (shortKey && !result.task && !result.inputs && !result.targetType && parentKey !== 'inputs') {
             const shortValue = result[shortKey];
             delete result[shortKey];
 
-            // Map short to task type
-            const taskTypeMap = {
-                script: 'CmdLine@2',
-                bash: 'Bash@3',
-                pwsh: 'PowerShell@2',
-                powershell: 'PowerShell@2',
-                checkout: '6d15af64-176c-496d-b583-fd2ae21d4df4@1',
-            };
-
-            const taskResult = { task: taskTypeMap[shortKey] };
+            const taskResult = { task: TASK_TYPE_MAP[shortKey] };
 
             if (shortKey === 'checkout') {
-                // Checkout: extract condition and displayName to task level, rest to inputs
                 const { condition, displayName, ...inputProps } = result;
-
                 if (displayName) taskResult.displayName = displayName;
                 taskResult.condition = condition !== undefined ? condition : shortValue === 'none' ? false : undefined;
                 if (taskResult.condition === undefined) delete taskResult.condition;
-
                 taskResult.inputs = { repository: shortValue, ...inputProps };
             } else {
-                // Script tasks: extract workingDirectory to inputs, rest stays at task level
                 const { workingDirectory, ...taskProps } = result;
-
                 Object.assign(taskResult, taskProps);
 
-                // Build inputs with targetType first when needed so it serializes in that order
                 let inputs;
                 if (shortKey !== 'script') {
                     inputs = { targetType: 'inline', script: shortValue };
-                    if (shortKey === 'pwsh') inputs.pwsh = true;
+                    if (shortKey === 'pwsh') {
+                        inputs.pwsh = true;
+                    }
                 } else {
                     inputs = { script: shortValue };
                 }
 
-                if (workingDirectory !== undefined) inputs.workingDirectory = workingDirectory;
-
+                if (workingDirectory !== undefined) {
+                    inputs.workingDirectory = workingDirectory;
+                }
                 taskResult.inputs = inputs;
             }
 
