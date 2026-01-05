@@ -358,12 +358,13 @@ class AzurePipelineParser {
      */
     applyBlockScalarStyles(node, context = {}) {
         if (!node) return;
-
         if (node.items && node.constructor.name === 'YAMLMap') {
             for (const pair of node.items) {
                 if (!pair.key?.value || !pair.value) continue;
 
                 const { value } = pair;
+
+                // Recurse for non-multiline or non-string values
                 if (typeof value.value !== 'string' || !value.value.includes('\n')) {
                     this.applyBlockScalarStyles(value, context);
                     continue;
@@ -371,36 +372,36 @@ class AzurePipelineParser {
 
                 let content = value.value;
 
-                // Handle trailing spaces in Azure mode - force double quotes
+                // If Azure mode and trailing spaces exist, force double-quoted scalar
                 if (context.azureCompatible && this.hasTrailingSpaces(content)) {
                     value.type = 'QUOTE_DOUBLE';
+                    // still normalize nested values
                     this.applyBlockScalarStyles(value, context);
                     continue;
                 }
 
-                // Apply block scalar styles
-                if (value.type !== 'QUOTE_DOUBLE') {
-                    const trimmedKey = content.replace(/\s+$/, '');
-                    const hadExpressions = context.scriptsWithExpressions.has(trimmedKey);
-                    const hasHeredoc = /<<[-]?\s*['"]?(\w+)['"]?/.test(content);
-
-                    // Determine block scalar type
-                    if (hasHeredoc && context.azureCompatible && hadExpressions) {
-                        content = this.addEmptyLinesInHeredoc(content);
-                        value.value = content;
-                        value.type = 'BLOCK_FOLDED';
-                    } else {
-                        value.type = hadExpressions && context.azureCompatible ? 'BLOCK_FOLDED' : 'BLOCK_LITERAL';
-                    }
-
-                    // Normalize trailing newlines
-                    value.value = this.normalizeTrailingNewlines(content, context.azureCompatible);
+                // Only adjust block scalar type when not already explicitly double-quoted
+                if (value.type === 'QUOTE_DOUBLE') {
+                    this.applyBlockScalarStyles(value, context);
+                    continue;
                 }
 
+                const trimmedKey = content.replace(/\s+$/, '');
+                const hadExpressions = context.scriptsWithExpressions.has(trimmedKey);
+                const hasHeredoc = /<<[-]?\s*['"]?(\w+)['"]?/.test(content);
+
+                if (hasHeredoc && context.azureCompatible && hadExpressions) {
+                    content = this.addEmptyLinesInHeredoc(content);
+                    value.type = 'BLOCK_FOLDED';
+                } else {
+                    value.type = hadExpressions && context.azureCompatible ? 'BLOCK_FOLDED' : 'BLOCK_LITERAL';
+                }
+
+                value.value = this.normalizeTrailingNewlines(content, context.azureCompatible);
                 this.applyBlockScalarStyles(value, context);
             }
         } else if (node.items && node.constructor.name === 'YAMLSeq') {
-            node.items.forEach((item) => this.applyBlockScalarStyles(item, context));
+            for (const item of node.items) this.applyBlockScalarStyles(item, context);
         }
     }
 
@@ -447,71 +448,63 @@ class AzurePipelineParser {
     addEmptyLinesInHeredoc(content) {
         // Match heredoc pattern: <<EOF or <<-EOF or <<'EOF' or <<"EOF"
         const heredocRegex = /<<[-]?\s*['"]?(\w+)['"]?/g;
-        let result = content;
-        let match;
 
-        // Find all heredocs and their delimiters
-        const heredocs = [];
-        while ((match = heredocRegex.exec(content)) !== null) {
-            heredocs.push({
-                delimiter: match[1],
-                startIndex: match.index,
-            });
+        // Collect all heredoc matches (delimiter and index)
+        const matches = [];
+        let m;
+        while ((m = heredocRegex.exec(content)) !== null) {
+            matches.push({ delimiter: m[1], index: m.index });
         }
 
-        // Process each heredoc from last to first (to preserve indices)
-        for (let i = heredocs.length - 1; i >= 0; i--) {
-            const { delimiter, startIndex } = heredocs[i];
+        if (!matches.length) return content;
 
-            // Find the start of heredoc content (after the <<DELIM line)
+        // Work on a mutable string result; process from last to first to keep indices valid
+        let result = content;
+        for (let i = matches.length - 1; i >= 0; i--) {
+            const { delimiter, index: startIndex } = matches[i];
+
+            // Find the end of the line that contains the <<DELIM marker
             const startLineEnd = result.indexOf('\n', startIndex);
             if (startLineEnd === -1) continue;
 
-            // Find the end delimiter (must be on its own line or with leading whitespace for <<-)
-            const delimiterRegex = new RegExp(`^[ \\t]*${delimiter}[ \\t]*$`, 'm');
-            const endMatch = delimiterRegex.exec(result.slice(startLineEnd + 1));
-            if (!endMatch) continue;
+            // Look for the delimiter on its own line (allowing leading whitespace for <<-)
+            const delimRegex = new RegExp(`^[ \t]*${delimiter}[ \t]*$`, 'm');
+            const afterMarker = result.slice(startLineEnd + 1);
+            const delimMatch = delimRegex.exec(afterMarker);
+            if (!delimMatch) continue;
 
             const contentStart = startLineEnd + 1;
-            const contentEnd = startLineEnd + 1 + endMatch.index;
-
-            // Get heredoc content
+            const contentEnd = contentStart + delimMatch.index;
             const heredocContent = result.slice(contentStart, contentEnd);
 
-            // Check if heredoc already has blank lines between content lines
-            // If so, don't add more (avoids doubling when content was previously formatted with folded style)
+            // Check if heredoc already has a blank line between a non-empty and next line
             const lines = heredocContent.split('\n');
             let hasExistingBlankLines = false;
             for (let j = 1; j < lines.length; j++) {
-                if (lines[j].trim() === '' && j > 0 && lines[j - 1].trim() !== '') {
+                if (lines[j].trim() === '' && lines[j - 1] && lines[j - 1].trim() !== '') {
                     hasExistingBlankLines = true;
                     break;
                 }
             }
 
-            // Only add blank lines if none exist
             if (!hasExistingBlankLines) {
-                // Build result: add blank line only between consecutive non-empty lines
+                // Build spaced content by inserting an empty line between two consecutive non-empty lines
                 const spacedLines = [];
                 for (let j = 0; j < lines.length; j++) {
                     const line = lines[j];
-                    const isEmptyLine = line.trim() === '';
+                    const isEmpty = line.trim() === '';
 
-                    if (j > 0 && !isEmptyLine) {
-                        // Check if previous line was non-empty (need to add blank between them)
+                    if (j > 0 && !isEmpty) {
                         const prevLine = lines[j - 1];
                         const prevWasEmpty = prevLine.trim() === '';
-
                         if (!prevWasEmpty) {
-                            // Two consecutive non-empty lines - add blank line between
                             spacedLines.push('');
                         }
                     }
                     spacedLines.push(line);
                 }
-                const spacedContent = spacedLines.join('\n');
 
-                // Replace the heredoc content
+                const spacedContent = spacedLines.join('\n');
                 result = result.slice(0, contentStart) + spacedContent + result.slice(contentEnd);
             }
         }
