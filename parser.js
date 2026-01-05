@@ -548,17 +548,14 @@ class AzurePipelineParser {
             return {};
         }
 
-        const normalized = {};
+        const normalized = Object.keys(resourcesNode).reduce((acc, key) => {
+            if (key === 'repositories') return acc;
+            acc[key] = this.deepClone(resourcesNode[key]);
+            return acc;
+        }, {});
 
         if (resourcesNode.repositories !== undefined) {
             normalized.repositories = this.normalizeRepositoryList(resourcesNode.repositories);
-        }
-
-        for (const [key, value] of Object.entries(resourcesNode)) {
-            if (key === 'repositories') {
-                continue;
-            }
-            normalized[key] = this.deepClone(value);
         }
 
         return normalized;
@@ -566,22 +563,20 @@ class AzurePipelineParser {
 
     mergeResourcesConfig(baseResources = {}, overrideResources = {}) {
         const merged = {};
+        // Clone base resource keys except repositories
+        Object.entries(baseResources || {}).forEach(([k, v]) => {
+            if (k === 'repositories') return;
+            merged[k] = this.deepClone(v);
+        });
 
-        for (const [key, value] of Object.entries(baseResources)) {
-            if (key === 'repositories') {
-                continue;
-            }
-            merged[key] = this.deepClone(value);
-        }
+        // Merge repositories specially
+        merged.repositories = this.mergeRepositoryConfigs(baseResources?.repositories, overrideResources?.repositories);
 
-        merged.repositories = this.mergeRepositoryConfigs(baseResources.repositories, overrideResources.repositories);
-
-        for (const [key, value] of Object.entries(overrideResources)) {
-            if (key === 'repositories') {
-                continue;
-            }
-            merged[key] = this.deepClone(value);
-        }
+        // Override with overrideResources keys (except repositories)
+        Object.entries(overrideResources || {}).forEach(([k, v]) => {
+            if (k === 'repositories') return;
+            merged[k] = this.deepClone(v);
+        });
 
         return merged;
     }
@@ -592,22 +587,15 @@ class AzurePipelineParser {
         }
 
         const list = [];
-
         if (Array.isArray(value)) {
-            value.forEach((entry) => {
-                if (entry && typeof entry === 'object') {
-                    list.push(this.deepClone(entry));
-                }
-            });
+            for (const entry of value) {
+                if (entry && typeof entry === 'object') list.push(this.deepClone(entry));
+            }
         } else if (typeof value === 'object') {
             for (const [key, entry] of Object.entries(value)) {
-                if (!entry || typeof entry !== 'object') {
-                    continue;
-                }
+                if (!entry || typeof entry !== 'object') continue;
                 const cloned = this.deepClone(entry);
-                if (!cloned.repository && key) {
-                    cloned.repository = key;
-                }
+                if (!cloned.repository && key) cloned.repository = key;
                 list.push(cloned);
             }
         }
@@ -627,37 +615,23 @@ class AzurePipelineParser {
         const mergedMap = new Map();
 
         const addEntry = (entry, source) => {
-            if (!entry || typeof entry !== 'object') {
-                return;
-            }
+            if (!entry || typeof entry !== 'object') return;
 
             const clone = this.deepClone(entry);
             const matchCriteria = clone.__match && typeof clone.__match === 'object' ? clone.__match : undefined;
-            if (matchCriteria) {
-                delete clone.__match;
-            }
+            if (matchCriteria) delete clone.__match;
 
             const alias = this.getRepositoryAlias(clone);
             const key = alias && !this.isNumericString(alias) ? alias : `__index_${mergedOrder.length}`;
-
-            if (!clone.repository && alias && !this.isNumericString(alias)) {
-                clone.repository = alias;
-            }
+            if (!clone.repository && alias && !this.isNumericString(alias)) clone.repository = alias;
 
             const existing = mergedMap.get(key);
-
-            if (
-                source === 'override' &&
-                existing &&
-                matchCriteria &&
-                !this.repositoryMatchesCriteria(existing, matchCriteria)
-            ) {
-                return;
+            if (source === 'override' && existing && matchCriteria) {
+                if (!this.repositoryMatchesCriteria(existing, matchCriteria)) return;
             }
 
-            if (source === 'override' && clone.location && existing && !existing.location) {
+            if (source === 'override' && clone.location && existing && !existing.location)
                 existing.location = clone.location;
-            }
 
             if (existing) {
                 mergedMap.set(key, { ...existing, ...clone });
