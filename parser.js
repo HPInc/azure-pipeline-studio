@@ -152,70 +152,90 @@ class AzurePipelineParser {
     extractQuoteStyles(node, path, quoteStyles, context = '') {
         if (!node) return;
 
+        // Hoist commonly used regex to avoid recompiling each iteration
+        const globPattern = /\*\*|[*/]\/|\/[*/]/;
+
         if (node.items && node.constructor.name === 'YAMLMap') {
-            // Extract context identifier from this map (displayName has highest priority)
-            let currentContext = context;
-            let foundTask = '';
-            // TODO: Make this more generic with unique hash or a step index
-            for (const pair of node.items) {
-                if (pair.key && pair.value && typeof pair.value.value === 'string') {
-                    const keyName = pair.key.value;
-                    if (keyName === 'displayName') {
-                        currentContext = pair.value.value;
-                        break; // displayName has highest priority
-                    } else if (keyName === 'task' || keyName === 'name') {
-                        foundTask = pair.value.value; // store but keep looking for displayName
-                    }
-                }
-            }
-            if (currentContext === context && foundTask) {
-                currentContext = foundTask; // use task/name only if no displayName found
-            }
+            const currentContext = this.getContextIdentifier(node, context);
 
             for (const pair of node.items) {
-                if (pair.key && pair.key.value) {
-                    const keyPath = [...path, pair.key.value];
-                    if (pair.value && typeof pair.value.value === 'string') {
-                        const quoteType = pair.value.type;
-                        const keyName = pair.key.value;
-                        const valueContent = pair.value.value;
+                const keyNode = pair.key;
+                if (!keyNode || !keyNode.value) continue;
 
-                        if (quoteType === 'QUOTE_SINGLE' || quoteType === 'QUOTE_DOUBLE') {
-                            // Store by exact path
-                            quoteStyles.set(keyPath.join('.'), quoteType);
+                // Mutate path in-place to avoid allocations
+                path.push(keyNode.value);
 
-                            // Store context-aware hash (context:key:value) - most reliable
-                            if (currentContext) {
-                                quoteStyles.set(`__ctx:${currentContext}:${keyName}:${valueContent}`, quoteType);
-                            }
+                const valueNode = pair.value;
+                if (valueNode && typeof valueNode.value === 'string') {
+                    const quoteType = valueNode.type;
+                    if (quoteType === 'QUOTE_SINGLE' || quoteType === 'QUOTE_DOUBLE') {
+                        const keyName = keyNode.value;
+                        const valueContent = valueNode.value;
 
-                            // Track empty strings
-                            if (valueContent === '') {
-                                if (!quoteStyles.has('__empty_string')) {
-                                    quoteStyles.set('__empty_string', quoteType);
-                                }
-                            }
+                        // Store by exact path
+                        quoteStyles.set(path.join('.'), quoteType);
 
-                            // Track glob patterns (these are unique enough to not conflict)
-                            if (valueContent.length > 2 && /\*\*|[*/]\/|\/[*/]/.test(valueContent)) {
-                                if (!quoteStyles.has(`__glob:${valueContent}`)) {
-                                    quoteStyles.set(`__glob:${valueContent}`, quoteType);
-                                }
+                        // Store context-aware hash (context:key:value) - most reliable
+                        if (currentContext) {
+                            quoteStyles.set(`__ctx:${currentContext}:${keyName}:${valueContent}`, quoteType);
+                        }
+
+                        // Track empty strings
+                        if (valueContent === '' && !quoteStyles.has('__empty_string')) {
+                            quoteStyles.set('__empty_string', quoteType);
+                        }
+
+                        // Track glob patterns (these are unique enough to not conflict)
+                        if (valueContent.length > 2 && globPattern.test(valueContent)) {
+                            const globKey = `__glob:${valueContent}`;
+                            if (!quoteStyles.has(globKey)) {
+                                quoteStyles.set(globKey, quoteType);
                             }
                         }
                     }
-
-                    if (pair.value) {
-                        this.extractQuoteStyles(pair.value, keyPath, quoteStyles, currentContext);
-                    }
                 }
+
+                if (pair.value) {
+                    this.extractQuoteStyles(pair.value, path, quoteStyles, currentContext);
+                }
+
+                path.pop();
             }
         } else if (node.items && node.constructor.name === 'YAMLSeq') {
-            node.items.forEach((item, index) => {
-                const itemPath = [...path, index];
-                this.extractQuoteStyles(item, itemPath, quoteStyles, context);
-            });
+            for (let index = 0; index < node.items.length; index += 1) {
+                path.push(index);
+                this.extractQuoteStyles(node.items[index], path, quoteStyles, context);
+                path.pop();
+            }
         }
+    }
+
+    /**
+     * Extract a context identifier from a YAMLMap node.
+     * Priority: `name` > `displayName` > `task` > fallback value
+     * @param {object} node - YAMLMap node
+     * @param {string} fallback - Fallback context value
+     * @returns {string} context identifier
+     */
+    getContextIdentifier(node, fallback = '') {
+        if (!node || !node.items || node.constructor.name !== 'YAMLMap') return fallback;
+
+        let current = fallback;
+        let foundTask = '';
+
+        for (const pair of node.items) {
+            if (pair.key && pair.value && typeof pair.value.value === 'string') {
+                const keyName = pair.key.value;
+                if (keyName === 'name') {
+                    return pair.value.value; // highest priority
+                }
+                if (keyName === 'displayName' || keyName === 'task') {
+                    foundTask = pair.value.value; // keep searching for name
+                }
+            }
+        }
+
+        return current === fallback && foundTask ? foundTask : current;
     }
 
     /**
@@ -229,58 +249,42 @@ class AzurePipelineParser {
         if (!node) return;
 
         if (node.items && node.constructor.name === 'YAMLMap') {
-            // Extract context identifier from this map (displayName has highest priority)
-            let currentContext = context;
-            let foundTask = '';
-            for (const pair of node.items) {
-                if (pair.key && pair.value && typeof pair.value.value === 'string') {
-                    const keyName = pair.key.value;
-                    if (keyName === 'displayName') {
-                        currentContext = pair.value.value;
-                        break;
-                    } else if (keyName === 'task' || keyName === 'name') {
-                        foundTask = pair.value.value;
-                    }
-                }
-            }
-            if (currentContext === context && foundTask) {
-                currentContext = foundTask;
-            }
+            const globPattern = /\*\*|[*/]\/|\/[*/]/;
+            let currentContext = this.getContextIdentifier(node, context);
 
             for (const pair of node.items) {
-                if (pair.key && pair.key.value && pair.value) {
-                    const keyPath = [...path, pair.key.value];
-                    const pathKey = keyPath.join('.');
+                if (!pair.key?.value || !pair.value) continue;
 
-                    // Try exact path first
-                    let quoteStyle = quoteStyles.get(pathKey);
+                const keyName = pair.key.value;
 
-                    if (!quoteStyle && typeof pair.value.value === 'string') {
-                        const keyName = pair.key.value;
-                        const valueContent = pair.value.value;
+                // Build path efficiently by mutating the shared array
+                path.push(keyName);
+                const pathKey = path.join('.');
 
-                        // Try context-aware hash (most reliable for cross-template)
-                        if (currentContext) {
-                            quoteStyle = quoteStyles.get(`__ctx:${currentContext}:${keyName}:${valueContent}`);
-                        }
+                // Try exact path first
+                let quoteStyle = quoteStyles.get(pathKey);
 
-                        // Glob patterns (unique enough to be safe)
-                        if (!quoteStyle && valueContent.length > 2 && /\*\*|[*/]\/|\/[*/]/.test(valueContent)) {
-                            quoteStyle = quoteStyles.get(`__glob:${valueContent}`);
-                        }
-
-                        // Empty strings
-                        if (!quoteStyle && valueContent === '') {
-                            quoteStyle = quoteStyles.get('__empty_string');
-                        }
+                // If not found and value is a string, try fallbacks
+                const valNode = pair.value;
+                const valContent = typeof valNode.value === 'string' ? valNode.value : undefined;
+                if (!quoteStyle && valContent !== undefined) {
+                    if (currentContext) {
+                        quoteStyle = quoteStyles.get(`__ctx:${currentContext}:${keyName}:${valContent}`);
                     }
-
-                    if (quoteStyle && pair.value.value !== undefined) {
-                        pair.value.type = quoteStyle;
+                    if (!quoteStyle && valContent.length > 2 && globPattern.test(valContent)) {
+                        quoteStyle = quoteStyles.get(`__glob:${valContent}`);
                     }
-
-                    this.restoreQuoteStyles(pair.value, keyPath, quoteStyles, currentContext);
+                    if (!quoteStyle && valContent === '') {
+                        quoteStyle = quoteStyles.get('__empty_string');
+                    }
                 }
+
+                if (quoteStyle && valNode.value !== undefined) {
+                    valNode.type = quoteStyle;
+                }
+
+                this.restoreQuoteStyles(valNode, path, quoteStyles, currentContext);
+                path.pop();
             }
         } else if (node.items && node.constructor.name === 'YAMLSeq') {
             node.items.forEach((item, index) => {
@@ -1212,11 +1216,11 @@ class AzurePipelineParser {
             !result.targetType &&
             parentKey !== 'inputs'
         ) {
-            const shorthandKey = ['bash', 'script', 'pwsh', 'powershell', 'checkout'].find((k) => result[k]);
-            const shorthandValue = result[shorthandKey];
-            delete result[shorthandKey];
+            const shortKey = ['bash', 'script', 'pwsh', 'powershell', 'checkout'].find((k) => result[k]);
+            const shortValue = result[shortKey];
+            delete result[shortKey];
 
-            // Map shorthand to task type
+            // Map short to task type
             const taskTypeMap = {
                 script: 'CmdLine@2',
                 bash: 'Bash@3',
@@ -1225,18 +1229,17 @@ class AzurePipelineParser {
                 checkout: '6d15af64-176c-496d-b583-fd2ae21d4df4@1',
             };
 
-            const taskResult = { task: taskTypeMap[shorthandKey] };
+            const taskResult = { task: taskTypeMap[shortKey] };
 
-            if (shorthandKey === 'checkout') {
+            if (shortKey === 'checkout') {
                 // Checkout: extract condition and displayName to task level, rest to inputs
                 const { condition, displayName, ...inputProps } = result;
 
                 if (displayName) taskResult.displayName = displayName;
-                taskResult.condition =
-                    condition !== undefined ? condition : shorthandValue === 'none' ? false : undefined;
+                taskResult.condition = condition !== undefined ? condition : shortValue === 'none' ? false : undefined;
                 if (taskResult.condition === undefined) delete taskResult.condition;
 
-                taskResult.inputs = { repository: shorthandValue, ...inputProps };
+                taskResult.inputs = { repository: shortValue, ...inputProps };
             } else {
                 // Script tasks: extract workingDirectory to inputs, rest stays at task level
                 const { workingDirectory, ...taskProps } = result;
@@ -1245,11 +1248,11 @@ class AzurePipelineParser {
 
                 // Build inputs with targetType first when needed so it serializes in that order
                 let inputs;
-                if (shorthandKey !== 'script') {
-                    inputs = { targetType: 'inline', script: shorthandValue };
-                    if (shorthandKey === 'pwsh') inputs.pwsh = true;
+                if (shortKey !== 'script') {
+                    inputs = { targetType: 'inline', script: shortValue };
+                    if (shortKey === 'pwsh') inputs.pwsh = true;
                 } else {
-                    inputs = { script: shorthandValue };
+                    inputs = { script: shortValue };
                 }
 
                 if (workingDirectory !== undefined) inputs.workingDirectory = workingDirectory;

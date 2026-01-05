@@ -25,34 +25,13 @@ function replaceTemplateExpressionsWithPlaceholders(content) {
 
     const result = content.replace(templateExpressionPattern, (match) => {
         const placeholder = '__EXPR_PLACEHOLDER_' + counter + '__';
-        // Normalize spacing for ${{ }} expressions without altering inner content
         let normalized = match;
 
-        if (match.startsWith('${{') && match.endsWith('}}')) {
-            // Ensure there is a space after '{{' when the next char is not whitespace
-            const charAfterOpen = match.charAt(3);
-            if (
-                charAfterOpen &&
-                charAfterOpen !== ' ' &&
-                charAfterOpen !== '\n' &&
-                charAfterOpen !== '\r' &&
-                charAfterOpen !== '\t'
-            ) {
-                normalized = match.slice(0, 3) + ' ' + match.slice(3);
-            }
-
-            // Ensure there is a space before '}}' when the previous char is not whitespace
-            const idxBeforeClose = normalized.length - 3;
-            const charBeforeClose = normalized.charAt(idxBeforeClose);
-            if (
-                charBeforeClose &&
-                charBeforeClose !== ' ' &&
-                charBeforeClose !== '\n' &&
-                charBeforeClose !== '\r' &&
-                charBeforeClose !== '\t'
-            ) {
-                normalized = normalized.slice(0, idxBeforeClose + 1) + ' ' + normalized.slice(idxBeforeClose + 1);
-            }
+        if (match.startsWith('${{') && match.endsWith('}}') && !/[\r\n\t]/.test(match)) {
+            // If the expression contains newlines or tabs, preserve inner formatting exactly
+            // (e.g. multi-line expressions or expressions with tabs should not be collapsed)
+            // Normalize to have exactly one space after '{{' and before '}}' when missing
+            normalized = match.replace(/^\$\{\{\s*/, '${{ ').replace(/\s*\}\}$/, ' }}');
         }
 
         placeholderMap.set(placeholder, normalized);
