@@ -22,7 +22,7 @@ steps:
 const parser = new AzurePipelineParser();
 
 console.log('=== Test 1: Heredoc with expressions, azureCompatible: false ===');
-const result1 = parser.expandPipelineToString(test1, {
+const result1 = parser.expandPipelineFromString(test1, {
     azureCompatible: false,
     parameters: { token: 'mytoken' },
 });
@@ -40,7 +40,7 @@ console.log();
 
 // Test 2: Heredoc with expressions in Azure mode
 console.log('=== Test 2: Heredoc with expressions, azureCompatible: true ===');
-const result2 = parser.expandPipelineToString(test1, {
+const result2 = parser.expandPipelineFromString(test1, {
     azureCompatible: true,
     parameters: { token: 'mytoken' },
 });
@@ -69,7 +69,7 @@ steps:
 `;
 
 console.log('=== Test 3: Heredoc without expressions, azureCompatible: false ===');
-const result3 = parser.expandPipelineToString(test3, { azureCompatible: false });
+const result3 = parser.expandPipelineFromString(test3, { azureCompatible: false });
 
 const match3 = result3.match(/script: ([|\>])/);
 const scriptContent3 = result3.match(/script: [|\>]([^]*?)(?=\n  - |\n\n|$)/)[1];
@@ -99,7 +99,7 @@ steps:
 `;
 
 console.log('=== Test 4: Expressions without heredoc, azureCompatible: false ===');
-const result4 = parser.expandPipelineToString(test4, {
+const result4 = parser.expandPipelineFromString(test4, {
     azureCompatible: false,
     parameters: { version: '2.0' },
 });
@@ -117,7 +117,7 @@ console.log();
 
 // Test 5: Script with expressions but no heredoc in Azure mode
 console.log('=== Test 5: Expressions without heredoc, azureCompatible: true ===');
-const result5 = parser.expandPipelineToString(test4, {
+const result5 = parser.expandPipelineFromString(test4, {
     azureCompatible: true,
     parameters: { version: '2.0' },
 });
@@ -149,7 +149,7 @@ steps:
 `;
 
 console.log('=== Test 6: Multiple heredocs with expressions, azureCompatible: false ===');
-const result6 = parser.expandPipelineToString(test6, {
+const result6 = parser.expandPipelineFromString(test6, {
     azureCompatible: false,
     parameters: { msg: 'test' },
 });

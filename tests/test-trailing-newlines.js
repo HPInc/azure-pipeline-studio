@@ -16,7 +16,7 @@ console.log('Test 1: Microsoft compatibility mode adds 2 blank lines at EOF');
 console.log('Input:');
 console.log(input1);
 
-const expanded1 = parser.expandPipelineToString(input1, {
+const expanded1 = parser.expandPipelineFromString(input1, {
     azureCompatible: true,
 });
 
@@ -42,7 +42,7 @@ const input2 = `stages:
 
 console.log('\n\nTest 2: Normal mode has single newline at EOF');
 
-const expanded2 = parser.expandPipelineToString(input2, {
+const expanded2 = parser.expandPipelineFromString(input2, {
     azureCompatible: false,
 });
 
@@ -71,7 +71,7 @@ stages:
 
 console.log('\n\nTest 3: Microsoft compatibility with template expansion');
 
-const expanded3 = parser.expandPipelineToString(input3, {
+const expanded3 = parser.expandPipelineFromString(input3, {
     parameters: {
         stage: 'Production',
     },
@@ -96,7 +96,7 @@ const input4 = `stages:
 
 console.log('\n\nTest 4: Content integrity preserved with trailing newlines');
 
-const expanded4 = parser.expandPipelineToString(input4, {
+const expanded4 = parser.expandPipelineFromString(input4, {
     azureCompatible: true,
 });
 
@@ -121,11 +121,11 @@ const input5 = `stages:
 
 console.log('\n\nTest 5: Multiple expansions are idempotent');
 
-const expanded5a = parser.expandPipelineToString(input5, {
+const expanded5a = parser.expandPipelineFromString(input5, {
     azureCompatible: true,
 });
 
-const expanded5b = parser.expandPipelineToString(expanded5a, {
+const expanded5b = parser.expandPipelineFromString(expanded5a, {
     azureCompatible: true,
 });
 

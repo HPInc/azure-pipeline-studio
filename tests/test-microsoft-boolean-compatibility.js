@@ -95,7 +95,7 @@ function runTest() {
     // Test 1: Boolean expressions output as True/False (Microsoft format - default)
     console.log('Test 1: Boolean expressions output as True/False (Microsoft format)');
     const parser1 = new AzurePipelineParser();
-    const output1 = parser1.expandPipelineToString(testYaml, {});
+    const output1 = parser1.expandPipelineFromString(testYaml, {});
 
     console.log('Checking for unquoted capitalized booleans...');
 
@@ -140,7 +140,7 @@ variables:
 `;
 
     const parser2 = new AzurePipelineParser();
-    const output2 = parser2.expandPipelineToString(edgeCaseYaml, {});
+    const output2 = parser2.expandPipelineFromString(edgeCaseYaml, {});
 
     const complexAndMatch = /name: complexAnd\s+value: False/s.test(output2);
     const complexOrMatch = /name: complexOr\s+value: True/s.test(output2);
@@ -169,7 +169,7 @@ steps:
 `;
 
     const parser3 = new AzurePipelineParser();
-    const output3 = parser3.expandPipelineToString(scriptYaml, {});
+    const output3 = parser3.expandPipelineFromString(scriptYaml, {});
 
     assert(output3.includes('var="True"'), 'Boolean in script should be True with quotes preserved');
     console.log('✓ Booleans in script literals preserve quotes\n');

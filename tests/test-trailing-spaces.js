@@ -18,7 +18,7 @@ console.log('Input (lines 1 and 3 have trailing spaces):');
 console.log(input1);
 
 const parser = new AzurePipelineParser();
-const expanded1 = parser.expandPipelineToString(input1, {
+const expanded1 = parser.expandPipelineFromString(input1, {
     azureCompatible: true,
 });
 
@@ -53,7 +53,7 @@ console.log('\n\nTest 2: Multi-line scalar without trailing spaces uses block fo
 console.log('Input (no trailing spaces):');
 console.log(input2);
 
-const expanded2 = parser.expandPipelineToString(input2, {
+const expanded2 = parser.expandPipelineFromString(input2, {
     azureCompatible: true,
 });
 
@@ -76,7 +76,7 @@ console.log('\n\nTest 3: Non-script key with trailing spaces uses double-quoted 
 console.log('Input:');
 console.log(input3);
 
-const expanded3 = parser.expandPipelineToString(input3, {
+const expanded3 = parser.expandPipelineFromString(input3, {
     azureCompatible: true,
 });
 
@@ -99,7 +99,7 @@ console.log('\n\nTest 4: Mixed trailing spaces (lines 1 and 3 have spaces)');
 console.log('Input:');
 console.log(input4);
 
-const expanded4 = parser.expandPipelineToString(input4, {
+const expanded4 = parser.expandPipelineFromString(input4, {
     azureCompatible: true,
 });
 

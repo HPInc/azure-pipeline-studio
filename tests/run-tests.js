@@ -65,7 +65,7 @@ testFiles.forEach((file) => {
         // For files with ${{ insert }}, also test expansion
         if (content.includes('${{ insert }}')) {
             try {
-                const expanded = parser.expandPipelineToString(content, { fileName: filePath });
+                const expanded = parser.expandPipelineFromString(content, { fileName: filePath });
                 // Check for duplicates in expanded content
                 const YAML = require('yaml');
                 YAML.parse(expanded); // Will throw on duplicate keys

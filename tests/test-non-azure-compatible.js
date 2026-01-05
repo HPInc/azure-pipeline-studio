@@ -26,7 +26,7 @@ console.log('Input:');
 console.log(input1);
 
 const parser = new AzurePipelineParser();
-const expanded1 = parser.expandPipelineToString(input1, {
+const expanded1 = parser.expandPipelineFromString(input1, {
     azureCompatible: false,
 });
 
@@ -43,7 +43,7 @@ console.log('Uses |+ (literal keep) chomping:', hasLiteralKeep ? '✅' : '❌');
 
 // Test 2: Compare with azureCompatible mode
 console.log('\n\nTest 2: Azure-compat mode - SHOULD use >+ chomping');
-const expanded2 = parser.expandPipelineToString(input1, {
+const expanded2 = parser.expandPipelineFromString(input1, {
     azureCompatible: true,
 });
 
@@ -67,7 +67,7 @@ console.log('\n\nTest 3: Non-compat mode - no extra empty lines in heredoc');
 console.log('Input:');
 console.log(input3);
 
-const expanded3 = parser.expandPipelineToString(input3, {
+const expanded3 = parser.expandPipelineFromString(input3, {
     azureCompatible: false,
     parameters: { var: 'value' },
 });
@@ -86,7 +86,7 @@ if (scriptMatch3) {
 
 // Test 4: Compare with azureCompatible mode for heredoc
 console.log('\n\nTest 4: Azure-compat mode - SHOULD have extra empty lines in heredoc');
-const expanded4 = parser.expandPipelineToString(input3, {
+const expanded4 = parser.expandPipelineFromString(input3, {
     azureCompatible: true,
     parameters: { var: 'value' },
 });

@@ -14,7 +14,7 @@ const parser = new AzurePipelineParser({ printTree: false });
 
 try {
     const sourceText = fs.readFileSync(testFile, 'utf8');
-    const result = parser.expandPipelineToString(sourceText, {
+    const result = parser.expandPipelineFromString(sourceText, {
         fileName: testFile,
         resources: {
             repositories: {

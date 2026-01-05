@@ -337,7 +337,7 @@ jobs:
         assert.strictEqual(result.variables.factor, 1.5, 'Decimal 1.50 becomes 1.5');
 
         // Convert to string to verify formatting
-        const yamlStr = parser.expandPipelineToString(
+        const yamlStr = parser.expandPipelineFromString(
             `
 variables:
   count: 42
@@ -386,7 +386,7 @@ jobs:
         assert.strictEqual(step.task, 'PowerShell@2', 'Should be PowerShell task');
 
         // Convert to YAML string to check formatting
-        const yamlStr = parser.expandPipelineToString(
+        const yamlStr = parser.expandPipelineFromString(
             `
 jobs:
   - job: TestJob

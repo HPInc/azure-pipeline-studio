@@ -31,7 +31,7 @@ steps:
 `;
 
 const parser1 = new AzurePipelineParser();
-const formatted1 = parser1.expandPipelineToString(test1Yaml, {});
+const formatted1 = parser1.expandPipelineFromString(test1Yaml, {});
 
 assert(formatted1.includes("PATTERN: '**/test.dll'"), 'Test 1 Failed: Single quotes should be preserved for patterns');
 console.log('✓ Test 1 passed: Single quotes preserved for patterns');
@@ -50,7 +50,7 @@ steps:
 `;
 
 const parser2 = new AzurePipelineParser();
-const formatted2 = parser2.expandPipelineToString(test2Yaml, {});
+const formatted2 = parser2.expandPipelineFromString(test2Yaml, {});
 
 assert(formatted2.includes("EMPTY: ''"), 'Test 2 Failed: Empty strings should preserve single quotes');
 console.log('✓ Test 2 passed: Empty strings preserve single quotes');
@@ -64,7 +64,7 @@ steps:
 `;
 
 const parser3 = new AzurePipelineParser();
-const formatted3 = parser3.expandPipelineToString(test3Yaml, {});
+const formatted3 = parser3.expandPipelineFromString(test3Yaml, {});
 
 assert(formatted3.includes('targetType: inline'), 'Test 3 Failed: Should not add quotes to simple unquoted values');
 assert(
@@ -87,7 +87,7 @@ steps:
 `;
 
 const parser4 = new AzurePipelineParser();
-const formatted4 = parser4.expandPipelineToString(test4Yaml);
+const formatted4 = parser4.expandPipelineFromString(test4Yaml);
 
 assert(
     formatted4.includes('var="True"'),
@@ -110,7 +110,7 @@ steps:
 `;
 
 const parser5 = new AzurePipelineParser();
-const formatted5 = parser5.expandPipelineToString(test5Yaml, {});
+const formatted5 = parser5.expandPipelineFromString(test5Yaml, {});
 
 assert(
     formatted5.includes("WITH_QUOTES: 'test-value'"),
@@ -136,7 +136,7 @@ steps:
 `;
 
 const parser6 = new AzurePipelineParser();
-const formatted6 = parser6.expandPipelineToString(test6Yaml);
+const formatted6 = parser6.expandPipelineFromString(test6Yaml);
 
 assert(
     formatted6.includes("QUOTED_BOOL: 'False'"),
@@ -166,7 +166,7 @@ steps:
 `;
 
 const parser7 = new AzurePipelineParser();
-const formatted7 = parser7.expandPipelineToString(test7Yaml, {});
+const formatted7 = parser7.expandPipelineFromString(test7Yaml, {});
 
 assert(
     formatted7.includes('POOL: codeway-aws-linux') && !formatted7.includes("POOL: 'codeway-aws-linux'"),
@@ -210,7 +210,7 @@ steps:
 `;
 
 const parser8 = new AzurePipelineParser();
-const formatted8 = parser8.expandPipelineToString(test8Yaml, {});
+const formatted8 = parser8.expandPipelineFromString(test8Yaml, {});
 
 // Both scriptSource values should preserve their original quoting
 const lines8 = formatted8.split('\n');
@@ -240,7 +240,7 @@ steps:
 `;
 
 const parser9 = new AzurePipelineParser();
-const formatted9 = parser9.expandPipelineToString(test9Yaml, {});
+const formatted9 = parser9.expandPipelineFromString(test9Yaml, {});
 
 // First should have quoted, second should be unquoted
 assert(
@@ -269,7 +269,7 @@ steps:
 `;
 
 const parser10 = new AzurePipelineParser();
-const formatted10 = parser10.expandPipelineToString(test10Yaml, {});
+const formatted10 = parser10.expandPipelineFromString(test10Yaml, {});
 
 const modeMatches = formatted10.match(/mode:.*$/gm);
 assert(modeMatches && modeMatches.length === 2, 'Test 10 Failed: Should have 2 mode lines');

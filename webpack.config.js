@@ -21,7 +21,7 @@ module.exports = {
                     keep_classnames: true,
                     keep_fnames: true,
                     mangle: {
-                        reserved: ['runCli', 'expandPipelineToString', 'AzurePipelineParser'],
+                        reserved: ['runCli', 'expandPipelineFromString', 'AzurePipelineParser'],
                     },
                 },
             }),

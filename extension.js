@@ -174,7 +174,7 @@ function activate(context) {
             };
 
             console.log('Parser overrides:', JSON.stringify(parserOverrides, null, 2));
-            const expandedYaml = parser.expandPipelineToString(sourceText, parserOverrides);
+            const expandedYaml = parser.expandPipelineFromString(sourceText, parserOverrides);
 
             const formatOptions = getFormatSettings(document);
             formatOptions.fileName = document.fileName;
@@ -956,7 +956,7 @@ function runCli(args) {
                     }
                 }
                 try {
-                    expandedYaml = cliParser.expandPipelineToString(sourceText, parserOptions);
+                    expandedYaml = cliParser.expandPipelineFromString(sourceText, parserOptions);
                     yamlToFormat = expandedYaml;
                 } catch (expandError) {
                     console.error(`[${filePath}] Template expansion failed: ${expandError.message}`);

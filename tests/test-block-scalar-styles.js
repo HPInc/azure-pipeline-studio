@@ -44,7 +44,7 @@ steps:
   displayName: Test
 `;
     const parser = new AzurePipelineParser();
-    const output = parser.expandPipelineToString(yaml, { azureCompatible: true });
+    const output = parser.expandPipelineFromString(yaml, { azureCompatible: true });
 
     // Should use | (literal) style - look for the pattern
     assert(output.includes('script: |'), 'Should use literal style (|) for script without expressions');
@@ -65,7 +65,7 @@ steps:
   displayName: Test
 `;
     const parser = new AzurePipelineParser();
-    const output = parser.expandPipelineToString(yaml, { azureCompatible: true });
+    const output = parser.expandPipelineFromString(yaml, { azureCompatible: true });
 
     // Should use > (folded) style
     assert(output.includes('script: >'), 'Should use folded style (>) for script with expressions');
@@ -86,7 +86,7 @@ steps:
   displayName: Test
 `;
     const parser = new AzurePipelineParser();
-    const output = parser.expandPipelineToString(yaml, { azureCompatible: true });
+    const output = parser.expandPipelineFromString(yaml, { azureCompatible: true });
 
     // Should use > (folded) style for pwsh with expressions
     // After shorthand conversion, pwsh becomes script in inputs
@@ -114,7 +114,7 @@ steps:
     displayName: 'Process \${{ item }}'
 `;
     const parser = new AzurePipelineParser();
-    const output = parser.expandPipelineToString(yaml, { azureCompatible: true });
+    const output = parser.expandPipelineFromString(yaml, { azureCompatible: true });
 
     // Both expanded steps should use folded style
     assert(output.includes('script: >'), 'Loop scripts with expressions should use folded style');
@@ -132,7 +132,7 @@ steps:
   displayName: Test
 `;
     const parser = new AzurePipelineParser();
-    const output = parser.expandPipelineToString(yaml, { azureCompatible: true });
+    const output = parser.expandPipelineFromString(yaml, { azureCompatible: true });
 
     // Should use | (literal) for heredoc without expressions
     assert(output.includes('script: |'), 'Heredoc without expressions should use literal style');
@@ -155,7 +155,7 @@ steps:
   displayName: Test
 `;
     const parser = new AzurePipelineParser();
-    const output = parser.expandPipelineToString(yaml, { azureCompatible: true });
+    const output = parser.expandPipelineFromString(yaml, { azureCompatible: true });
 
     // Should use > (folded) style
     assert(output.includes('script: >'), 'Heredoc with expressions should use folded style');
@@ -183,7 +183,7 @@ variables:
     Version: 1.0
 `;
     const parser = new AzurePipelineParser();
-    const output = parser.expandPipelineToString(yaml, { azureCompatible: true });
+    const output = parser.expandPipelineFromString(yaml, { azureCompatible: true });
 
     // Non-script values with expressions should also use folded style
     assert(output.includes('value: >') || output.includes('value: |'), 'Should handle multiline variable values');
@@ -200,7 +200,7 @@ steps:
   displayName: Plain Script
 `;
     const parser = new AzurePipelineParser();
-    const output = parser.expandPipelineToString(yaml, { azureCompatible: true });
+    const output = parser.expandPipelineFromString(yaml, { azureCompatible: true });
 
     assert(output.includes('script: |'), 'Plain script should use literal style');
 });
@@ -225,7 +225,7 @@ steps:
   displayName: WithExpr
 `;
     const parser = new AzurePipelineParser();
-    const output = parser.expandPipelineToString(yaml, { azureCompatible: true });
+    const output = parser.expandPipelineFromString(yaml, { azureCompatible: true });
 
     // Should have both styles in output
     const hasLiteral = output.includes('script: |');
@@ -248,7 +248,7 @@ steps:
   displayName: Test
 `;
     const parser = new AzurePipelineParser();
-    const output = parser.expandPipelineToString(yaml, { azureCompatible: false });
+    const output = parser.expandPipelineFromString(yaml, { azureCompatible: false });
 
     // Without azureCompatible, the YAML library's default should be used
     // We just verify it doesn't crash and produces valid output

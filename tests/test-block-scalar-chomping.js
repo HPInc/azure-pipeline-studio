@@ -26,7 +26,7 @@ console.log('Test 1: Expression expanding to empty at end should trigger >+ chom
 console.log('Input (with expression at end):');
 console.log(input1);
 
-const expanded1 = parser.expandPipelineToString(input1, {
+const expanded1 = parser.expandPipelineFromString(input1, {
     variables: {
         projectName: 'MyProject',
     },
@@ -74,7 +74,7 @@ console.log('\n\nTest 2: Expression in middle should use > (clip chomping)');
 console.log('Input:');
 console.log(input2);
 
-const expanded2 = parser.expandPipelineToString(input2, {
+const expanded2 = parser.expandPipelineFromString(input2, {
     parameters: {
         projectName: 'MyProject',
     },
@@ -102,7 +102,7 @@ console.log('\n\nTest 3: No expressions should use | (literal) style');
 console.log('Input:');
 console.log(input3);
 
-const expanded3 = parser.expandPipelineToString(input3, {
+const expanded3 = parser.expandPipelineFromString(input3, {
     azureCompatible: true,
 });
 
@@ -134,7 +134,7 @@ console.log('\n\nTest 4: Multiple lines with last expression expanding to empty'
 console.log('Input:');
 console.log(input4);
 
-const expanded4 = parser.expandPipelineToString(input4, {
+const expanded4 = parser.expandPipelineFromString(input4, {
     parameters: {
         extra: '',
     },
@@ -168,7 +168,7 @@ console.log('\n\nTest 5: Whitespace-only expression should be cleaned but newlin
 console.log('Input:');
 console.log(input5);
 
-const expanded5 = parser.expandPipelineToString(input5, {
+const expanded5 = parser.expandPipelineFromString(input5, {
     parameters: {
         spacing: '   ', // Whitespace only
     },

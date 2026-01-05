@@ -80,7 +80,7 @@ variables:
 `;
 
 try {
-    const result1 = parser.expandPipelineToString(yaml1, {
+    const result1 = parser.expandPipelineFromString(yaml1, {
         parameters: { a: 10, b: 5, result: 'Success' },
     });
     console.log('Expanded YAML with expressions:');
@@ -100,7 +100,7 @@ steps:
 
 try {
     console.log('\nTest with eq() in conditional:');
-    const result2 = parser.expandPipelineToString(yaml2, {
+    const result2 = parser.expandPipelineFromString(yaml2, {
         parameters: { environment: 'prod' },
     });
     console.log(result2);
@@ -118,7 +118,7 @@ variables:
 
 try {
     console.log('\nTest string manipulation functions:');
-    const result3 = parser.expandPipelineToString(yaml3, {
+    const result3 = parser.expandPipelineFromString(yaml3, {
         parameters: { file: 'readme.txt', name: 'azure', csv: 'a,b,c' },
     });
     console.log(result3);

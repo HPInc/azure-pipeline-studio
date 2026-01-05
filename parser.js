@@ -18,7 +18,7 @@ class AzurePipelineParser {
         this.expressionCache = new Map();
     }
 
-    expandPipelineFromFile(filePath, overrides = {}) {
+    expandPipelineFromStringFromFile(filePath, overrides = {}) {
         const input = fs.readFileSync(filePath, 'utf8');
         const baseDir = path.dirname(filePath);
         // Initialize template stack with root file
@@ -28,25 +28,59 @@ class AzurePipelineParser {
             baseDir,
             templateStack: [filePath],
         };
-        return this.expandPipelineToString(input, enhancedOverrides);
+        return this.expandPipelineFromString(input, enhancedOverrides);
     }
 
-    expandPipelineToString(sourceText, overrides = {}) {
-        const { document } = this.expandPipeline(sourceText, overrides);
+    expandPipelineFromString(sourceText, overrides = {}) {
+        const { yaml } = this.expandPipeline(sourceText, overrides);
+        return yaml;
+    }
 
-        // Extract and remove quote styles metadata
-        const quoteStyles = document.__quoteStyles || new Map();
-        delete document.__quoteStyles;
+    expandPipeline(sourceText, overrides = {}) {
+        // Parse source, capture quote styles, build context and expand inlined here
+        let yamlDoc = null;
+        let document = {};
+        let captureResult = overrides.captureResult;
+        try {
+            yamlDoc = YAML.parseDocument(sourceText);
+            captureResult = captureResult || this.captureQuoteStyles(yamlDoc.contents, []);
+            document = yamlDoc.toJSON() || {};
+        } catch (error) {
+            throw new Error(`Failed to parse YAML: ${error.message}`);
+        }
 
-        // Extract scripts that had ${{}} expressions before expansion
-        const scriptsWithExpressions = document.__scriptsWithExpressions || new Set();
-        delete document.__scriptsWithExpressions;
-        const scriptsWithLastLineExpressions = document.__scriptsWithLastLineExpressions || new Set();
-        delete document.__scriptsWithLastLineExpressions;
+        // Build execution context and perform expansion
+        const context = this.buildExecutionContext(document, overrides);
+        context.quoteStyles = captureResult ? captureResult.quoteStyles : new Map();
 
-        // Create YAML document and restore quote styles
-        const yamlDoc = YAML.parseDocument(YAML.stringify(document));
-        this.restoreQuoteStyles(yamlDoc.contents, [], quoteStyles);
+        const expandedDocument = this.expandNode(document, context);
+
+        expandedDocument.__scriptsWithExpressions = context.scriptsWithExpressions || new Set();
+        expandedDocument.__scriptsWithLastLineExpressions = context.scriptsWithLastLineExpressions || new Set();
+
+        // We have the expanded document already. Use captureResult.save to obtain merged quoteStyles
+        let mergedQuoteStyles = new Map();
+        if (captureResult && typeof captureResult.save === 'function') {
+            // save may return the merged map; if so, capture it to avoid object attach/detach
+            const maybeMap = captureResult.save(expandedDocument, context);
+            if (maybeMap && maybeMap instanceof Map) {
+                mergedQuoteStyles = maybeMap;
+            } else if (expandedDocument.__quoteStyles && expandedDocument.__quoteStyles instanceof Map) {
+                mergedQuoteStyles = expandedDocument.__quoteStyles;
+            }
+            // Remove attached meta to keep expandedDocument serializable
+            if (expandedDocument.__quoteStyles) delete expandedDocument.__quoteStyles;
+        }
+
+        // Extract scripts that had ${{}} expressions before expansion (they were set on expandedDocument)
+        const scriptsWithExpressions = expandedDocument.__scriptsWithExpressions || new Set();
+        delete expandedDocument.__scriptsWithExpressions;
+        const scriptsWithLastLineExpressions = expandedDocument.__scriptsWithLastLineExpressions || new Set();
+        delete expandedDocument.__scriptsWithLastLineExpressions;
+
+        // Create YAML document and restore quote styles using merged map
+        const finalYamlDoc = YAML.parseDocument(YAML.stringify(expandedDocument));
+        this.restoreQuoteStyles(finalYamlDoc.contents, [], mergedQuoteStyles);
 
         // Always apply block scalar styles to control formatting
         // When azureCompatible=false, use literal style to preserve exact formatting
@@ -54,12 +88,12 @@ class AzurePipelineParser {
         const azureCompatible = overrides.azureCompatible || false;
         console.log(`Azure Compatibility mode: ${azureCompatible}`);
         this.applyBlockScalarStyles(
-            yamlDoc.contents,
+            finalYamlDoc.contents,
             scriptsWithExpressions,
             scriptsWithLastLineExpressions,
             azureCompatible
         );
-        let output = yamlDoc.toString({
+        let output = finalYamlDoc.toString({
             lineWidth: 0,
             indent: 2,
             defaultStringType: 'PLAIN',
@@ -80,13 +114,10 @@ class AzurePipelineParser {
         });
 
         // Convert boolean markers to unquoted capitalized booleans (Azure format)
-        output = output.replace(/(['"]?)__(?:TRUE|FALSE)__\1/g, (match, quote) =>
-            quote
-                ? `${quote}${match.includes('TRUE') ? 'True' : 'False'}${quote}`
-                : match.includes('TRUE')
-                  ? 'True'
-                  : 'False'
-        );
+        output = output.replace(/(['\"]?)__(TRUE|FALSE)__\1/g, (match, quote, token) => {
+            const value = token === 'TRUE' ? 'True' : 'False';
+            return quote ? `${quote}${value}${quote}` : value;
+        });
 
         // Handle trailing newlines and blank line removal based on mode
         if (azureCompatible) {
@@ -100,54 +131,11 @@ class AzurePipelineParser {
         } else {
             output = output.replace(/\n*$/, '\n');
         }
-        return output;
+        // Return both the expanded JS document and the final YAML string
+        return { document: expandedDocument, yaml: output, context };
     }
 
-    expandPipeline(sourceText, overrides = {}) {
-        let document;
-        let quoteStyles = new Map();
-        try {
-            // Parse as document to extract quote information
-            const yamlDoc = YAML.parseDocument(sourceText);
-            this.extractQuoteStyles(yamlDoc.contents, [], quoteStyles);
-
-            document = yamlDoc.toJSON() || {};
-        } catch (error) {
-            throw new Error(`Failed to parse YAML: ${error.message}`);
-        }
-
-        const context = this.buildExecutionContext(document, overrides);
-
-        // Store quote styles in context so they're available during template expansion
-        context.quoteStyles = quoteStyles;
-
-        const expandedDocument = this.expandNode(document, context);
-
-        // Merge quote styles from all templates (context-aware hashes don't conflict)
-        const allQuoteStyles = new Map(quoteStyles);
-        if (context.templateQuoteStyles) {
-            for (const [, templateStyles] of context.templateQuoteStyles.entries()) {
-                for (const [key, style] of templateStyles.entries()) {
-                    // Context hashes and globs can be safely merged
-                    if (!allQuoteStyles.has(key)) {
-                        allQuoteStyles.set(key, style);
-                    }
-                }
-            }
-        }
-
-        // Store quote styles for later restoration
-        expandedDocument.__quoteStyles = allQuoteStyles;
-
-        // Store scripts that had ${{}} expressions for block scalar style determination
-        expandedDocument.__scriptsWithExpressions = context.scriptsWithExpressions || new Set();
-        expandedDocument.__scriptsWithLastLineExpressions = context.scriptsWithLastLineExpressions || new Set();
-
-        return {
-            document: expandedDocument,
-            context,
-        };
-    }
+    // expandPipelineFromString was inlined into expandPipelineFromString; no separate function needed.
 
     /**
      * Extract quote styles from YAML AST.
@@ -220,31 +208,39 @@ class AzurePipelineParser {
     }
 
     /**
-     * Extract a context identifier from a YAMLMap node.
-     * Priority: `name` > `displayName` > `task` > fallback value
-     * @param {object} node - YAMLMap node
-     * @param {string} fallback - Fallback context value
-     * @returns {string} context identifier
+     * Capture quote styles from a YAML AST root and return an object containing
+     * the collected Map and a `save` function that will attach merged styles
+     * to an expanded document. This consolidates extraction and later saving
+     * into a single logical operation.
+     * @param {object} node - YAML AST node (root)
+     * @param {array} path - starting path (usually [])
+     * @returns {{quoteStyles: Map, save: function}}
      */
-    getContextIdentifier(node, fallback = '') {
-        if (!node || !node.items || node.constructor.name !== 'YAMLMap') return fallback;
-
-        let current = fallback;
-        let foundTask = '';
-
-        for (const pair of node.items) {
-            if (pair.key && pair.value && typeof pair.value.value === 'string') {
-                const keyName = pair.key.value;
-                if (keyName === 'name') {
-                    return pair.value.value; // highest priority
-                }
-                if (keyName === 'displayName' || keyName === 'task') {
-                    foundTask = pair.value.value; // keep searching for name
-                }
-            }
+    captureQuoteStyles(node, path) {
+        const quoteStyles = new Map();
+        try {
+            this.extractQuoteStyles(node, path, quoteStyles);
+        } catch (err) {
+            // Extraction failure should not break expansion; return empty map
         }
 
-        return current === fallback && foundTask ? foundTask : current;
+        const save = (expandedDocument, context) => {
+            const allQuoteStyles = new Map(quoteStyles);
+            if (context && context.templateQuoteStyles) {
+                for (const [, templateStyles] of context.templateQuoteStyles.entries()) {
+                    for (const [key, style] of templateStyles.entries()) {
+                        if (!allQuoteStyles.has(key)) {
+                            allQuoteStyles.set(key, style);
+                        }
+                    }
+                }
+            }
+            // Keep attaching for compatibility, but also return the merged map
+            expandedDocument.__quoteStyles = allQuoteStyles;
+            return allQuoteStyles;
+        };
+
+        return { quoteStyles, save };
     }
 
     /**
@@ -301,6 +297,34 @@ class AzurePipelineParser {
                 this.restoreQuoteStyles(item, itemPath, quoteStyles, context);
             });
         }
+    }
+
+    /**
+     * Extract a context identifier from a YAMLMap node.
+     * Priority: `name` > `displayName` > `task` > fallback value
+     * @param {object} node - YAMLMap node
+     * @param {string} fallback - Fallback context value
+     * @returns {string} context identifier
+     */
+    getContextIdentifier(node, fallback = '') {
+        if (!node || !node.items || node.constructor.name !== 'YAMLMap') return fallback;
+
+        let current = fallback;
+        let foundTask = '';
+
+        for (const pair of node.items) {
+            if (pair.key && pair.value && typeof pair.value.value === 'string') {
+                const keyName = pair.key.value;
+                if (keyName === 'name') {
+                    return pair.value.value; // highest priority
+                }
+                if (keyName === 'displayName' || keyName === 'task') {
+                    foundTask = pair.value.value; // keep searching for name
+                }
+            }
+        }
+
+        return current === fallback && foundTask ? foundTask : current;
     }
 
     /**
@@ -785,137 +809,85 @@ class AzurePipelineParser {
         const unknownParameters = [];
 
         const checkParameter = (param, paramName) => {
-            if (!param || typeof param !== 'object') {
-                return;
-            }
+            if (!param || typeof param !== 'object') return;
 
             const name = paramName || param.name;
-            if (!name) {
-                return;
-            }
+            if (!name) return;
 
-            // Check if parameter has a default value
             const hasDefault = param.default !== undefined || param.value !== undefined || param.values !== undefined;
-
-            // Check if parameter was provided
             const wasProvided = providedParameters && Object.prototype.hasOwnProperty.call(providedParameters, name);
-            const providedValue = wasProvided ? providedParameters[name] : undefined;
+            const paramValue = wasProvided ? providedParameters[name] : undefined;
 
-            // If no default and not provided, it's missing
             if (!hasDefault && !wasProvided) {
                 missingRequired.push(name);
             }
 
-            // Validate parameter type if provided
-            if (wasProvided && param.type !== undefined) {
-                const paramType = param.type.toLowerCase();
-                const actualValue = providedValue;
+            // Skip validation when value is undefined or a runtime variable reference
+            const isRuntimeVariable = typeof paramValue === 'string' && /\$\([^)]+\)/.test(paramValue);
+            if (wasProvided && param.type !== undefined && paramValue !== undefined && !isRuntimeVariable) {
+                const paramType = String(param.type).toLowerCase();
 
-                // Skip type validation if value contains runtime variable references
-                // Matches: $(var) or patterns like $(var1)-$(var2)-$(var3)
-                const isRuntimeVariable = typeof actualValue === 'string' && /\$\([^)]+\)/.test(actualValue);
+                const fail = (expectedType) =>
+                    typeErrors.push({ name, expected: expectedType, actual: typeof paramValue, value: paramValue });
 
-                // Skip validation for undefined values (e.g., from ${{ variables.X }} expressions)
-                // These will be resolved at pipeline runtime
-                const isUndefinedRuntime = actualValue === undefined;
-
-                if (!isRuntimeVariable && !isUndefinedRuntime) {
-                    let typeValid = true;
-                    let expectedType = param.type;
-
-                    switch (paramType) {
-                        case 'string':
-                            // Accept strings, numbers (will be converted to string), and booleans
-                            typeValid =
-                                typeof actualValue === 'string' ||
-                                typeof actualValue === 'number' ||
-                                typeof actualValue === 'boolean';
-                            break;
-                        case 'number':
-                            // Accept numbers and numeric strings
-                            if (typeof actualValue === 'number') {
-                                typeValid = true;
-                            } else if (typeof actualValue === 'string') {
-                                typeValid = !isNaN(actualValue) && !isNaN(parseFloat(actualValue));
-                            } else {
-                                typeValid = false;
-                            }
-                            break;
-                        case 'boolean':
-                            // Accept booleans, boolean-like strings, and boolean markers
-                            if (typeof actualValue === 'boolean') {
-                                typeValid = true;
-                            } else if (typeof actualValue === 'string') {
-                                const lower = actualValue.toLowerCase();
-                                typeValid =
-                                    lower === 'true' ||
-                                    lower === 'false' ||
-                                    lower === '__true__' ||
-                                    lower === '__false__';
-                            } else {
-                                typeValid = false;
-                            }
-                            break;
-                        case 'object':
-                            // In Azure DevOps, 'object' type accepts both objects and arrays
-                            // Special case: dependsOn can be a string, array, or object
-                            if (name === 'dependsOn') {
-                                typeValid =
-                                    typeof actualValue === 'string' ||
-                                    (typeof actualValue === 'object' && actualValue !== null);
-                            } else {
-                                typeValid = typeof actualValue === 'object' && actualValue !== null;
-                            }
-                            break;
-                        case 'step':
-                        case 'steplist':
-                            typeValid = Array.isArray(actualValue);
-                            expectedType = 'array (stepList)';
-                            break;
-                        case 'job':
-                        case 'joblist':
-                            typeValid = Array.isArray(actualValue);
-                            expectedType = 'array (jobList)';
-                            break;
-                        case 'deployment':
-                        case 'deploymentlist':
-                            typeValid = Array.isArray(actualValue);
-                            expectedType = 'array (deploymentList)';
-                            break;
-                        case 'stage':
-                        case 'stagelist':
-                            typeValid = Array.isArray(actualValue);
-                            expectedType = 'array (stageList)';
-                            break;
-                        default:
-                            // Unknown type, skip validation
-                            typeValid = true;
+                switch (paramType) {
+                    case 'string':
+                        if (!['string', 'number', 'boolean'].includes(typeof paramValue)) fail('string');
+                        break;
+                    case 'number': {
+                        const ok =
+                            typeof paramValue === 'number' || (typeof paramValue === 'string' && !isNaN(paramValue));
+                        if (!ok) fail('number');
+                        break;
                     }
-
-                    if (!typeValid) {
-                        typeErrors.push({
-                            name,
-                            expected: expectedType,
-                            actual: typeof actualValue,
-                            value: actualValue,
-                        });
+                    case 'boolean': {
+                        if (typeof paramValue === 'boolean') break;
+                        if (typeof paramValue === 'string') {
+                            const lower = paramValue.toLowerCase();
+                            if (!['true', 'false', '__true__', '__false__'].includes(lower)) fail('boolean');
+                            break;
+                        }
+                        fail('boolean');
+                        break;
                     }
+                    case 'object':
+                        if (name === 'dependsOn') {
+                            if (
+                                !(
+                                    typeof paramValue === 'string' ||
+                                    (typeof paramValue === 'object' && paramValue !== null)
+                                )
+                            ) {
+                                fail('object');
+                            }
+                        } else if (!(typeof paramValue === 'object' && paramValue !== null)) {
+                            fail('object');
+                        }
+                        break;
+                    case 'step':
+                    case 'steplist':
+                        if (!Array.isArray(paramValue)) fail('array (stepList)');
+                        break;
+                    case 'job':
+                    case 'joblist':
+                        if (!Array.isArray(paramValue)) fail('array (jobList)');
+                        break;
+                    case 'deployment':
+                    case 'deploymentlist':
+                        if (!Array.isArray(paramValue)) fail('array (deploymentList)');
+                        break;
+                    case 'stage':
+                    case 'stagelist':
+                        if (!Array.isArray(paramValue)) fail('array (stageList)');
+                        break;
+                    default:
+                        break; // unknown types are ignored
                 }
             }
 
-            // Validate allowed values if provided
             if (wasProvided && param.values && Array.isArray(param.values)) {
-                const actualValue = providedValue;
-
-                // Skip validation for runtime variables
-                const isRuntimeVariable = typeof actualValue === 'string' && /\$\([^)]+\)/.test(actualValue);
-
-                if (!isRuntimeVariable && !param.values.includes(actualValue)) {
-                    invalidValues.push({
-                        name,
-                        value: actualValue,
-                        allowed: param.values,
-                    });
+                if (!isRuntimeVariable && !param.values.includes(paramValue)) {
+                    invalidValues.push({ name, value: paramValue, allowed: param.values });
                 }
             }
         };
@@ -1217,7 +1189,6 @@ class AzurePipelineParser {
         }
 
         // Convert shorthand (bash/script/pwsh/powershell/checkout) to task format when safe
-        // Inline the detection logic to avoid a separate helper function
         const shortKey = ['bash', 'script', 'pwsh', 'powershell', 'checkout'].find((k) =>
             Object.prototype.hasOwnProperty.call(result, k)
         );
@@ -1230,10 +1201,17 @@ class AzurePipelineParser {
 
             if (shortKey === 'checkout') {
                 const { condition, displayName, ...inputProps } = result;
-                if (displayName) taskResult.displayName = displayName;
-                taskResult.condition = condition !== undefined ? condition : shortValue === 'none' ? false : undefined;
-                if (taskResult.condition === undefined) delete taskResult.condition;
-                taskResult.inputs = { repository: shortValue, ...inputProps };
+                if (displayName) {
+                    taskResult.displayName = displayName;
+                }
+
+                const effectiveCondition =
+                    condition !== undefined ? condition : shortValue === 'none' ? false : undefined;
+                if (effectiveCondition !== undefined) {
+                    taskResult.condition = effectiveCondition;
+                }
+
+                taskResult.inputs = Object.assign({ repository: shortValue }, inputProps);
             } else {
                 const { workingDirectory, ...taskProps } = result;
                 Object.assign(taskResult, taskProps);
@@ -2997,8 +2975,7 @@ if (require.main === module) {
     const parserInstance = new AzurePipelineParser({ printTree: false });
 
     try {
-        const sourceText = fs.readFileSync(filePath, 'utf8');
-        const expanded = parserInstance.expandPipelineToString(sourceText, { fileName: filePath });
+        const expanded = parserInstance.expandPipelineFromStringFromFile(filePath);
         process.stdout.write(expanded);
     } catch (error) {
         console.error(`Failed to expand pipeline: ${error.message}`);
