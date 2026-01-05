@@ -40,7 +40,7 @@ function countStepSpacing(text) {
             line.trim() === '' &&
             nextLine &&
             nextLine.match(
-                /^\s*-\s+(task|bash|powershell|pwsh|script|sh|checkout|download|downloadBuild|getPackage|publish|reviewApp|template)/,
+                /^\s*-\s+(task|bash|powershell|pwsh|script|sh|checkout|download|downloadBuild|getPackage|publish|reviewApp|template)/
             )
         ) {
             blankCount++;

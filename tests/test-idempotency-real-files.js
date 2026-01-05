@@ -61,7 +61,7 @@ for (const relPath of testFiles) {
 
     if (isIdempotent) {
         console.log(
-            `✅ ${fileName.padEnd(45)} (${original.length.toString().padStart(4)} → ${result1.text.length.toString().padStart(4)} chars)`,
+            `✅ ${fileName.padEnd(45)} (${original.length.toString().padStart(4)} → ${result1.text.length.toString().padStart(4)} chars)`
         );
         passCount++;
     } else {

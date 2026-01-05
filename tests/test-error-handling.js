@@ -370,13 +370,13 @@ runTest('Recursive Formatting Continues on Errors', () => {
         fs.writeFileSync(path.join(testDir, 'valid2.yaml'), 'variables:\n  var1:  value1\nsteps:\n-  bash: echo test');
         fs.writeFileSync(
             path.join(testDir, 'subdir', 'valid3.yml'),
-            'parameters:\n  param1:  value1\nsteps:\n-  script: echo nested',
+            'parameters:\n  param1:  value1\nsteps:\n-  script: echo nested'
         );
 
         // Create invalid file
         fs.writeFileSync(
             path.join(testDir, 'invalid.yml'),
-            'steps:\n- task: [invalid yaml syntax::\n  unclosed: [bracket',
+            'steps:\n- task: [invalid yaml syntax::\n  unclosed: [bracket'
         );
 
         // Format recursively (pass empty array for extensions to use defaults)

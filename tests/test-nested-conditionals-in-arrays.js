@@ -44,7 +44,7 @@ assert(result1.stages[0].dependsOn.includes('Tests'), 'Test 1: Should include Te
 assert.strictEqual(result1.stages[0].dependsOn.length, 3, 'Test 1: Should have exactly 3 dependencies');
 assert(
     !result1.stages[0].dependsOn.some((d) => typeof d === 'object'),
-    'Test 1: Should not have any objects in dependsOn',
+    'Test 1: Should not have any objects in dependsOn'
 );
 console.log('✓ Test 1 passed: All nested conditionals true - all items included');
 
@@ -77,7 +77,7 @@ assert(!result2.stages[0].dependsOn.includes('Tests'), 'Test 2: Should not inclu
 assert.strictEqual(result2.stages[0].dependsOn.length, 2, 'Test 2: Should have exactly 2 dependencies');
 assert(
     !result2.stages[0].dependsOn.some((d) => typeof d === 'object'),
-    'Test 2: Should not have any objects in dependsOn',
+    'Test 2: Should not have any objects in dependsOn'
 );
 console.log('✓ Test 2 passed: Inner nested conditional false - Tests excluded');
 
@@ -110,7 +110,7 @@ assert(!result3.stages[0].dependsOn.includes('Tests'), 'Test 3: Should not inclu
 assert.strictEqual(result3.stages[0].dependsOn.length, 1, 'Test 3: Should have exactly 1 dependency');
 assert(
     !result3.stages[0].dependsOn.some((d) => typeof d === 'object'),
-    'Test 3: Should not have any objects in dependsOn',
+    'Test 3: Should not have any objects in dependsOn'
 );
 console.log('✓ Test 3 passed: Outer nested conditional false - Build and Tests excluded');
 
@@ -149,7 +149,7 @@ assert(result4.stages[0].dependsOn.includes('Signing'), 'Test 4: Should include 
 assert.strictEqual(result4.stages[0].dependsOn.length, 3, 'Test 4: Should have exactly 3 dependencies');
 assert(
     !result4.stages[0].dependsOn.some((d) => typeof d === 'object'),
-    'Test 4: Should not have any objects in dependsOn',
+    'Test 4: Should not have any objects in dependsOn'
 );
 console.log('✓ Test 4 passed: Multiple separate conditionals - only true conditions included');
 
@@ -190,7 +190,7 @@ assert(!result5.stages[0].dependsOn.includes('Signing'), 'Test 5: Should not inc
 assert.strictEqual(result5.stages[0].dependsOn.length, 4, 'Test 5: Should have exactly 4 dependencies');
 assert(
     !result5.stages[0].dependsOn.some((d) => typeof d === 'object'),
-    'Test 5: Should not have any objects in dependsOn',
+    'Test 5: Should not have any objects in dependsOn'
 );
 console.log('✓ Test 5 passed: Complex nested structure - matches user case');
 

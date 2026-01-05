@@ -82,7 +82,7 @@ for (let i = 0; i < test2Lines.length; i++) {
 assert(foundPipelineReportLine > 0, 'Test 2: Should find pipeline-report template');
 assert(
     test2Lines[foundPipelineReportLine - 1] === '',
-    'Test 2: Should have blank line before second template at indent 4',
+    'Test 2: Should have blank line before second template at indent 4'
 );
 console.log('✅ PASS\n');
 
@@ -204,7 +204,7 @@ assert(blankLineCount >= 4, `Test 6: Should have at least 4 blank lines (between
 // Should have 1 blank line before stages: (betweenSectionBlankLines, since there are no parameters)
 assert(
     stagesLineIndex > 0 && test6Lines[stagesLineIndex - 1] === '',
-    'Test 6: Should have at least 1 blank line before stages:',
+    'Test 6: Should have at least 1 blank line before stages:'
 );
 console.log('✅ PASS\n');
 

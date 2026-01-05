@@ -169,14 +169,14 @@ stages:
     const blanksBeforeFirstStages = firstStagesMatch[1].split('\n').length - 1;
     assert(
         blanksBeforeFirstStages === 3,
-        `Should have 3 newlines (2 blank lines) before first stages, got ${blanksBeforeFirstStages}`,
+        `Should have 3 newlines (2 blank lines) before first stages, got ${blanksBeforeFirstStages}`
     );
     const secondStageMatch = result.text.match(/echo "build"([\s\S]*?)- stage: Deploy/);
     assert(secondStageMatch, 'Should find second stage');
     const blanksBeforeSecondStage = (secondStageMatch[1].match(/\n/g) || []).length;
     assert(
         blanksBeforeSecondStage <= 2,
-        `Should have at most 2 newlines before second stage, got ${blanksBeforeSecondStage}`,
+        `Should have at most 2 newlines before second stage, got ${blanksBeforeSecondStage}`
     );
     console.log('✓ Only first occurrence gets blank lines test passed');
 }

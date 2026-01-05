@@ -39,7 +39,7 @@ runTest('Content line after comment block is preserved', () => {
     // Verify all comments are preserved
     assert(
         result.text.includes('template: /projects/pssw-devops/stages/publish-v0.yaml'),
-        'First comment line should be preserved',
+        'First comment line should be preserved'
     );
     assert(result.text.includes('stageName: Publish'), 'Second comment line should be preserved');
     assert(result.text.includes('publishParams'), 'Third comment line should be preserved');
@@ -47,7 +47,7 @@ runTest('Content line after comment block is preserved', () => {
     // Verify template line is preserved
     assert(
         result.text.includes('- template: /projects/pssw-devops/stages/report-status-v0.yaml'),
-        'Template line after comments should be preserved',
+        'Template line after comments should be preserved'
     );
 
     // Verify blank line after comment block
@@ -101,7 +101,7 @@ runTest('Parent-child relationship detected correctly', () => {
     assert(nextLine.trim() !== '', 'Should not have blank line after parent key');
     assert(
         nextLine.includes('versionMajorMinor') || nextLine.includes('trunkBranch'),
-        'Next line should be nested property',
+        'Next line should be nested property'
     );
 
     console.log('   ✓ No blank line between parent and nested children');
@@ -254,7 +254,7 @@ stages:
     }
     assert(
         blanksBeforeVars === 2,
-        `Expected 2 blanks before variables (first section after params), got ${blanksBeforeVars}`,
+        `Expected 2 blanks before variables (first section after params), got ${blanksBeforeVars}`
     );
 
     // Should have at least 1 blank before stages (preserved from input)

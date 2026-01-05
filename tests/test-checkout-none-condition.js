@@ -47,7 +47,7 @@ jobs:
         assert.strictEqual(step.task, '6d15af64-176c-496d-b583-fd2ae21d4df4@1', 'Should be checkout task');
         assert.strictEqual(step.inputs.repository, 'none', 'Repository should be none');
         assert.strictEqual(step.condition, false, 'Should have condition: false');
-    },
+    }
 );
 
 // Test 2: checkout: self should NOT get condition: false
@@ -65,7 +65,7 @@ jobs:
         assert.strictEqual(step.task, '6d15af64-176c-496d-b583-fd2ae21d4df4@1', 'Should be checkout task');
         assert.strictEqual(step.inputs.repository, 'self', 'Repository should be self');
         assert.strictEqual(step.condition, undefined, 'Should NOT have condition: false');
-    },
+    }
 );
 
 // Test 3: Explicit checkout task with repository: none
@@ -85,7 +85,7 @@ jobs:
         assert.strictEqual(step.task, '6d15af64-176c-496d-b583-fd2ae21d4df4@1', 'Should be checkout task');
         assert.strictEqual(step.inputs.repository, 'none', 'Repository should be none');
         assert.strictEqual(step.condition, false, 'Should have condition: false');
-    },
+    }
 );
 
 // Test 4: checkout: none with additional properties
@@ -105,7 +105,7 @@ jobs:
         assert.strictEqual(step.inputs.repository, 'none', 'Repository should be none');
         assert.strictEqual(step.condition, false, 'Should have condition: false');
         assert.strictEqual(step.displayName, 'Skip checkout', 'Should preserve displayName');
-    },
+    }
 );
 
 // Test 5: Don't override existing condition
@@ -124,7 +124,7 @@ jobs:
         assert.strictEqual(step.task, '6d15af64-176c-496d-b583-fd2ae21d4df4@1', 'Should be checkout task');
         assert.strictEqual(step.inputs.repository, 'none', 'Repository should be none');
         assert.strictEqual(step.condition, 'succeeded()', 'Should preserve existing condition');
-    },
+    }
 );
 
 // Test 6: Multiple checkout steps
@@ -157,7 +157,7 @@ jobs:
         assert.strictEqual(steps[2].task, '6d15af64-176c-496d-b583-fd2ae21d4df4@1');
         assert.strictEqual(steps[2].inputs.repository, 'none');
         assert.strictEqual(steps[2].condition, false, 'Second none should have condition: false');
-    },
+    }
 );
 
 // Test 7: Checkout in template expansion
@@ -185,7 +185,7 @@ jobs:
         assert(checkoutStep, 'Should have checkout step');
         assert.strictEqual(checkoutStep.inputs.repository, 'none', 'Repository should be none');
         assert.strictEqual(checkoutStep.condition, false, 'Should have condition: false');
-    },
+    }
 );
 
 // Final Results

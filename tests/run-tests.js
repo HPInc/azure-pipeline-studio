@@ -123,7 +123,7 @@ if (validationTests.length > 0) {
         }
     });
     console.log(
-        `\n📊 Validation Tests: ${validationPassCount} passed, ${validationFailCount} failed, ${validationTests.length} total\n`,
+        `\n📊 Validation Tests: ${validationPassCount} passed, ${validationFailCount} failed, ${validationTests.length} total\n`
     );
 }
 

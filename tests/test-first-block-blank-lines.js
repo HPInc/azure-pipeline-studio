@@ -112,7 +112,7 @@ steps:
     assert.strictEqual(
         blankCountStages,
         2,
-        `Expected 2 blank lines before 'stages:' (first occurrence), got ${blankCountStages}`,
+        `Expected 2 blank lines before 'stages:' (first occurrence), got ${blankCountStages}`
     );
 
     // Check jobs (formatter adds 1 blank line for nested sections)
@@ -124,7 +124,7 @@ steps:
     assert.strictEqual(
         blankCountJobs,
         1,
-        `Expected 1 blank line before 'jobs:' (nested section spacing), got ${blankCountJobs}`,
+        `Expected 1 blank line before 'jobs:' (nested section spacing), got ${blankCountJobs}`
     );
 
     // Check steps (formatter adds 1 blank line for nested sections)
@@ -136,7 +136,7 @@ steps:
     assert.strictEqual(
         blankCountSteps,
         1,
-        `Expected 1 blank line before 'steps:' (nested section spacing), got ${blankCountSteps}`,
+        `Expected 1 blank line before 'steps:' (nested section spacing), got ${blankCountSteps}`
     );
 
     console.log('✓ firstBlockBlankLines applies to FIRST section only test passed');

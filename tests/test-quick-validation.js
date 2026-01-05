@@ -48,7 +48,7 @@ const hasStepSpacing = result.text
         (line, i, lines) =>
             line.trim() === '' &&
             lines[i + 1] &&
-            (lines[i + 1].match(/^\s*-\s+(task|bash)/) || lines[i + 1].match(/^#\s/)),
+            (lines[i + 1].match(/^\s*-\s+(task|bash)/) || lines[i + 1].match(/^#\s/))
     );
 const hasLongLines = result.text.split('\n').some((line) => line.length > 80);
 const noError = !result.error;

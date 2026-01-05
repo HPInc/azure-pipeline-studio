@@ -115,7 +115,7 @@ function runTest() {
     // Original string values should be preserved as quoted strings
     assert(
         output1.includes('value: "True"') || output1.includes("value: 'True'"),
-        'String literals with "True" should remain quoted',
+        'String literals with "True" should remain quoted'
     );
 
     // Should NOT have any marker strings in output

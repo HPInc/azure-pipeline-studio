@@ -916,7 +916,7 @@ function formatYaml(content, options = {}) {
 
         if (doc.errors && doc.errors.length > 0) {
             const genuineErrors = doc.errors.filter(
-                (e) => !e.message || !e.message.includes('Invalid escape sequence'),
+                (e) => !e.message || !e.message.includes('Invalid escape sequence')
             );
 
             if (genuineErrors.length > 0) {
@@ -963,7 +963,7 @@ function formatYaml(content, options = {}) {
         if (effective.wasExpanded && effective.azureCompatible) {
             normalized = normalized.replace(
                 new RegExp(`(?:${escapeRegExp(newline)})*$`),
-                `${newline}${newline}${newline}`,
+                `${newline}${newline}${newline}`
             );
         } else {
             normalized = normalized.replace(new RegExp(`(?:${escapeRegExp(newline)})*$`), newline);

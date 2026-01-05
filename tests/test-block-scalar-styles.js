@@ -92,7 +92,7 @@ steps:
     // After shorthand conversion, pwsh becomes script in inputs
     assert(
         output.includes('script: >') || output.includes('pwsh: >'),
-        'Should use folded style (>) for pwsh with expressions',
+        'Should use folded style (>) for pwsh with expressions'
     );
 });
 
@@ -164,7 +164,7 @@ steps:
     // The content between <<EOF and EOF should have blank lines between each line
     assert(
         output.includes('Environment: production\n\n'),
-        'Heredoc content should have empty lines added for newline preservation',
+        'Heredoc content should have empty lines added for newline preservation'
     );
 });
 

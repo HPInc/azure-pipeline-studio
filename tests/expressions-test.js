@@ -42,7 +42,7 @@ console.log('split("a,b,c", ","):', parser.evaluateFunction('split', ['a,b,c', '
 console.log('join(";", ["a","b","c"]):', parser.evaluateFunction('join', [';', ['a', 'b', 'c']])); // 'a;b;c'
 console.log(
     'format("Hello {0} {1}", "John", "Doe"):',
-    parser.evaluateFunction('format', ['Hello {0} {1}', 'John', 'Doe']),
+    parser.evaluateFunction('format', ['Hello {0} {1}', 'John', 'Doe'])
 ); // 'Hello John Doe'
 
 // Test other functions
