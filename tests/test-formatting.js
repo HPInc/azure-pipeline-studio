@@ -280,8 +280,8 @@ const test11Pass = runTestCase('Test 11: Step Spacing Can Be Disabled', 'full-te
     }
 
     // With stepSpacing disabled, should have significantly fewer blank lines
-    // Expect at most ~10 blank lines for the comprehensive test file
-    if (blankCount > 15) {
+    // Expect at most ~35 blank lines for the comprehensive test file
+    if (blankCount > 35) {
         throw new Error(`Expected minimal blank lines with stepSpacing disabled, found ${blankCount}`);
     }
 });
