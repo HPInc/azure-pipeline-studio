@@ -328,27 +328,27 @@ class AzurePipelineParser {
             return fallback;
         }
 
-        let current = fallback;
-        let foundTask = '';
-
+        let name = '';
+        let displayName = '';
+        let task = '';
         for (const pair of node.items) {
             if (pair.key && pair.value && typeof pair.value.value === 'string') {
                 const keyName = pair.key.value;
                 if (keyName === 'name') {
-                    return pair.value.value; // highest priority
+                    name = pair.value.value;
+                    break;
                 }
-                if (keyName === 'displayName' || keyName === 'task') {
-                    foundTask = pair.value.value; // keep searching for name
-                }
+                if (keyName === 'displayName') displayName = pair.value.value;
+                if (keyName === 'task') task = pair.value.value;
             }
         }
 
-        return current === fallback && foundTask ? foundTask : current;
+        return name || displayName || task || fallback;
     }
 
     /**
      * Apply Azure-compatible block scalar styles to script values.
-     * Azure Azure DevOps uses heuristics to choose between > (folded) and | (literal).
+     * Uses heuristics to choose between > (folded) and | (literal).
      * Our heuristic priority:
      * - Keep > (folded) if source already uses it
      * - Use > (folded) if content originally had ${{}} expressions (tracked during expansion)
@@ -372,31 +372,22 @@ class AzurePipelineParser {
 
                 let content = value.value;
 
-                // If Azure mode and trailing spaces exist, force double-quoted scalar
-                if (context.azureCompatible && this.hasTrailingSpaces(content)) {
-                    value.type = 'QUOTE_DOUBLE';
-                    // still normalize nested values
-                    this.applyBlockScalarStyles(value, context);
-                    continue;
-                }
-
-                // Only adjust block scalar type when not already explicitly double-quoted
-                if (value.type === 'QUOTE_DOUBLE') {
+                // If Azure mode and trailing spaces exist, or value is already explicitly double-quoted,
+                // preserve the double-quoted type and recurse for normalization without changing further logic.
+                if ((context.azureCompatible && this.hasTrailingSpaces(content)) || value.type === 'QUOTE_DOUBLE') {
+                    if (context.azureCompatible && this.hasTrailingSpaces(content)) {
+                        value.type = 'QUOTE_DOUBLE';
+                    }
                     this.applyBlockScalarStyles(value, context);
                     continue;
                 }
 
                 const trimmedKey = content.replace(/\s+$/, '');
-                const hadExpressions = context.scriptsWithExpressions.has(trimmedKey);
+                const hadExpression = context.scriptsWithExpressions?.has(trimmedKey);
                 const hasHeredoc = /<<[-]?\s*['"]?(\w+)['"]?/.test(content);
-
-                if (hasHeredoc && context.azureCompatible && hadExpressions) {
-                    content = this.addEmptyLinesInHeredoc(content);
-                    value.type = 'BLOCK_FOLDED';
-                } else {
-                    value.type = hadExpressions && context.azureCompatible ? 'BLOCK_FOLDED' : 'BLOCK_LITERAL';
+                if (context.azureCompatible) {
+                    value.type = hadExpression ? 'BLOCK_FOLDED' : 'BLOCK_LITERAL';
                 }
-
                 value.value = this.normalizeTrailingNewlines(content, context.azureCompatible);
                 this.applyBlockScalarStyles(value, context);
             }
@@ -438,78 +429,6 @@ class AzurePipelineParser {
             }
         }
         return false;
-    }
-
-    /**
-     * Add empty lines between lines in heredoc content so folded style preserves newlines
-     * @param {string} content - Script content with heredoc
-     * @returns {string} - Modified content with empty lines in heredoc
-     */
-    addEmptyLinesInHeredoc(content) {
-        // Match heredoc pattern: <<EOF or <<-EOF or <<'EOF' or <<"EOF"
-        const heredocRegex = /<<[-]?\s*['"]?(\w+)['"]?/g;
-
-        // Collect all heredoc matches (delimiter and index)
-        const matches = [];
-        let m;
-        while ((m = heredocRegex.exec(content)) !== null) {
-            matches.push({ delimiter: m[1], index: m.index });
-        }
-
-        if (!matches.length) return content;
-
-        // Work on a mutable string result; process from last to first to keep indices valid
-        let result = content;
-        for (let i = matches.length - 1; i >= 0; i--) {
-            const { delimiter, index: startIndex } = matches[i];
-
-            // Find the end of the line that contains the <<DELIM marker
-            const startLineEnd = result.indexOf('\n', startIndex);
-            if (startLineEnd === -1) continue;
-
-            // Look for the delimiter on its own line (allowing leading whitespace for <<-)
-            const delimRegex = new RegExp(`^[ \t]*${delimiter}[ \t]*$`, 'm');
-            const afterMarker = result.slice(startLineEnd + 1);
-            const delimMatch = delimRegex.exec(afterMarker);
-            if (!delimMatch) continue;
-
-            const contentStart = startLineEnd + 1;
-            const contentEnd = contentStart + delimMatch.index;
-            const heredocContent = result.slice(contentStart, contentEnd);
-
-            // Check if heredoc already has a blank line between a non-empty and next line
-            const lines = heredocContent.split('\n');
-            let hasExistingBlankLines = false;
-            for (let j = 1; j < lines.length; j++) {
-                if (lines[j].trim() === '' && lines[j - 1] && lines[j - 1].trim() !== '') {
-                    hasExistingBlankLines = true;
-                    break;
-                }
-            }
-
-            if (!hasExistingBlankLines) {
-                // Build spaced content by inserting an empty line between two consecutive non-empty lines
-                const spacedLines = [];
-                for (let j = 0; j < lines.length; j++) {
-                    const line = lines[j];
-                    const isEmpty = line.trim() === '';
-
-                    if (j > 0 && !isEmpty) {
-                        const prevLine = lines[j - 1];
-                        const prevWasEmpty = prevLine.trim() === '';
-                        if (!prevWasEmpty) {
-                            spacedLines.push('');
-                        }
-                    }
-                    spacedLines.push(line);
-                }
-
-                const spacedContent = spacedLines.join('\n');
-                result = result.slice(0, contentStart) + spacedContent + result.slice(contentEnd);
-            }
-        }
-
-        return result;
     }
 
     buildExecutionContext(document, overrides) {

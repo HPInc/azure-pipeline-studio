@@ -24,12 +24,22 @@
       ],
       "program": "${workspaceFolder}/extension.js",
       "args": [
-        "/root/workspace/NCE/perform-sdk/codeway.yaml",
+        "/root/codeway.yaml",
         "-r", "templates=/root/workspace/templates/",
         "-v", "Build.Reason=Manual",  "-v", "Build.SourceBranch=refs/heads/p1", "-v", "Build.SourceBranchName=p1", "-v", "System.TeamFoundationCollectionUri=https://dev.azure.com/hp", "-v", "System.TeamProject=OneClient",
         "-x", "-f", "-a",
         "-o", "/tmp/output.yaml"
       ]
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Test case",
+      "skipFiles": [
+        "<node_internals>/**"
+      ],
+      "program": "${workspaceFolder}/tests/test-heredoc-no-expr.js",
+      "args": []
     }
   ],
   "version": "0.2.0"
