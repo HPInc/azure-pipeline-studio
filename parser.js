@@ -750,189 +750,165 @@ class AzurePipelineParser {
         return result;
     }
 
-    validateTemplateParameters(templateDocument, providedParameters, templatePath, context) {
-        if (!templateDocument || typeof templateDocument !== 'object') {
-            return;
-        }
+    validateTemplateParameters(doc, providedParameters, templatePath, context) {
+        if (!doc || typeof doc !== 'object' || !doc.parameters) return;
 
-        const { parameters } = templateDocument;
-        if (!parameters) {
-            return;
-        }
+        const errors = { missingRequired: [], invalidValues: [], typeErrors: [], unknownParameters: [] };
+        const checkParameter = (param, name) => this._validateParameter(param, name, providedParameters, errors);
 
-        const missingRequired = [];
-        const invalidValues = [];
-        const typeErrors = [];
-        const unknownParameters = [];
-
-        const checkParameter = (param, paramName) => {
-            if (!param || typeof param !== 'object') return;
-
-            const name = paramName || param.name;
-            if (!name) return;
-
-            const hasDefault = param.default !== undefined || param.value !== undefined || param.values !== undefined;
-            const wasProvided = providedParameters && Object.prototype.hasOwnProperty.call(providedParameters, name);
-            const paramValue = wasProvided ? providedParameters[name] : undefined;
-
-            if (!hasDefault && !wasProvided) {
-                missingRequired.push(name);
-            }
-
-            // Skip validation when value is undefined or a runtime variable reference
-            const isRuntimeVariable = typeof paramValue === 'string' && /\$\([^)]+\)/.test(paramValue);
-            if (wasProvided && param.type !== undefined && paramValue !== undefined && !isRuntimeVariable) {
-                const paramType = String(param.type).toLowerCase();
-
-                const fail = (expectedType) =>
-                    typeErrors.push({ name, expected: expectedType, actual: typeof paramValue, value: paramValue });
-
-                switch (paramType) {
-                    case 'string':
-                        if (!['string', 'number', 'boolean'].includes(typeof paramValue)) fail('string');
-                        break;
-                    case 'number': {
-                        const ok =
-                            typeof paramValue === 'number' || (typeof paramValue === 'string' && !isNaN(paramValue));
-                        if (!ok) fail('number');
-                        break;
-                    }
-                    case 'boolean': {
-                        if (typeof paramValue === 'boolean') break;
-                        if (typeof paramValue === 'string') {
-                            const lower = paramValue.toLowerCase();
-                            if (!['true', 'false', '__true__', '__false__'].includes(lower)) fail('boolean');
-                            break;
-                        }
-                        fail('boolean');
-                        break;
-                    }
-                    case 'object':
-                        if (name === 'dependsOn') {
-                            if (
-                                !(
-                                    typeof paramValue === 'string' ||
-                                    (typeof paramValue === 'object' && paramValue !== null)
-                                )
-                            ) {
-                                fail('object');
-                            }
-                        } else if (!(typeof paramValue === 'object' && paramValue !== null)) {
-                            fail('object');
-                        }
-                        break;
-                    case 'step':
-                    case 'steplist':
-                        if (!Array.isArray(paramValue)) fail('array (stepList)');
-                        break;
-                    case 'job':
-                    case 'joblist':
-                        if (!Array.isArray(paramValue)) fail('array (jobList)');
-                        break;
-                    case 'deployment':
-                    case 'deploymentlist':
-                        if (!Array.isArray(paramValue)) fail('array (deploymentList)');
-                        break;
-                    case 'stage':
-                    case 'stagelist':
-                        if (!Array.isArray(paramValue)) fail('array (stageList)');
-                        break;
-                    default:
-                        break; // unknown types are ignored
-                }
-            }
-
-            if (wasProvided && param.values && Array.isArray(param.values)) {
-                if (!isRuntimeVariable && !param.values.includes(paramValue)) {
-                    invalidValues.push({ name, value: paramValue, allowed: param.values });
-                }
-            }
-        };
-
-        if (Array.isArray(parameters)) {
-            for (const param of parameters) {
+        if (Array.isArray(doc.parameters)) {
+            for (const param of doc.parameters) {
                 checkParameter(param);
             }
-        } else if (typeof parameters === 'object') {
-            for (const [name, param] of Object.entries(parameters)) {
+        } else if (typeof doc.parameters === 'object') {
+            for (const [name, param] of Object.entries(doc.parameters)) {
                 checkParameter(param, name);
             }
         }
 
-        // Check for unknown parameters (parameters provided but not defined in template)
-        if (providedParameters && typeof providedParameters === 'object') {
-            const definedParams = new Set();
+        this._checkUnknownParameters(doc.parameters, providedParameters, errors);
+        this._reportValidationErrors(errors, templatePath, context);
+    }
 
-            if (Array.isArray(parameters)) {
-                for (const param of parameters) {
-                    if (param?.name) {
-                        definedParams.add(param.name);
-                    }
-                }
-            } else if (typeof parameters === 'object') {
-                for (const name of Object.keys(parameters)) {
-                    definedParams.add(name);
-                }
-            }
+    _validateParameter(param, paramName, providedParameters, errors) {
+        if (!param || typeof param !== 'object') return;
 
-            for (const providedName of Object.keys(providedParameters)) {
-                // Skip empty string keys (from ${{ insert }}: syntax)
-                if (providedName === '') {
-                    continue;
-                }
-                if (!definedParams.has(providedName)) {
-                    unknownParameters.push(providedName);
-                }
-            }
+        const name = paramName || param.name;
+        if (!name) return;
+
+        const hasDefault = param.default !== undefined || param.value !== undefined || param.values !== undefined;
+        const wasProvided = providedParameters && Object.prototype.hasOwnProperty.call(providedParameters, name);
+        const paramValue = wasProvided ? providedParameters[name] : undefined;
+
+        if (!hasDefault && !wasProvided) {
+            errors.missingRequired.push(name);
         }
 
-        // Report errors
-        const errors = [];
+        // Skip validation when value is undefined or a runtime variable reference
+        const isRuntimeVariable = typeof paramValue === 'string' && /\$\([^)]+\)/.test(paramValue);
+        if (wasProvided && param.type !== undefined && paramValue !== undefined && !isRuntimeVariable) {
+            const typeError = this._validateParameterType(name, param.type, paramValue);
+            if (typeError) errors.typeErrors.push(typeError);
+        }
 
-        if (missingRequired.length > 0) {
-            const templateName = templatePath || 'template';
-            const paramList = missingRequired.map((p) => `'${p}'`).join(', ');
-            errors.push(
+        if (wasProvided && param.values && Array.isArray(param.values)) {
+            if (!isRuntimeVariable && !param.values.includes(paramValue)) {
+                errors.invalidValues.push({ name, value: paramValue, allowed: param.values });
+            }
+        }
+    }
+
+    _validateParameterType(name, paramType, paramValue) {
+        const typeStr = String(paramType).toLowerCase();
+        const actualType = typeof paramValue;
+
+        switch (typeStr) {
+            case 'string':
+                if (!['string', 'number', 'boolean'].includes(actualType)) {
+                    return { name, expected: 'string', actual: actualType, value: paramValue };
+                }
+                break;
+            case 'number':
+                if (!(actualType === 'number' || (actualType === 'string' && !isNaN(paramValue)))) {
+                    return { name, expected: 'number', actual: actualType, value: paramValue };
+                }
+                break;
+            case 'boolean':
+                if (actualType !== 'boolean') {
+                    if (actualType === 'string') {
+                        const lower = paramValue.toLowerCase();
+                        if (!['true', 'false', '__true__', '__false__'].includes(lower)) {
+                            return { name, expected: 'boolean', actual: actualType, value: paramValue };
+                        }
+                    } else {
+                        return { name, expected: 'boolean', actual: actualType, value: paramValue };
+                    }
+                }
+                break;
+            case 'object':
+                if (name === 'dependsOn') {
+                    if (!(actualType === 'string' || (actualType === 'object' && paramValue !== null))) {
+                        return { name, expected: 'object', actual: actualType, value: paramValue };
+                    }
+                } else if (!(actualType === 'object' && paramValue !== null)) {
+                    return { name, expected: 'object', actual: actualType, value: paramValue };
+                }
+                break;
+            case 'step':
+            case 'steplist':
+            case 'job':
+            case 'joblist':
+            case 'deployment':
+            case 'deploymentlist':
+            case 'stage':
+            case 'stagelist':
+                if (!Array.isArray(paramValue)) {
+                    return { name, expected: 'array (' + typeStr + ')', actual: actualType, value: paramValue };
+                }
+                break;
+        }
+        return null;
+    }
+
+    _checkUnknownParameters(templateParams, providedParameters, errors) {
+        if (!providedParameters || typeof providedParameters !== 'object') return;
+
+        const definedParams = new Set();
+        if (Array.isArray(templateParams)) {
+            templateParams.forEach((param) => param?.name && definedParams.add(param.name));
+        } else if (typeof templateParams === 'object') {
+            Object.keys(templateParams).forEach((name) => definedParams.add(name));
+        }
+
+        Object.keys(providedParameters).forEach((providedName) => {
+            if (providedName !== '' && !definedParams.has(providedName)) {
+                errors.unknownParameters.push(providedName);
+            }
+        });
+    }
+
+    _reportValidationErrors(errors, templatePath, context) {
+        const errorMessages = [];
+        const templateName = templatePath || 'template';
+
+        if (errors.missingRequired.length > 0) {
+            const paramList = errors.missingRequired.map((p) => `'${p}'`).join(', ');
+            errorMessages.push(
                 `Missing required parameter(s) for template '${templateName}': ${paramList}. ` +
                     `These parameters do not have default values and must be provided when calling the template.`
             );
         }
 
-        if (typeErrors.length > 0) {
-            const templateName = templatePath || 'template';
-            const errorDetails = typeErrors
+        if (errors.typeErrors.length > 0) {
+            const errorDetails = errors.typeErrors
                 .map(
                     (err) =>
                         `Parameter '${err.name}' expects type '${err.expected}' but received '${err.actual}' (value: ${JSON.stringify(err.value)})`
                 )
                 .join('\n    ');
-            errors.push(`Invalid parameter type(s) for template '${templateName}':\n    ${errorDetails}`);
+            errorMessages.push(`Invalid parameter type(s) for template '${templateName}':\n    ${errorDetails}`);
         }
 
-        if (invalidValues.length > 0) {
-            const templateName = templatePath || 'template';
-            const errorDetails = invalidValues
+        if (errors.invalidValues.length > 0) {
+            const errorDetails = errors.invalidValues
                 .map(
                     (err) =>
                         `Parameter '${err.name}' has value '${err.value}' which is not in allowed values: [${err.allowed.join(', ')}]`
                 )
                 .join('\n    ');
-            errors.push(`Invalid parameter value(s) for template '${templateName}':\n    ${errorDetails}`);
+            errorMessages.push(`Invalid parameter value(s) for template '${templateName}':\n    ${errorDetails}`);
         }
 
-        if (unknownParameters.length > 0) {
-            const templateName = templatePath || 'template';
-            const paramList = unknownParameters.map((p) => `'${p}'`).join(', ');
-            errors.push(
+        if (errors.unknownParameters.length > 0) {
+            const paramList = errors.unknownParameters.map((p) => `'${p}'`).join(', ');
+            errorMessages.push(
                 `Unknown parameter(s) for template '${templateName}': ${paramList}. ` +
                     `These parameters are not defined in the template.`
             );
         }
 
-        if (errors.length > 0) {
-            let errorMessage = errors.join('\n\n');
-
-            // Add template call stack if available
+        if (errorMessages.length > 0) {
+            let errorMessage = errorMessages.join('\n\n');
             if (context?.templateStack?.length > 0) {
                 errorMessage += '\n  Template call stack:';
                 errorMessage += '\n    ' + context.templateStack[0];
@@ -940,7 +916,6 @@ class AzurePipelineParser {
                     errorMessage += '\n    ' + '  '.repeat(i) + '└── ' + context.templateStack[i];
                 }
             }
-
             throw new Error(errorMessage);
         }
     }
@@ -1299,10 +1274,7 @@ class AzurePipelineParser {
             if (this.isElseDirective(key)) break;
         }
 
-        return {
-            items,
-            nextIndex: index - 1,
-        };
+        return { items, nextIndex: index - 1 };
     }
 
     expandConditionalEntries(entries, startIndex, context) {
@@ -1325,16 +1297,12 @@ class AzurePipelineParser {
             if (this.isElseDirective(key)) break;
         }
 
-        return {
-            merged,
-            nextIndex: Math.max(startIndex, index - 1),
-        };
+        return { merged, nextIndex: Math.max(startIndex, index - 1) };
     }
 
     expandConditionalMappingBranch(body, context) {
         if (Array.isArray(body)) {
-            const expandedArray = this.expandArray(body, context);
-            return expandedArray.reduce((acc, item) => {
+            return this.expandArray(body, context).reduce((acc, item) => {
                 if (item && typeof item === 'object' && !Array.isArray(item)) {
                     return { ...acc, ...item };
                 }
@@ -1342,16 +1310,10 @@ class AzurePipelineParser {
             }, {});
         }
 
-        if (body && typeof body === 'object') {
-            return this.expandObject(body, context);
-        }
+        if (body && typeof body === 'object') return this.expandObject(body, context);
 
         const scalar = this.expandScalar(body, context);
-        if (scalar === undefined) {
-            return {};
-        }
-
-        return { value: scalar };
+        return scalar === undefined ? {} : { value: scalar };
     }
 
     expandEachEntries(entries, startIndex, context) {
@@ -2798,36 +2760,36 @@ class AzurePipelineParser {
 
         if (evaluated && typeof evaluated === 'object' && !Array.isArray(evaluated)) {
             return evaluated;
+        } else {
+            return this._normalizeParameterArray(evaluated);
         }
+    }
 
-        if (Array.isArray(evaluated)) {
-            const result = {};
-            evaluated.forEach((item) => {
-                if (item && typeof item === 'object' && !Array.isArray(item)) {
-                    if (Object.prototype.hasOwnProperty.call(item, 'name')) {
-                        const key = item.name;
-                        if (typeof key === 'string' && key.trim().length) {
-                            const value = this.pickFirstDefined(item.value, item.default, item.values);
-                            result[key.trim()] = value;
-                        }
-                        return;
-                    }
+    _normalizeParameterArray(paramArray) {
+        const result = {};
+        paramArray.forEach((item) => {
+            if (!item || typeof item !== 'object' || Array.isArray(item)) return;
 
-                    Object.entries(item).forEach(([key, value]) => {
-                        if (typeof key === 'string' && key.trim().length) {
-                            result[key.trim()] = value;
-                        }
-                    });
+            if (Object.prototype.hasOwnProperty.call(item, 'name')) {
+                const key = item.name;
+                if (typeof key === 'string' && key.trim().length) {
+                    const value = this.pickFirstDefined(item.value, item.default, item.values);
+                    result[key.trim()] = value;
+                }
+                return;
+            }
+
+            Object.entries(item).forEach(([key, value]) => {
+                if (typeof key === 'string' && key.trim().length) {
+                    result[key.trim()] = value;
                 }
             });
-            return result;
-        }
-
-        return {};
+        });
+        return result;
     }
 
     extractTemplateBody(expandedTemplate) {
-        if (!expandedTemplate) {
+        if (!expandedTemplate || typeof expandedTemplate !== 'object') {
             return [];
         }
 
@@ -2835,17 +2797,7 @@ class AzurePipelineParser {
             return expandedTemplate;
         }
 
-        if (typeof expandedTemplate !== 'object') {
-            return [];
-        }
-
-        const sanitized = {};
-        for (const [key, value] of Object.entries(expandedTemplate)) {
-            if (key === 'parameters') {
-                continue;
-            }
-            sanitized[key] = value;
-        }
+        const sanitized = Object.fromEntries(Object.entries(expandedTemplate).filter(([key]) => key !== 'parameters'));
 
         const candidates = ['stages', 'jobs', 'steps', 'variables', 'stage', 'job', 'deployment', 'deployments'];
         for (const key of candidates) {
@@ -2860,11 +2812,7 @@ class AzurePipelineParser {
             }
         }
 
-        if (Object.keys(sanitized).length > 0) {
-            return [sanitized];
-        }
-
-        return [];
+        return Object.keys(sanitized).length > 0 ? [sanitized] : [];
     }
 
     /** Evaluates a conditional directive key and returns true if the branch should execute. */
