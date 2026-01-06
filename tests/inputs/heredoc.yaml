@@ -1,0 +1,27 @@
+# aps-format=false
+parameters:
+- name: token
+  type: string
+  default: 'abc'
+
+
+stages:
+- stage: Stage1
+
+  jobs:
+  - job: Job1
+
+    steps:
+    - bash: |
+        cat <<EOF > file.txt
+        Line 1
+        Line 2
+        EOF
+      displayName: No parameter in heredoc
+
+    - bash: |
+        cat <<EOF > file.txt
+        Token: ${{ parameters.token }}
+        Line 2
+        EOF
+      displayName: Parameter in heredoc

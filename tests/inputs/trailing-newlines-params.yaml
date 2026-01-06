@@ -1,0 +1,18 @@
+# aps-format=false
+parameters:
+- name: stageName
+  type: string
+  default: Build
+
+
+stages:
+- stage: ${{ parameters.stageName }}
+  displayName: Trailing Newlines With Parameters
+
+  jobs:
+  - job: Test
+    displayName: Test Job
+
+    steps:
+    - bash: echo "test"
+      displayName: Test step

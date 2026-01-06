@@ -1,8 +1,87 @@
+#!/usr/bin/env node
+
+const fs = require('fs');
+const path = require('path');
+const minimist = require('minimist');
 const { AzurePipelineParser } = require('../parser.js');
+
+const parser = new AzurePipelineParser();
 
 console.log('Testing Block Scalar Chomping Indicators\n');
 
-const parser = new AzurePipelineParser();
+const argv = minimist(process.argv.slice(2), { boolean: ['v', 'verbose'] });
+const verbose = argv.v || argv.verbose;
+
+// Helper to run a test case
+function runTestCase(name, yamlFile, params, azureCompatible, assertions) {
+    console.log(`=== ${name} ===`);
+    const filePath = path.join(__dirname, 'inputs', yamlFile);
+    const data = fs.readFileSync(filePath, 'utf8');
+
+    const output = parser.expandPipelineFromString(data, Object.assign({ azureCompatible }, params || {}));
+
+    if (verbose) {
+        console.log('\n--- Parser output ---');
+        console.log(output);
+        console.log('--- end output ---\n');
+    }
+
+    let passed = true;
+    try {
+        assertions(output);
+        console.log('✅ PASS\n');
+    } catch (error) {
+        console.log('❌ FAIL: ' + error.message + '\n');
+        passed = false;
+    }
+
+    return passed;
+}
+
+// Test 1: Expression expanding to empty at end should trigger >+ chomping
+const test1Pass = runTestCase(
+    'Test 1: Expression expanding to empty at end should trigger >+ chomping',
+    'block-chomping-keep.yaml',
+    { parameters: { properties: '', projectName: 'MyProject' } },
+    true,
+    (output) => {
+        if (!/extraProperties:\s*>\+/.test(output)) {
+            throw new Error('Should have >+ chomping indicator');
+        }
+    }
+);
+
+// Test 2: Expression in middle should use > (clip chomping)
+const test2Pass = runTestCase(
+    'Test 2: Expression in middle should use > (clip chomping)',
+    'block-chomping-clip.yaml',
+    { parameters: { projectName: 'MyProject' } },
+    true,
+    (output) => {
+        if (!/script:\s*>[^\+\-]/.test(output)) {
+            throw new Error('Should have > (clip) chomping');
+        }
+    }
+);
+
+// Test 3: No expressions should use | (literal)
+const test3Pass = runTestCase(
+    'Test 3: No expressions should use | (literal) style',
+    'block-chomping-literal.yaml',
+    {},
+    true,
+    (output) => {
+        if (!/script:\s*\|/.test(output)) {
+            throw new Error('Should have | (literal) style');
+        }
+    }
+);
+
+// Summary
+const allPassed = test1Pass && test2Pass && test3Pass;
+console.log('=== Summary ===');
+console.log(allPassed ? 'All block scalar chomping tests passed ✅' : 'Some tests failed ❌');
+process.exit(allPassed ? 0 : 1);
 
 // Test 1: Expression expanding to empty at end of block should trigger >+ chomping
 const input1 = `parameters:

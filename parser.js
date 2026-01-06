@@ -52,8 +52,21 @@ class AzurePipelineParser {
         context.templateQuoteStyles = new Map();
 
         const expandedDocument = this.expandNode(document, context);
+
+        // Convert variables from object format to array format
+        if (
+            expandedDocument.variables &&
+            typeof expandedDocument.variables === 'object' &&
+            !Array.isArray(expandedDocument.variables)
+        ) {
+            expandedDocument.variables = Object.entries(expandedDocument.variables).map(([name, value]) => ({
+                name: name,
+                value: value,
+            }));
+        }
+
         const finalYamlDoc = YAML.parseDocument(YAML.stringify(expandedDocument));
-        this.restoreQuoteStyles(finalYamlDoc.contents, [], context.mergedQuoteStyles);
+        this.restoreQuoteStyles(finalYamlDoc.contents, [], context);
 
         console.log(`Azure Compatibility mode: ${context.azureCompatible}`);
         this.applyBlockScalarStyles(finalYamlDoc.contents, context);
@@ -107,11 +120,10 @@ class AzurePipelineParser {
      * @param {object} node - YAML AST node
      * @param {array} path - Current path in the document
      * @param {Map} quoteStyles - Map to store quote styles
-     * @param {string} identifier - Identifier from ancestor
      */
-    extractQuoteStyles(node, path, quoteStyles, identifier = '') {
+    extractQuoteStyles(node, path, quoteStyles) {
         const handler = this.buildQuoteHandler(this.setQuoteStyle.bind(this), {});
-        this.traverseQuoteStyleNodes(node, path, handler, identifier, quoteStyles);
+        this.traverseQuoteStyleNodes(node, path, handler, quoteStyles);
     }
 
     /**
@@ -157,16 +169,24 @@ class AzurePipelineParser {
      * @param {Map} quoteStyles - Map of stored quote styles
      * @param {string} identifier - Identifier from ancestor
      */
-    restoreQuoteStyles(node, path, quoteStyles = new Map(), identifier = '') {
+    restoreQuoteStyles(node, path, context = {}) {
+        const quoteStyles = context.mergedQuoteStyles || new Map();
+        const stringsWithExpressions = context.stringsWithExpressions || new Set();
+
         // Delegate to the generic traversal with a handler that applies stored styles
         const handler = this.buildQuoteHandler(this.getQuoteStyle.bind(this), {
             post: (quoteStyle, valueNode) => {
                 if (quoteStyle && valueNode && valueNode.value !== undefined) {
-                    valueNode.type = quoteStyle;
+                    // Skip restoring quotes for strings that had template expressions
+                    if (stringsWithExpressions.has(valueNode.value)) {
+                        valueNode.type = 'PLAIN';
+                    } else {
+                        valueNode.type = quoteStyle;
+                    }
                 }
             },
         });
-        this.traverseQuoteStyleNodes(node, path, handler, identifier, quoteStyles);
+        this.traverseQuoteStyleNodes(node, path, handler, quoteStyles);
     }
 
     /**
@@ -193,6 +213,9 @@ class AzurePipelineParser {
         if (identifier) {
             quoteStyles.set(`__ctx:${identifier}:${keyName}:${valueContent}`, quoteType);
         }
+
+        // Key-value pair hash (for values that move paths, like through conditionals)
+        quoteStyles.set(`__kv:${keyName}:${valueContent}`, quoteType);
 
         // Track empty strings
         if (valueContent === '' && !quoteStyles.has('__empty_string')) {
@@ -243,6 +266,11 @@ class AzurePipelineParser {
             if (!style && valContent === '') {
                 style = quoteStyles.get('__empty_string');
             }
+
+            // Fallback: lookup by key:value combination (for values that moved paths)
+            if (!style && keyName !== undefined) {
+                style = quoteStyles.get(`__kv:${keyName}:${valContent}`);
+            }
         }
 
         return style;
@@ -255,14 +283,13 @@ class AzurePipelineParser {
      * @param {object} node - YAML AST node
      * @param {array} path - current path array (mutated by traversal)
      * @param {function} handler - function(pair, pathArray, currentIdentifier, quoteStyles)
-     * @param {string} identifier - incoming identifier fallback
      * @param {Map} quoteStyles - map passed through to handlers
      */
-    traverseQuoteStyleNodes(node, path, handler, identifier = '', quoteStyles = new Map()) {
+    traverseQuoteStyleNodes(node, path, handler, quoteStyles = new Map()) {
         if (!node) return;
 
         if (node.items && node.constructor.name === 'YAMLMap') {
-            const currentID = this.getContextIdentifier(node, identifier);
+            const currentID = this.getContextIdentifier(node, '');
             for (const pair of node.items) {
                 const keyNode = pair.key;
                 if (!keyNode || !keyNode.value) continue;
@@ -275,14 +302,14 @@ class AzurePipelineParser {
                 }
 
                 if (pair.value) {
-                    this.traverseQuoteStyleNodes(pair.value, path, handler, currentID, quoteStyles);
+                    this.traverseQuoteStyleNodes(pair.value, path, handler, quoteStyles);
                 }
                 path.pop();
             }
         } else if (node.items && node.constructor.name === 'YAMLSeq') {
             for (let index = 0; index < node.items.length; index += 1) {
                 path.push(index);
-                this.traverseQuoteStyleNodes(node.items[index], path, handler, identifier, quoteStyles);
+                this.traverseQuoteStyleNodes(node.items[index], path, handler, quoteStyles);
                 path.pop();
             }
         }
@@ -459,6 +486,7 @@ class AzurePipelineParser {
             templateStack: overrides.templateStack || [],
             scriptsWithExpressions: new Set(), // Track scripts that had ${{}} before expansion
             scriptsWithLastLineExpressions: new Set(), // Track scripts that had ${{}} on last line before expansion
+            stringsWithExpressions: new Set(), // Track string values that had ${{}} and should not have quotes restored
         };
     }
 
@@ -1023,6 +1051,8 @@ class AzurePipelineParser {
 
             // Track if any multiline string values have ${{}} before expansion
             const originalHadExpressions = typeof value === 'string' && value.includes('${{') && value.includes('\n');
+            // Track if string values have ${{}} expressions (remove quotes for ANY value with expressions)
+            const stringHadExpressions = typeof value === 'string' && value.includes('${{');
             // Track if last line has ${{}} - used to determine + chomping
             const originalLastLineHadExpression = originalHadExpressions && this.lastLineHasTemplateExpression(value);
 
@@ -1034,6 +1064,15 @@ class AzurePipelineParser {
             const expandedValue = this.expandNode(value, context, key);
             if (expandedValue === undefined) {
                 continue;
+            }
+
+            // Track ALL string values that had template expressions for quote removal
+            if (stringHadExpressions && typeof expandedValue === 'string' && !expandedValue.includes('\n')) {
+                if (!context.stringsWithExpressions) {
+                    context.stringsWithExpressions = new Set();
+                }
+                // Use the expanded value as the key to match against during quote restoration
+                context.stringsWithExpressions.add(expandedValue);
             }
 
             // If this value had ${{}} expressions, track it for block scalar style

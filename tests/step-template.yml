@@ -1,4 +1,0 @@
-steps:
-- script: echo Step Template
-
-- script: echo StepVar is ${{ parameters.stepVar }}

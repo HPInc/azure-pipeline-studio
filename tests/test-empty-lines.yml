@@ -1,9 +1,0 @@
-variables:
-- name: test
-  value: something
-- ${{ if eq(parameters.environment, 'prod') }}:
-  - name: deploymentSlot
-    value: production
-
-jobs:
-- job: Build

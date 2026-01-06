@@ -1,0 +1,14 @@
+# aps-format=false
+stages:
+- stage: Build
+  displayName: Literal Style Test
+
+  jobs:
+  - job: Test
+    displayName: Test No Expressions
+
+    steps:
+    - bash: |
+        echo "line 1"
+        echo "line 2"
+      displayName: Test literal style

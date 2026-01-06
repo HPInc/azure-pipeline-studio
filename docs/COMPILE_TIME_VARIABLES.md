@@ -266,7 +266,7 @@ Here are commonly used Azure Pipeline compile-time variables:
 **Expression not evaluating correctly:**
 - Check variable name syntax: `variables['Build.Reason']` not `variables.Build.Reason`
 - Verify the variable is being set (use debug mode)
-- Test with the expressions test file: `node tests/expressions-test.js`
+- Test with the expressions test file: `node tests/test-expressions.js`
 
 **VS Code not updating:**
 - Save the file to trigger re-render
@@ -277,4 +277,4 @@ Here are commonly used Azure Pipeline compile-time variables:
 
 - [Microsoft Compatibility Mode](MICROSOFT_COMPATIBILITY.md)
 - [Template Expansion](EXPANSION_COMPARISON.md)
-- [Expression Functions](tests/expressions-test.js)
+- [Expression Functions](tests/test-expressions.js)

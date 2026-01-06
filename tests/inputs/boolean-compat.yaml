@@ -1,0 +1,73 @@
+# aps-format=false
+parameters:
+- name: enableFeature
+  type: boolean
+  default: true
+- name: skipTests
+  type: boolean
+  default: false
+- name: stringTrue
+  type: string
+  default: "True"
+- name: stringFalse
+  type: string
+  default: "False"
+- name: buildReason
+  type: string
+  default: "Manual"
+- name: sourceBranch
+  type: string
+  default: "refs/heads/main"
+
+
+variables:
+- name: isEqual
+  value: ${{ eq(parameters.buildReason, 'Manual') }}
+- name: notEqual
+  value: ${{ ne(parameters.buildReason, 'PullRequest') }}
+- name: greaterThan
+  value: ${{ gt(5, 3) }}
+- name: andResult
+  value: ${{ and(parameters.enableFeature, eq(parameters.buildReason, 'Manual')) }}
+- name: orResult
+  value: ${{ or(parameters.skipTests, eq(parameters.buildReason, 'PullRequest')) }}
+- name: notResult
+  value: ${{ not(parameters.skipTests) }}
+- name: containsResult
+  value: ${{ contains(parameters.sourceBranch, 'main') }}
+- name: inResult
+  value: ${{ in(parameters.buildReason, 'Manual', 'PullRequest', 'Schedule') }}
+- name: startsWithResult
+  value: ${{ startsWith(parameters.sourceBranch, 'refs/heads/') }}
+- name: endsWithResult
+  value: ${{ endsWith(parameters.sourceBranch, '/main') }}
+- name: alwaysRun
+  value: ${{ always() }}
+- name: succeededRun
+  value: ${{ succeeded() }}
+- name: originalStringTrue
+  value: ${{ parameters.stringTrue }}
+- name: originalStringFalse
+  value: ${{ parameters.stringFalse }}
+- name: literalTrue
+  value: "True"
+- name: literalFalse
+  value: "False"
+
+
+stages:
+- stage: BooleanTests
+  displayName: Boolean Compatibility Tests
+
+  jobs:
+  - job: TestJob
+    displayName: Test Boolean Compatibility
+    condition: ${{ eq(parameters.enableFeature, true) }}
+
+    steps:
+    - script: echo "Testing boolean output"
+      displayName: Display message
+
+    - bash: |
+        var="${{ parameters.enableFeature }}"
+      displayName: Test script literal

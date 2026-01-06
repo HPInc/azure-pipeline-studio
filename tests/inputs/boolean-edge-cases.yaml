@@ -1,0 +1,22 @@
+# aps-format=false
+variables:
+- name: complexAnd
+  value: ${{ and(true, true, false) }}
+- name: complexOr
+  value: ${{ or(false, false, true) }}
+- name: nestedCondition
+  value: ${{ and(eq('a', 'a'), or(eq('b', 'c'), eq('d', 'd'))) }}
+- name: xorTest
+  value: ${{ xor(true, false) }}
+
+stages:
+- stage: EdgeCases
+  displayName: Edge Case Tests
+
+  jobs:
+  - job: TestEdgeCases
+    displayName: Test Complex Boolean Expressions
+
+    steps:
+    - script: echo "Testing edge cases"
+      displayName: Display message

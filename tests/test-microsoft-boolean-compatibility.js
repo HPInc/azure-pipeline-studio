@@ -10,179 +10,88 @@
  * 4. Microsoft format is always used for expansion (True/False)
  */
 
+const fs = require('fs');
+const path = require('path');
 const assert = require('assert');
+const minimist = require('minimist');
 const { AzurePipelineParser } = require('../parser.js');
 
-// Test input YAML with various boolean expressions
-const testYaml = `
-parameters:
-  - name: enableFeature
-    type: boolean
-    default: true
-  - name: skipTests
-    type: boolean
-    default: false
-  - name: stringTrue
-    type: string
-    default: "True"
-  - name: stringFalse
-    type: string
-    default: "False"
-  - name: buildReason
-    type: string
-    default: "Manual"
-  - name: sourceBranch
-    type: string
-    default: "refs/heads/main"
+const parser = new AzurePipelineParser();
 
-variables:
-  # Comparison functions
-  - name: isEqual
-    value: \${{ eq(parameters.buildReason, 'Manual') }}
-  - name: notEqual
-    value: \${{ ne(parameters.buildReason, 'PullRequest') }}
-  - name: greaterThan
-    value: \${{ gt(5, 3) }}
+console.log('Testing Microsoft Azure Pipelines Boolean Compatibility...\n');
 
-  # Logical functions
-  - name: andResult
-    value: \${{ and(parameters.enableFeature, eq(parameters.buildReason, 'Manual')) }}
-  - name: orResult
-    value: \${{ or(parameters.skipTests, eq(parameters.buildReason, 'PullRequest')) }}
-  - name: notResult
-    value: \${{ not(parameters.skipTests) }}
+const argv = minimist(process.argv.slice(2), { boolean: ['v', 'verbose'] });
+const verbose = argv.v || argv.verbose;
 
-  # Containment functions
-  - name: containsResult
-    value: \${{ contains(parameters.sourceBranch, 'main') }}
-  - name: inResult
-    value: \${{ in(parameters.buildReason, 'Manual', 'PullRequest', 'Schedule') }}
+// Helper to run a test case
+function runTestCase(name, yamlFile, assertions) {
+    console.log(`=== ${name} ===`);
+    const filePath = path.join(__dirname, 'inputs', yamlFile);
+    const data = fs.readFileSync(filePath, 'utf8');
 
-  # String functions
-  - name: startsWithResult
-    value: \${{ startsWith(parameters.sourceBranch, 'refs/heads/') }}
-  - name: endsWithResult
-    value: \${{ endsWith(parameters.sourceBranch, '/main') }}
+    const output = parser.expandPipelineFromString(data, {});
 
-  # Status functions
-  - name: alwaysRun
-    value: \${{ always() }}
-  - name: succeededRun
-    value: \${{ succeeded() }}
+    if (verbose) {
+        console.log('\n--- Parser output ---');
+        console.log(output);
+        console.log('--- end output ---\n');
+    }
 
-  # Original string values should be preserved
-  - name: originalStringTrue
-    value: \${{ parameters.stringTrue }}
-  - name: originalStringFalse
-    value: \${{ parameters.stringFalse }}
-  - name: literalTrue
-    value: "True"
-  - name: literalFalse
-    value: "False"
+    let passed = true;
+    try {
+        assertions(output);
+        console.log('✅ PASS\n');
+    } catch (error) {
+        console.log(`❌ FAIL: ${error.message}\n`);
+        passed = false;
+    }
 
-jobs:
-  - job: TestJob
-    displayName: 'Test Boolean Compatibility'
-    condition: \${{ eq(parameters.enableFeature, true) }}
-    steps:
-      - script: echo "Testing boolean output"
-        displayName: 'Display message'
-`;
-
-function runTest() {
-    console.log('Testing Microsoft Azure Pipelines Boolean Compatibility...\n');
-
-    // Test 1: Boolean expressions output as True/False (Microsoft format - default)
-    console.log('Test 1: Boolean expressions output as True/False (Microsoft format)');
-    const parser1 = new AzurePipelineParser();
-    const output1 = parser1.expandPipelineFromString(testYaml, {});
-
-    console.log('Checking for unquoted capitalized booleans...');
-
-    // Should have unquoted True/False for expression-evaluated booleans
-    assert(output1.includes('value: True'), 'Should have unquoted True values');
-    assert(output1.includes('value: False'), 'Should have unquoted False values');
-
-    // Verify specific variables (array format with name/value pairs)
-    const isEqualMatch = /name: isEqual\s+value: True/s.test(output1);
-    const notEqualMatch = /name: notEqual\s+value: True/s.test(output1);
-    const orResultMatch = /name: orResult\s+value: False/s.test(output1);
-
-    assert(isEqualMatch, 'isEqual should be True');
-    assert(notEqualMatch, 'notEqual should be True');
-    assert(orResultMatch, 'orResult should be False');
-
-    // Original string values should be preserved as quoted strings
-    assert(
-        output1.includes('value: "True"') || output1.includes("value: 'True'"),
-        'String literals with "True" should remain quoted'
-    );
-
-    // Should NOT have any marker strings in output
-    assert(output1.includes('__TRUE__') === false, 'Should not contain __TRUE__ marker');
-    assert(output1.includes('__FALSE__') === false, 'Should not contain __FALSE__ marker');
-
-    console.log('✓ All boolean expressions output as unquoted True/False');
-    console.log('✓ Original string values preserved\n');
-
-    // Test 2: Edge cases
-    console.log('Test 2: Edge cases');
-    const edgeCaseYaml = `
-variables:
-  - name: complexAnd
-    value: \${{ and(true, true, false) }}
-  - name: complexOr
-    value: \${{ or(false, false, true) }}
-  - name: nestedCondition
-    value: \${{ and(eq('a', 'a'), or(eq('b', 'c'), eq('d', 'd'))) }}
-  - name: xorTest
-    value: \${{ xor(true, false) }}
-`;
-
-    const parser2 = new AzurePipelineParser();
-    const output2 = parser2.expandPipelineFromString(edgeCaseYaml, {});
-
-    const complexAndMatch = /name: complexAnd\s+value: False/s.test(output2);
-    const complexOrMatch = /name: complexOr\s+value: True/s.test(output2);
-    const nestedMatch = /name: nestedCondition\s+value: True/s.test(output2);
-    const xorMatch = /name: xorTest\s+value: True/s.test(output2);
-
-    assert(complexAndMatch, 'complexAnd should be False');
-    assert(complexOrMatch, 'complexOr should be True');
-    assert(nestedMatch, 'nestedCondition should be True');
-    assert(xorMatch, 'xorTest should be True');
-
-    console.log('✓ Complex boolean expressions work correctly\n');
-
-    // Test 3: Booleans in bash script literals preserve quotes
-    console.log('Test 3: Booleans in script literals');
-    const scriptYaml = `
-parameters:
-- name: enabled
-  type: boolean
-  default: true
-
-steps:
-- bash: |
-    var="\${{ parameters.enabled }}"
-  displayName: Test
-`;
-
-    const parser3 = new AzurePipelineParser();
-    const output3 = parser3.expandPipelineFromString(scriptYaml, {});
-
-    assert(output3.includes('var="True"'), 'Boolean in script should be True with quotes preserved');
-    console.log('✓ Booleans in script literals preserve quotes\n');
-
-    console.log('✅ All tests passed!');
+    return passed;
 }
 
-// Run the tests
-try {
-    runTest();
-    process.exit(0);
-} catch (error) {
-    console.error('❌ Test failed:', error.message);
-    console.error(error.stack);
-    process.exit(1);
-}
+// Test 1: Boolean expressions output as True/False
+const test1Pass = runTestCase(
+    'Test 1: Boolean expressions output as True/False (Microsoft format)',
+    'boolean-compat.yaml',
+    (output) => {
+        // Should have unquoted True/False for expression-evaluated booleans
+        assert(output.includes('value: True'), 'Should have unquoted True values');
+        assert(output.includes('value: False'), 'Should have unquoted False values');
+
+        // Verify specific variables
+        assert(/name: isEqual\s+value: True/s.test(output), 'isEqual should be True');
+        assert(/name: notEqual\s+value: True/s.test(output), 'notEqual should be True');
+        assert(/name: orResult\s+value: False/s.test(output), 'orResult should be False');
+
+        // Original string values should be preserved as quoted strings
+        assert(
+            output.includes('value: "True"') || output.includes("value: 'True'"),
+            'String literals with "True" should remain quoted'
+        );
+
+        // Should NOT have any marker strings
+        assert(!output.includes('__TRUE__'), 'Should not contain __TRUE__ marker');
+        assert(!output.includes('__FALSE__'), 'Should not contain __FALSE__ marker');
+
+        // Check script literal preserves quotes
+        assert(output.includes('var="True"'), 'Boolean in script should be True with quotes preserved');
+    }
+);
+
+// Test 2: Edge cases
+const test2Pass = runTestCase(
+    'Test 2: Complex boolean expressions and edge cases',
+    'boolean-edge-cases.yaml',
+    (output) => {
+        assert(/name: complexAnd\s+value: False/s.test(output), 'complexAnd should be False');
+        assert(/name: complexOr\s+value: True/s.test(output), 'complexOr should be True');
+        assert(/name: nestedCondition\s+value: True/s.test(output), 'nestedCondition should be True');
+        assert(/name: xorTest\s+value: True/s.test(output), 'xorTest should be True');
+    }
+);
+
+// Summary
+const allPassed = test1Pass && test2Pass;
+console.log('=== Summary ===');
+console.log(allPassed ? 'All boolean compatibility tests passed ✅' : 'Some tests failed ❌');
+process.exit(allPassed ? 0 : 1);

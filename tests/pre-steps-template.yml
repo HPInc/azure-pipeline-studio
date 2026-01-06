@@ -1,9 +1,0 @@
-# Pre-step template referenced via @self
-parameters:
-- name: message
-  type: string
-
-
-steps:
-- script: echo "${{ parameters.message }}"
-  displayName: 'Pre-step: ${{ parameters.message }}'

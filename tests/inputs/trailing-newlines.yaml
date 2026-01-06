@@ -1,0 +1,12 @@
+# aps-format=false
+stages:
+- stage: Build
+  displayName: Trailing Newlines Test
+
+  jobs:
+  - job: Test
+    displayName: Test Trailing Newlines
+
+    steps:
+    - bash: echo "test"
+      displayName: Test step

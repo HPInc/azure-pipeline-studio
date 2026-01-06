@@ -1,0 +1,511 @@
+# aps-format=false
+# Comprehensive Azure Pipeline - Testing All Formatting & Expansion Features
+# This file tests: comments, spacing, long lines, scripts, expressions, complex structures
+# Edge cases: invalid nesting, expression spacing variations, multi-line expressions, nested conditions
+
+trigger:
+  branches:
+    include:
+    - main
+    - develop
+    - feature/*
+    - release/*
+# Parameter variations to test different types
+
+parameters:
+- name: buildConfiguration
+  type: string
+  default: 'Release'
+  values:
+  - Debug
+  - Release
+  - Production
+- name: message
+  type: string
+  default: 'Hello World'
+- name: pool
+  type: string
+  default: 'ubuntu-latest'
+- name: enabled
+  type: boolean
+  default: true
+- name: timeout
+  type: number
+  default: 60
+- name: environments
+  type: object
+  default:
+    dev: 'dev-env'
+    prod: 'prod-env'
+# Variables with various expression formats (testing spacing normalization)
+
+variables:
+  solution: '**/*.sln'
+  buildConfig: ${{parameters.buildConfiguration}} # No spaces - should be normalized
+  webAppName: 'my-web-app'
+  poolName: ${{ parameters.pool }} # Already spaced
+  isEnabled: ${{  parameters.enabled  }} # Extra spaces
+  # Expression without spaces
+  timeoutValue: ${{parameters.timeout}}
+  # Multiple expressions in one value
+  combined: '${{ parameters.buildConfiguration }}-${{ parameters.message }}'
+
+stages:
+- stage: Build
+  displayName: Build Stage with ${{ parameters.buildConfiguration }}
+
+  jobs:
+  - job: BuildJob
+    displayName: Build and Test Job
+    pool:
+      vmImage: ${{ parameters.pool }}
+    # Edge case: timeoutInMinutes with expression
+    timeoutInMinutes: ${{parameters.timeout}}
+
+    steps:
+    # Step 1: Install SDK
+    - task: UseDotNet@2
+      displayName: Install .NET SDK
+      inputs:
+        packageType: 'sdk'
+        version: '8.x'
+    # Step 2: Restore packages with long command
+
+    - bash: |
+        echo "Starting restore process..."
+        dotnet restore $(solution)
+        echo "Restore completed for ${{ parameters.message }}"
+      displayName: Restore Packages with Expression
+
+    # Step 3: Build with parameters and complex condition
+
+    - task: DotNetCoreCLI@2
+      displayName: Build Solution
+      inputs:
+        command: 'build'
+        projects: $(solution)
+        arguments: '--configuration ${{ parameters.buildConfiguration }} --no-restore'
+      condition: and(succeeded(), ${{ parameters.enabled }}, eq('${{ parameters.buildConfiguration }}', 'Release'))
+    # Step 4: Test with very long command line (testing line preservation)
+
+    - bash: dotnet test --configuration Release --logger trx --collect:"XPlat Code Coverage" --results-directory TestResults/ --verbosity detailed --no-build --filter "Category=Integration|Category=Unit" --blame-crash --blame-hang-timeout 5m
+      displayName: Run Tests with Long Command Line
+    # Step 5: Python script with expressions and indentation
+
+    - task: PythonScript@0
+      displayName: Process Data
+      inputs:
+        scriptSource: 'inline'
+        script: |
+          import os
+          import sys
+          import json
+
+          def process_data(config):
+              """Process configuration data"""
+              print(f"Processing with config: {config}")
+              if config == "${{ parameters.buildConfiguration }}":
+                  print("Configuration matches!")
+                  return True
+              return False
+
+          def validate_environment():
+              """Validate environment settings"""
+              env_config = {
+                  "build": "${{ parameters.buildConfiguration }}",
+                  "message": "${{ parameters.message }}",
+                  "enabled": ${{ parameters.enabled }},
+                  "timeout": ${{ parameters.timeout }}
+              }
+              print(json.dumps(env_config, indent=2))
+
+          if __name__ == "__main__":
+              process_data("${{ parameters.buildConfiguration }}")
+              validate_environment()
+
+    # Step 6: Complex bash script with heredoc and multiple expressions
+
+    - bash: |
+        #!/bin/bash
+        set -euo pipefail
+
+        # Create config with heredoc
+        cat <<EOF > config.json
+        {
+          "configuration": "${{ parameters.buildConfiguration }}",
+          "message": "${{ parameters.message }}",
+          "enabled": ${{ parameters.enabled }},
+          "timeout": ${{ parameters.timeout }},
+          "pool": "${{ parameters.pool }}"
+        }
+        EOF
+
+        # Nested heredoc for script generation
+        cat <<'SCRIPT' > test-script.sh
+        #!/bin/bash
+        echo "Configuration: ${{ parameters.buildConfiguration }}"
+        if [ "${{ parameters.enabled }}" = "True" ]; then
+            echo "Feature is enabled"
+        fi
+        SCRIPT
+
+        chmod +x test-script.sh
+
+        if [ -f config.json ]; then
+            echo "Configuration file created successfully"
+            cat config.json
+            ./test-script.sh
+        fi
+      displayName: Create Config with Heredoc
+
+    # Step 7: Multiple expressions in one step
+
+    - task: PublishBuildArtifacts@1
+      displayName: Publish ${{ parameters.buildConfiguration }} Artifacts
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+        ArtifactName: 'drop-${{ parameters.buildConfiguration }}-${{ parameters.message }}'
+        publishLocation: 'Container'
+      condition: and(succeeded(), ${{ parameters.enabled }}, ne('${{ parameters.buildConfiguration }}', 'Debug'))
+      continueOnError: false
+    # Step 8: Expression in dash list (edge case)
+
+    - ${{ if eq(parameters.enabled, true) }}:
+      - bash: echo "Enabled step"
+        displayName: Conditional Step via Template Expression
+    # Step 9: Nested expressions and complex conditions
+
+    - bash: |
+        echo "Complex condition test"
+        echo "Build: ${{parameters.buildConfiguration}}"
+        echo "Pool: ${{ parameters.pool }}"
+        echo "Enabled: ${{  parameters.enabled  }}"
+      displayName: Test Expression Spacing Variations
+      condition: |
+        and(
+          succeeded(),
+          eq(variables['Build.Reason'], 'Manual'),
+          or(
+            eq('${{ parameters.buildConfiguration }}', 'Release'),
+            eq('${{ parameters.buildConfiguration }}', 'Production')
+          )
+        )
+
+    # Step 10: Expression with object parameter
+
+    - bash: echo "Environment prod"
+      displayName: Test Object Parameter Expression
+      condition: ${{parameters.enabled}}
+    # Step 11: Tab characters in expression (edge case)
+
+    - bash: echo "Testing tabs"
+      displayName: Expression with Tabs
+      condition: ${{	parameters.enabled	}}
+    # Step 12: Long line with multiple expressions
+
+    - task: AzureCLI@2
+      displayName: Deploy with ${{ parameters.buildConfiguration }} to ${{ parameters.pool }} when ${{ parameters.enabled }}
+      inputs:
+        azureSubscription: 'connection-${{ parameters.buildConfiguration }}'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: echo "Deployment with config=${{ parameters.buildConfiguration }} message=${{ parameters.message }} enabled=${{ parameters.enabled }}"
+
+- stage: Deploy
+  displayName: Deploy Stage
+  dependsOn: Build
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'), ${{ parameters.enabled }})
+
+  jobs:
+  - job: DeployJob
+    displayName: Deploy to Production
+    pool:
+      vmImage: ${{ parameters.pool }}
+
+    steps:
+    # Deploy step with expression
+    - task: AzureCLI@2
+      displayName: Deploy ${{ parameters.message }} App
+      inputs:
+        azureSubscription: 'production-connection'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          echo "Deploying application"
+          echo "Configuration: ${{ parameters.buildConfiguration }}"
+          echo "Package: drop-${{ parameters.buildConfiguration }}"
+
+    # Post-deployment verification with nested conditions
+
+    - bash: |
+        echo "Deployment completed"
+        echo "Configuration: ${{ parameters.buildConfiguration }}"
+        echo "Message: ${{ parameters.message }}"
+        echo "Timeout: ${{ parameters.timeout }}"
+        echo "Checking application health..."
+      displayName: Verify Deployment
+      condition: and(succeeded(), eq('${{ parameters.buildConfiguration }}', 'Release'))
+
+  # Additional job for testing edge cases
+  - job: PostDeploymentTests
+    displayName: Post-Deployment Tests
+    dependsOn: DeployJob
+    condition: succeeded()
+    pool:
+      vmImage: ${{parameters.pool}} # No spaces
+
+    steps:
+    # Testing insert expression (edge case)
+    - ${{ if eq(parameters.buildConfiguration, 'Release') }}:
+      - bash: echo "Release-specific test"
+        displayName: Release Test
+
+    - ${{ if ne(parameters.buildConfiguration, 'Debug') }}:
+      - bash: echo "Non-Debug test"
+        displayName: Non-Debug Test
+    # Multiple insert expressions
+
+    - ${{ if parameters.enabled }}:
+      - bash: echo "Feature enabled"
+        displayName: Enabled Feature Test
+
+      - bash: echo "Additional enabled test"
+        displayName: Another Enabled Test
+    # Complex expression with multiple operators
+
+    - bash: |
+        echo "Final validation"
+        echo "Config: ${{parameters.buildConfiguration}}"
+        echo "Enabled: ${{ parameters.enabled }}"
+        echo "Pool: ${{  parameters.pool  }}"
+      displayName: Final Validation
+      condition: |
+        and(
+          succeeded(),
+          ${{ parameters.enabled }},
+          or(
+            startsWith('${{ parameters.buildConfiguration }}', 'Rel'),
+            endsWith('${{ parameters.buildConfiguration }}', 'tion')
+          )
+        )
+
+# Stage 3: Edge Cases Testing
+- stage: EdgeCases
+  displayName: Edge Cases Testing Stage
+  dependsOn:
+  - Build
+  - Deploy
+  condition: |
+    and(
+      in(dependencies.Build.result, 'Succeeded', 'SucceededWithIssues'),
+      in(dependencies.Deploy.result, 'Succeeded', 'SucceededWithIssues', 'Skipped')
+    )
+
+  jobs:
+  - job: EdgeCaseTests
+    displayName: Edge Case Scenarios
+    pool:
+      vmImage: ubuntu-latest
+
+    steps:
+    # Edge case: Expression without spaces followed by colon
+    - bash: echo "Testing colon spacing"
+      displayName: Colon Test
+      env:
+        CONFIG: '${{parameters.buildConfiguration}}'
+    # Edge case: Expression in condition with special formatting
+
+    - bash: |
+        echo "Array test"
+      displayName: Multi-line Expression Test
+      condition: ${{ parameters.enabled }}
+
+    # Edge case: Deeply nested expression
+
+    - bash: echo "Nested test"
+      displayName: Deep Nesting
+      condition: ${{ and(parameters.enabled, eq(parameters.buildConfiguration, 'Release')) }}
+    # Edge case: Expression in name field
+
+    - task: CmdLine@2
+      name: Task_${{ replace(parameters.buildConfiguration, 'Release', 'Rel') }}
+      displayName: Dynamic Task Name
+      inputs:
+        script: echo "Dynamic naming"
+    # Edge case: Empty lines and spacing preservation
+
+    - bash: |
+
+
+        echo "Test with blank lines above"
+
+
+        echo "Test with blank lines between"
+
+      displayName: Blank Lines Test
+
+    # Edge case: Very long single-line expression
+
+    - bash: echo "Long expression"
+      displayName: Long Expression Test
+      condition: and(succeeded(), eq('${{ parameters.buildConfiguration }}', 'Release'), eq('${{ parameters.message }}', 'Hello World'), ${{ parameters.enabled }}, le(${{ parameters.timeout }}, 120))
+    # Edge case: Mixed quotes in expressions
+
+    - bash: |
+        echo 'Single quotes: ${{ parameters.message }}'
+        echo "Double quotes: ${{ parameters.buildConfiguration }}"
+        echo `Backticks: ${{ parameters.pool }}`
+      displayName: Mixed Quotes Test
+
+    # Edge case: Expression in array item
+
+    - script: |
+        echo "Array expression"
+      displayName: Array Item Expression
+      env:
+        ITEMS: |
+          - ${{ parameters.buildConfiguration }}
+          - ${{ parameters.message }}
+          - ${{ parameters.pool }}
+
+    # Edge case: Quote variations with template expressions
+
+    - task: CmdLine@2
+      displayName: Single Quotes Full Expression
+      inputs:
+        # Full expression with single quotes - quotes should be preserved
+        script: 'echo ${{ parameters.message }}'
+
+    - task: CmdLine@2
+      displayName: Double Quotes Full Expression
+      inputs:
+        # Full expression with double quotes - quotes should be preserved
+        script: "${{ parameters.message }}"
+
+    - task: CmdLine@2
+      displayName: Single Quotes Mixed Expression
+      inputs:
+        # Mixed expression with single quotes - quotes should be removed
+        script: 'echo "Build: ${{ parameters.buildConfiguration }} - Message: ${{ parameters.message }}"'
+
+    - task: CmdLine@2
+      displayName: Double Quotes Mixed Expression
+      inputs:
+        # Mixed expression with double quotes - quotes should be removed
+        script: "echo Build: ${{ parameters.buildConfiguration }} - Message: ${{ parameters.message }}"
+
+    - task: DotNetCoreCLI@2
+      displayName: Arguments with Single Quotes and Mixed Expression
+      inputs:
+        command: build
+        # Multiple words with expression - quotes should be removed
+        arguments: '--configuration ${{ parameters.buildConfiguration }} --no-restore --verbosity detailed'
+
+    - task: DotNetCoreCLI@2
+      displayName: Arguments with Double Quotes and Mixed Expression
+      inputs:
+        command: test
+        # Multiple words with expression - quotes should be removed
+        arguments: "--logger trx --configuration ${{ parameters.buildConfiguration }} --collect coverage"
+
+    - bash: echo "test"
+      displayName: Environment Variable Full Expression Single Quotes
+      env:
+        # Full expression - quotes preserved
+        BUILD_CONFIG: '${{ parameters.buildConfiguration }}'
+        # Full expression - quotes preserved
+        POOL_NAME: "${{ parameters.pool }}"
+
+    - bash: echo "test"
+      displayName: Environment Variable Mixed Expression
+      env:
+        # Mixed expression with single quotes - quotes removed
+        BUILD_COMMAND: 'dotnet build --configuration ${{ parameters.buildConfiguration }}'
+        # Mixed expression with double quotes - quotes removed
+        TEST_COMMAND: "dotnet test --configuration ${{ parameters.buildConfiguration }} --logger trx"
+        # Multiple expressions in one value - quotes removed
+        COMBINED_PATH: '/app/${{ parameters.buildConfiguration }}/output/${{ parameters.message }}'
+
+    - task: AzureCLI@2
+      displayName: Complex Quote Scenarios
+      inputs:
+        azureSubscription: 'test-connection'
+        scriptType: bash
+        # Single quotes with expression at start
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          # Full expression scenarios
+          CONFIG='${{ parameters.buildConfiguration }}'
+          MESSAGE="${{ parameters.message }}"
+
+          # Mixed expression scenarios
+          CMD='build --config ${{ parameters.buildConfiguration }} --output bin'
+          PATH="/usr/local/bin:${{ parameters.pool }}:/usr/bin"
+
+          # Multiple expressions
+          FULL_PATH='${{ parameters.buildConfiguration }}/${{ parameters.message }}/output'
+
+          echo "Config: $CONFIG"
+          echo "Message: $MESSAGE"
+          echo "Command: $CMD"
+          echo "Path: $PATH"
+          echo "Full Path: $FULL_PATH"
+
+    - task: PowerShell@2
+      displayName: PowerShell Quote Scenarios
+      inputs:
+        targetType: inline
+        # Single quotes wrapping mixed expressions
+        script: |
+          # Full expressions - quotes preserved
+          $config = '${{ parameters.buildConfiguration }}'
+          $pool = "${{ parameters.pool }}"
+
+          # Mixed expressions - quotes removed
+          $buildArgs = '--configuration ${{ parameters.buildConfiguration }} --no-restore'
+          $testArgs = "--logger trx --filter Category=${{ parameters.message }}"
+
+          Write-Host "Config: $config"
+          Write-Host "Pool: $pool"
+          Write-Host "Build Args: $buildArgs"
+          Write-Host "Test Args: $testArgs"
+
+    - bash: |
+        # Testing quote preservation rules:
+        # 1. Full expression with quotes: quotes preserved
+        # 2. Mixed expression with quotes: quotes removed
+        # 3. Expression embedded in string: quotes removed
+
+        # Full expressions (quotes preserved)
+        PATTERN='${{ parameters.buildConfiguration }}'
+        GLOB="${{ parameters.message }}"
+
+        # Mixed expressions (quotes removed)
+        COMMAND='dotnet build --config ${{ parameters.buildConfiguration }}'
+        FLAGS="--verbose --config ${{ parameters.buildConfiguration }} --logger console"
+
+        # Multiple expressions (quotes removed)
+        PATH='${{ parameters.buildConfiguration }}/${{ parameters.message }}/bin'
+        URL="https://example.com/${{ parameters.pool }}/${{ parameters.buildConfiguration }}"
+
+        echo "Testing complete"
+      displayName: Quote Preservation Rules Test
+
+    # Final step: Validate all edge cases passed
+
+    - bash: |
+        echo "================================"
+        echo "All edge cases validated!"
+        echo "Build Config: ${{ parameters.buildConfiguration }}"
+        echo "Message: ${{ parameters.message }}"
+        echo "Pool: ${{ parameters.pool }}"
+        echo "Enabled: ${{ parameters.enabled }}"
+        echo "Timeout: ${{ parameters.timeout }}"
+        echo "================================"
+        echo ""
+        echo "Quote handling rules verified:"
+        echo "1. Full expression with quotes - quotes preserved"
+        echo "2. Mixed expression with quotes - quotes removed"
+        echo "3. Multiple expressions in string - quotes removed"
+        echo "================================"
+      displayName: Edge Cases Summary

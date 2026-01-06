@@ -38,7 +38,7 @@
       "skipFiles": [
         "<node_internals>/**"
       ],
-      "program": "${workspaceFolder}/tests/test-heredoc-no-expr.js",
+      "program": "${workspaceFolder}/tests/test-heredoc.js",
       "args": []
     }
   ],

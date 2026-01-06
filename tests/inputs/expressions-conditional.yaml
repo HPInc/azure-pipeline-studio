@@ -1,0 +1,23 @@
+# aps-format=false
+parameters:
+- name: environment
+  type: string
+  default: 'prod'
+
+
+stages:
+- stage: ConditionalTests
+  displayName: Conditional Expression Tests
+
+  jobs:
+  - job: TestConditionals
+    displayName: Test Conditional Expressions
+
+    steps:
+    - ${{ if eq(parameters.environment, 'prod') }}:
+      - script: echo "Production deployment"
+        displayName: Production step
+
+    - ${{ if ne(parameters.environment, 'prod') }}:
+      - script: echo "Non-production deployment"
+        displayName: Non-production step

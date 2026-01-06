@@ -1,0 +1,22 @@
+# aps-format=false
+parameters:
+- name: properties
+  type: string
+  default: ''
+
+
+stages:
+- stage: Build
+  displayName: Non-Compat Chomping Test
+
+  jobs:
+  - job: Test
+    displayName: Test Chomping Behavior
+
+    steps:
+    - task: SonarQubeAnalyze@4
+      displayName: Test extraProperties
+      inputs:
+        extraProperties: |
+          sonar.projectKey=test
+          ${{ parameters.properties }}

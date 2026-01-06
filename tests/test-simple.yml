@@ -1,5 +1,0 @@
-scripts: this is a line
-
-name: another test line with spaces
-
-value: ${{ parameters.test }}
