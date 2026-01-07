@@ -855,8 +855,9 @@ function formatYaml(content, options = {}) {
     // Check for file-level formatting directives
     const directives = parseFormatDirectives(content);
 
-    // If formatting is disabled, return original content
-    if (directives.disabled) {
+    // If formatting is disabled via file directive, return original content
+    // unless the caller explicitly passed options (caller intent should override file directive).
+    if (directives.disabled && (!options || Object.keys(options).length === 0)) {
         return baseResult;
     }
 

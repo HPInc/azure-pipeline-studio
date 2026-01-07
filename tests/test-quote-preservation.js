@@ -53,7 +53,7 @@ function runTestCase(name, yamlFile, params, azureCompatible, assertions) {
 // Test 1: Quote preservation in environment variables
 const test1Pass = runTestCase(
     'Test 1: Quotes preserved in environment variables',
-    'quote-preservation-clean.yaml',
+    'quote-preservation.yaml',
     {
         parameters: {
             pattern: '**/test.dll',
@@ -86,7 +86,7 @@ const test1Pass = runTestCase(
 // Test 2: Azure compatible mode with booleans
 const test2Pass = runTestCase(
     'Test 2: Azure compatible mode with boolean values',
-    'quote-preservation-clean.yaml',
+    'quote-preservation.yaml',
     { parameters: { enabled: true, flag: false } },
     true,
     (output) => {
@@ -101,8 +101,80 @@ const test2Pass = runTestCase(
     }
 );
 
+// Test 3: DisplayName quote behavior with colons
+const test3Pass = runTestCase(
+    'Test 3: DisplayName quote behavior - colon forces quote preservation',
+    'quote-preservation.yaml',
+    { parameters: { buildConfiguration: 'Release' } },
+    false,
+    (output) => {
+        // Colon present - quotes preserved
+        if (!output.includes("displayName: 'a : b'")) {
+            throw new Error('DisplayName with colon should preserve quotes');
+        }
+        // Colon + variable - single quotes used (even if input has double)
+        if (!output.includes("displayName: 'Release : b'")) {
+            throw new Error('DisplayName with colon and variable should use single quotes');
+        }
+        // No colon + variable - quotes removed
+        if (output.includes("displayName: 'Testing Release'") || output.includes('displayName: "Testing Release"')) {
+            throw new Error('DisplayName with variable but no colon should remove quotes');
+        }
+        if (!output.includes('displayName: Testing Release')) {
+            throw new Error('DisplayName should be unquoted: Testing Release');
+        }
+        // No colon, no variable - quotes preserved
+        if (!output.includes("displayName: 'Testing quotes'")) {
+            throw new Error('DisplayName without colon or variable should preserve quotes');
+        }
+    }
+);
+
+// Test 4: Full vs Mixed expression quote behavior
+const test4Pass = runTestCase(
+    'Test 4: Full vs Mixed expression quote behavior',
+    'quote-preservation.yaml',
+    { parameters: { buildConfiguration: 'Debug', message: 'Hello' } },
+    false,
+    (output) => {
+        // Full expression - quotes preserved
+        if (!output.includes("CONFIG: 'Debug'") && !output.includes('CONFIG: "Debug"')) {
+            throw new Error('Full expression CONFIG should preserve quotes');
+        }
+        // Mixed expression - quotes removed
+        if (output.includes("BUILD_CMD: 'dotnet build --config Debug'")) {
+            throw new Error('Mixed expression BUILD_CMD should remove quotes');
+        }
+        if (!output.includes('BUILD_CMD: dotnet build --config Debug')) {
+            throw new Error('Mixed expression should be unquoted');
+        }
+        // Multiple expressions - quotes removed (using bash script variables)
+        if (!output.includes("PATH='Debug/Hello/output'")) {
+            throw new Error('Bash script variables should exist');
+        }
+    }
+);
+
+// Test 5: Plain text displayName quote preservation
+const test5Pass = runTestCase(
+    'Test 5: Plain text in displayName preserves quotes',
+    'quote-preservation.yaml',
+    {},
+    false,
+    (output) => {
+        // Single quotes preserved
+        if (!output.includes("displayName: 'Testing single quotes'")) {
+            throw new Error('Plain text with single quotes should be preserved');
+        }
+        // Double quotes preserved
+        if (!output.includes("displayName: 'Testing double quotes'")) {
+            throw new Error('Plain text with double quotes should be preserved (normalized to single)');
+        }
+    }
+);
+
 // Summary
-const allPassed = test1Pass && test2Pass;
+const allPassed = test1Pass && test2Pass && test3Pass && test4Pass && test5Pass;
 console.log('=== Summary ===');
 console.log(allPassed ? 'All quote preservation tests passed ✅' : 'Some tests failed ❌');
 process.exit(allPassed ? 0 : 1);

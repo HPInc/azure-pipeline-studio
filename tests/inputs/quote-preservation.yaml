@@ -1,0 +1,174 @@
+# aps-format=false
+
+parameters:
+- name: emptyValue
+  type: string
+  default: ''
+- name: pattern
+  type: string
+  default: '**/test.dll'
+- name: enabled
+  type: boolean
+  default: true
+- name: value
+  type: string
+  default: test-value
+- name: flag
+  type: boolean
+  default: false
+- name: poolName
+  type: string
+  default: 'Default'
+- name: arch
+  type: string
+  default: 'x64'
+- name: version
+  type: string
+  default: 'latest'
+- name: message1
+  type: string
+  default: 'This is a comment on the pull request.'
+- name: message2
+  type: string
+  default: "This is a post PR comment or trunk."
+- name: buildConfiguration
+  type: string
+  default: 'Release'
+- name: message
+  type: string
+  default: 'Build completed successfully.'
+# Test variables with quotes in object format
+
+
+variables:
+  myString: 'quoted value'
+  myNumber: 42
+  myPattern: "*.txt"
+  env: 'production'
+
+
+stages:
+- stage: Stage1
+
+  jobs:
+  - job: Job1
+
+    steps:
+    - bash: echo
+      displayName: PATTERN Test
+      env:
+        PATTERN: '${{ parameters.pattern }}'
+
+    - bash: echo
+      displayName: EMPTY Test
+      env:
+        EMPTY: '${{ parameters.emptyValue }}'
+
+    - task: Bash@3
+      displayName: Inline Target Test
+      inputs:
+        targetType: inline
+
+    - bash: |
+        var="${{ parameters.enabled }}"
+      displayName: Enabled Var Test
+
+    - bash: echo
+      displayName: With/Without Quotes Test
+      env:
+        WITH_QUOTES: '${{ parameters.value }}'
+        WITHOUT_QUOTES: ${{ parameters.value }}
+
+    - bash: echo
+      displayName: Quoted Bool Test
+      env:
+        QUOTED_BOOL: '${{ parameters.flag }}'
+
+    - bash: echo
+      displayName: Pool Arch Version Test
+      env:
+        POOL: ${{ parameters.poolName }}
+        ARCH: ${{ parameters.arch }}
+        VERSION: ${{ parameters.version }}
+
+    - task: PythonScript@0
+      displayName: Comment on Pull Request
+      inputs:
+        scriptSource: 'inline'
+        script: |
+          print('${{ parameters.message1 }}')
+
+    - task: PythonScript@0
+      displayName: Post PR Comment or Trunk
+      inputs:
+        scriptSource: inline
+        script: |
+          print('${{ parameters.message2 }}')
+
+    - task: Bash@3
+      displayName: Test App
+      inputs:
+        targetType: inline
+        script: echo test
+
+    - task: Bash@3
+      displayName: Alpha
+      inputs:
+        targetType: 'inline'
+
+    - task: Bash@3
+      displayName: Beta
+      inputs:
+        targetType: inline
+    # Quote behavior scenarios
+
+    - bash: 'echo When : present in value, quotes will be preserved'
+      displayName: 'a : b'
+
+    - bash: 'echo When : present in value along with a compile-time variable, single quote will be used, even when input uses double quote'
+      displayName: "${{ parameters.buildConfiguration }} : b"
+
+    - bash: 'echo When : present in value along with a compile-time variable, single quote will be used'
+      displayName: '${{ parameters.buildConfiguration }} : b'
+
+    - bash: 'echo When : is not present in value along with a compile-time variable, quotes will be removed'
+      displayName: 'Testing ${{ parameters.buildConfiguration }}'
+
+    - bash: 'echo When : is not present in value without a compile-time variable, quotes will be preserved'
+      displayName: 'Testing quotes'
+
+    - bash: echo 'When some part have single quotes, quotes are preserved'
+      displayName: 'Testing single quotes'
+
+    - bash: echo "When some part have double quotes, quotes are preserved"
+      displayName: 'Testing double quotes'
+    # Full expression scenarios - quotes preserved
+
+    - bash: echo "test"
+      displayName: Full Expression Quote Tests
+      env:
+        CONFIG: '${{ parameters.buildConfiguration }}'
+        MESSAGE: "${{ parameters.message }}"
+    # Mixed expression scenarios - quotes removed
+
+    - bash: echo "test"
+      displayName: Mixed Expression Quote Tests
+      env:
+        BUILD_CMD: 'dotnet build --config ${{ parameters.buildConfiguration }}'
+        TEST_CMD: "dotnet test --logger trx --config ${{ parameters.buildConfiguration }}"
+    # Complex quote scenarios in bash scripts
+
+    - bash: |
+        # Full expression - quotes preserved
+        CONFIG='${{ parameters.buildConfiguration }}'
+
+        # Mixed expression - quotes removed
+        COMMAND='build --config ${{ parameters.buildConfiguration }} --output bin'
+
+        # Multiple expressions - quotes removed
+        PATH='${{ parameters.buildConfiguration }}/${{ parameters.message }}/output'
+
+        echo "Config: $CONFIG"
+        echo "Command: $COMMAND"
+        echo "Path: $PATH"
+      displayName: Complex Bash Quote Scenarios

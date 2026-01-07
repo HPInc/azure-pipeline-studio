@@ -308,7 +308,35 @@ stages:
       vmImage: ubuntu-latest
 
     steps:
+    # Edge case: displayName quote behavior with colons
+    # When colon is present in displayName, quotes will be preserved
+    - bash: echo "When colon present in value, quotes will be preserved"
+      displayName: 'a : b'
+    # When colon + compile-time variable present, single quote will be used
+
+    - bash: echo "Colon with compile-time variable"
+      displayName: '${{ parameters.buildConfiguration }} : b'
+    # When colon not present + compile-time variable, quotes will be removed
+
+    - bash: echo "No colon with compile-time variable"
+      displayName: 'Testing ${{ parameters.buildConfiguration }}'
+    # When no colon and no compile-time variable, quotes will be preserved
+
+    - bash: echo "No colon, no variable"
+      displayName: 'Testing quotes'
+    # When colon + compile-time variable + double quote input, single quote will be used
+
+    - bash: echo "Double quote input with colon and variable"
+      displayName: "${{ parameters.buildConfiguration }} : b"
+    # Plain text in displayName quotes preserved
+
+    - bash: echo 'When some part have single quotes, quotes are preserved'
+      displayName: 'Testing single quotes'
+
+    - bash: echo "When some part have double quotes, quotes are preserved"
+      displayName: 'Testing double quotes'
     # Edge case: Expression without spaces followed by colon
+
     - bash: echo "Testing colon spacing"
       displayName: Colon Test
       env:
