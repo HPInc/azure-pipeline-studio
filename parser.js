@@ -4,13 +4,14 @@ const path = require('path');
 const YAML = require('yaml');
 const jsep = require('jsep');
 
+const CHECKOUT_TASK = '6d15af64-176c-496d-b583-fd2ae21d4df4@1';
 // Mapping of shorthand keys to Azure task identifiers
 const TASK_TYPE_MAP = Object.freeze({
     script: 'CmdLine@2',
     bash: 'Bash@3',
     pwsh: 'PowerShell@2',
     powershell: 'PowerShell@2',
-    checkout: '6d15af64-176c-496d-b583-fd2ae21d4df4@1',
+    checkout: CHECKOUT_TASK,
 });
 
 class AzurePipelineParser {
@@ -417,7 +418,7 @@ class AzurePipelineParser {
                 const { value } = pair;
 
                 // Recurse for non-multiline or non-string values
-                if (typeof value.value !== 'string' || !value.value.includes('\n')) {
+                if (!this.isMultilineString(value.value)) {
                     this.applyBlockScalarStyles(value, context);
                     continue;
                 }
@@ -452,6 +453,26 @@ class AzurePipelineParser {
         return lines.some((line, idx) => (idx < lines.length - 1 || line !== '' ? /[ \t]$/.test(line) : false));
     }
 
+    /**
+     * Return true when the provided value is a string containing at least one newline.
+     * Safely returns false for non-strings.
+     * @param {any} value
+     * @returns {boolean}
+     */
+    isMultilineString(value) {
+        return typeof value === 'string' && value.includes('\n');
+    }
+
+    /**
+     * Return true when the provided value is a string containing a template expression
+     * in the form ${{ ... }}. Safely returns false for non-strings.
+     * @param {any} value
+     * @returns {boolean}
+     */
+    hasTemplateExpr(value) {
+        return typeof value === 'string' && value.includes('${{');
+    }
+
     normalizeTrailingNewlines(content, azureCompatible) {
         if (azureCompatible) {
             return /\n[ \t]*\n\s*$/.test(content) ? content.replace(/\n+$/, '') + '\n\n' : content;
@@ -467,7 +488,9 @@ class AzurePipelineParser {
      * @returns {boolean} - True if last non-empty line ends with }}
      */
     lastLineHasTemplateExpression(content) {
-        if (!content) return false;
+        if (!content || !this.isMultilineString(content)) {
+            return false;
+        }
 
         // Split into lines and find last non-empty line
         const lines = content.split('\n');
@@ -1095,9 +1118,9 @@ class AzurePipelineParser {
      * @param {object} flags - Object with tracking flags
      */
     _trackExpressionValue(expandedValue, context, flags) {
-        const { originalHadExpressions, originalLastLineHadExpression } = flags;
+        const { hadMultilineExpr, lastLineHadExpression } = flags;
 
-        if (!originalHadExpressions || typeof expandedValue !== 'string') return;
+        if (!hadMultilineExpr || typeof expandedValue !== 'string') return;
 
         const contentKey = expandedValue.replace(/\s+$/, '');
 
@@ -1106,7 +1129,7 @@ class AzurePipelineParser {
         }
         context.scriptsWithExpressions.add(contentKey);
 
-        if (originalLastLineHadExpression) {
+        if (lastLineHadExpression) {
             if (!context.scriptsWithLastLineExpressions) {
                 context.scriptsWithLastLineExpressions = new Set();
             }
@@ -1130,7 +1153,7 @@ class AzurePipelineParser {
         const uniqueKey = this.getQuoteStyleUniqueKey(context.expansionPath, expandedValue);
 
         // Handle mixed expressions (not full expressions)
-        if (isMixedExpression && !expandedValue.includes('\n')) {
+        if (isMixedExpression && !this.isMultilineString(expandedValue)) {
             if (expandedValue.includes(':')) {
                 quoteStyles.set(uniqueKey, 'QUOTE_SINGLE');
             } else {
@@ -1227,39 +1250,24 @@ class AzurePipelineParser {
             }
 
             try {
-                const isStringValue = typeof value === 'string';
-
-                // Calculate expression-related flags
+                // Expression-related flags
                 const flags = {
-                    originalHadExpressions: isStringValue && value.includes('${{') && value.includes('\n'),
-                    stringHadExpressions: isStringValue && value.includes('${{'),
-                    originalLastLineHadExpression: false,
-                    isSingleLineFullExpression:
-                        isStringValue && !value.includes('\n') && /^\s*\$\{\{.*\}\}\s*$/.test(value.trim()),
+                    hadMultilineExpr: this.hasTemplateExpr(value) && this.isMultilineString(value),
+                    stringHadExpressions: this.hasTemplateExpr(value),
+                    lastLineHadExpression: this.lastLineHasTemplateExpression(value) && this.isMultilineString(value),
+                    isSingleLineFullExpression: this.isFullExpression(value) && !this.isMultilineString(value),
                     isMixedExpression: false,
                 };
-
-                flags.originalLastLineHadExpression =
-                    flags.originalHadExpressions && this.lastLineHasTemplateExpression(value);
+                flags.isMixedExpression = flags.stringHadExpressions && !flags.isSingleLineFullExpression;
 
                 const expandedValue = this.expandNode(value, context, key);
                 if (expandedValue === undefined) continue;
 
-                // Calculate if this is a mixed expression (has expressions but not a full expression)
-                flags.isMixedExpression = flags.stringHadExpressions && !flags.isSingleLineFullExpression;
-
-                // Handle quote style tracking for expressions
                 this._handleQuoteStyleTracking(expandedValue, value, context, flags);
-
-                // Track expressions for block scalar style
                 this._trackExpressionValue(expandedValue, context, flags);
 
                 // Track single-line full expressions that expanded to multiline
-                if (
-                    flags.isSingleLineFullExpression &&
-                    typeof expandedValue === 'string' &&
-                    expandedValue.includes('\n')
-                ) {
+                if (flags.isSingleLineFullExpression && this.isMultilineString(expandedValue)) {
                     const contentKey = expandedValue.replace(/\s+$/, '');
                     context.scriptsWithExpressions.add(contentKey);
                     context.scriptsWithLastLineExpressions.add(contentKey);
@@ -1290,10 +1298,9 @@ class AzurePipelineParser {
                     taskResult.displayName = displayName;
                 }
 
-                const effectiveCondition =
-                    condition !== undefined ? condition : shortValue === 'none' ? false : undefined;
-                if (effectiveCondition !== undefined) {
-                    taskResult.condition = effectiveCondition;
+                const taskCondition = condition !== undefined ? condition : shortValue === 'none' ? false : undefined;
+                if (taskCondition !== undefined) {
+                    taskResult.condition = taskCondition;
                 }
 
                 taskResult.inputs = Object.assign({ repository: shortValue }, inputProps);
@@ -1334,11 +1341,7 @@ class AzurePipelineParser {
         }
 
         // Set condition: false for checkout tasks with repository: none
-        if (
-            result.task === '6d15af64-176c-496d-b583-fd2ae21d4df4@1' &&
-            result.inputs?.repository === 'none' &&
-            !result.condition
-        ) {
+        if (result.task === CHECKOUT_TASK && result.inputs?.repository === 'none' && !result.condition) {
             result.condition = false;
         }
 
@@ -1401,7 +1404,7 @@ class AzurePipelineParser {
                 break;
             }
 
-            // New IF chain starts - break if not the first element
+            // New if chain starts - break if not the first element
             if (this.isIfDirective(key) && index !== startIndex) {
                 break;
             }
@@ -2079,18 +2082,10 @@ class AzurePipelineParser {
         }
 
         const lowered = name.toLowerCase();
-        if (lowered === 'true') {
-            return true;
-        }
-        if (lowered === 'false') {
-            return false;
-        }
-        if (lowered === 'null') {
-            return null;
-        }
-        if (lowered === 'undefined') {
-            return undefined;
-        }
+        if (lowered === 'true') return true;
+        if (lowered === 'false') return false;
+        if (lowered === 'null') return null;
+        if (lowered === 'undefined') return undefined;
 
         if (context.locals && Object.prototype.hasOwnProperty.call(context.locals, name)) {
             return context.locals[name];
