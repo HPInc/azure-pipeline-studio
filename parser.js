@@ -1172,8 +1172,7 @@ class AzurePipelineParser {
             const originalQuoteStyle = quoteStyles.get(originalKey);
 
             if (originalQuoteStyle) {
-                const newKey = this.getQuoteStyleUniqueKey(context.expansionPath, expandedValue);
-                quoteStyles.set(newKey, expandedValue.includes(':') ? 'QUOTE_SINGLE' : originalQuoteStyle);
+                quoteStyles.set(uniqueKey, expandedValue.includes(':') ? 'QUOTE_SINGLE' : originalQuoteStyle);
             }
         }
     }

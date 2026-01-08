@@ -27,7 +27,7 @@
         // "/root/codeway.yaml",
         // "-r", "templates=/root/workspace/templates/",
         // "-v", "Build.Reason=Manual",  "-v", "Build.SourceBranch=refs/heads/p1", "-v", "Build.SourceBranchName=p1", "-v", "System.TeamFoundationCollectionUri=https://dev.azure.com/hp", "-v", "System.TeamProject=OneClient",
-        "/tmp/a.yaml",
+        "/tmp/b.yaml",
         "-x", "-f", "-a",
         "-o", "/tmp/output.yaml"
       ]
