@@ -537,3 +537,213 @@ stages:
         echo "3. Multiple expressions in string - quotes removed"
         echo "================================"
       displayName: Edge Cases Summary
+
+# Stage 4: All 33 Expression Functions Testing
+- stage: AllFunctionsTest
+  displayName: Test All 33 Azure DevOps Expression Functions
+  dependsOn: []
+
+  variables:
+    # Comparison functions (6)
+    eq_test: ${{ eq(parameters.timeout, 60) }}
+    ne_test: ${{ ne(parameters.buildConfiguration, 'Debug') }}
+    gt_test: ${{ gt(parameters.timeout, 30) }}
+    ge_test: ${{ ge(parameters.timeout, 60) }}
+    lt_test: ${{ lt(30, parameters.timeout) }}
+    le_test: ${{ le(parameters.timeout, 120) }}
+    # Logical functions (4)
+    and_test: ${{ and(parameters.enabled, eq(parameters.timeout, 60)) }}
+    and_multi: ${{ and(true, true, parameters.enabled) }}
+    or_test: ${{ or(parameters.enabled, eq(parameters.timeout, 0)) }}
+    or_multi: ${{ or(false, false, parameters.enabled) }}
+    not_test: ${{ not(eq(parameters.buildConfiguration, 'Debug')) }}
+    xor_test: ${{ xor(parameters.enabled, false) }}
+    nested_logic: ${{ and(eq(parameters.timeout, 60), or(eq(parameters.buildConfiguration, 'Release'), eq(parameters.buildConfiguration, 'Production'))) }}
+    # Collection functions (5)
+    coalesce_test: ${{ coalesce('', parameters.message, 'default') }}
+    contains_test: ${{ contains(parameters.message, 'Hello') }}
+    containsValue_test: ${{ containsValue(parameters.environments, 'dev-env') }}
+    in_test: ${{ in(parameters.buildConfiguration, 'Debug', 'Release', 'Production') }}
+    notIn_test: ${{ notIn(parameters.buildConfiguration, 'Test', 'Staging') }}
+    # String functions (9)
+    lower_test: ${{ lower(parameters.message) }}
+    upper_test: ${{ upper(parameters.buildConfiguration) }}
+    startsWith_test: ${{ startsWith(parameters.message, 'Hello') }}
+    endsWith_test: ${{ endsWith(parameters.message, 'World') }}
+    trim_test: ${{ trim('  spaces  ') }}
+    replace_test: ${{ replace(parameters.message, 'World', 'Azure') }}
+    split_test: ${{ split('a,b,c', ',') }}
+    join_test: ${{ join('-', split('a,b,c', ',')) }}
+    # TODO Do we need multiple single quote
+    format_test: '${{ format(''Config: {0}, Timeout: {1}'', parameters.buildConfiguration, parameters.timeout) }}'
+    # Utility functions (4)
+    length_string: ${{ length(parameters.message) }}
+    length_number: ${{ length('12345') }}
+    convertToJson_test: ${{ convertToJson(parameters.environments) }}
+    counter_test: ${{ counter('build', 1) }}
+    # Conditional functions (3)
+    iif_test: ${{ iif(parameters.enabled, 'enabled', 'disabled') }}
+    if_test: ${{ if(eq(parameters.timeout, 60), 'sixty', 'other') }}
+    elseif_test: ${{ elseif(gt(parameters.timeout, 30), 'greater', 'less') }}
+    # Status functions (5)
+    always_test: ${{ always() }}
+    canceled_test: ${{ canceled() }}
+    failed_test: ${{ failed() }}
+    succeeded_test: ${{ succeeded() }}
+    succeededOrFailed_test: ${{ succeededOrFailed() }}
+
+  jobs:
+  - job: TestComparisonFunctions
+    displayName: Test Comparison Functions (6)
+    pool:
+      vmImage: ubuntu-latest
+
+    steps:
+    - bash: |
+        echo "=== Comparison Functions ==="
+        echo "eq(60, 60): $(eq_test)"
+        echo "ne('Release', 'Debug'): $(ne_test)"
+        echo "gt(60, 30): $(gt_test)"
+        echo "ge(60, 60): $(ge_test)"
+        echo "lt(30, 60): $(lt_test)"
+        echo "le(60, 120): $(le_test)"
+      displayName: Comparison Functions Output
+
+  - job: TestLogicalFunctions
+    displayName: Test Logical Functions (4)
+    pool:
+      vmImage: ubuntu-latest
+
+    steps:
+    - bash: |
+        echo "=== Logical Functions ==="
+        echo "and(true, eq(60, 60)): $(and_test)"
+        echo "and(true, true, true): $(and_multi)"
+        echo "or(true, eq(60, 0)): $(or_test)"
+        echo "or(false, false, true): $(or_multi)"
+        echo "not(eq('Release', 'Debug')): $(not_test)"
+        echo "xor(true, false): $(xor_test)"
+        echo "nested: $(nested_logic)"
+      displayName: Logical Functions Output
+
+  - job: TestCollectionFunctions
+    displayName: Test Collection Functions (5)
+    pool:
+      vmImage: ubuntu-latest
+
+    steps:
+    - bash: |
+        echo "=== Collection Functions ==="
+        echo "coalesce('', 'Hello World', 'default'): $(coalesce_test)"
+        echo "contains('Hello World', 'Hello'): $(contains_test)"
+        echo "containsValue(environments, 'dev-env'): $(containsValue_test)"
+        echo "in('Release', 'Debug', 'Release', 'Production'): $(in_test)"
+        echo "notIn('Release', 'Test', 'Staging'): $(notIn_test)"
+      displayName: Collection Functions Output
+
+  - job: TestStringFunctions
+    displayName: Test String Functions (9)
+    pool:
+      vmImage: ubuntu-latest
+
+    steps:
+    - bash: |
+        echo "=== String Functions ==="
+        echo "lower('Hello World'): $(lower_test)"
+        echo "upper('Release'): $(upper_test)"
+        echo "startsWith('Hello World', 'Hello'): $(startsWith_test)"
+        echo "endsWith('Hello World', 'World'): $(endsWith_test)"
+        echo "trim('  spaces  '): $(trim_test)"
+        echo "replace('Hello World', 'World', 'Azure'): $(replace_test)"
+        echo "split('a,b,c', ','): $(split_test)"
+        echo "join('-', split('a,b,c', ',')): $(join_test)"
+        echo "format('Config: {0}, Timeout: {1}', ...): $(format_test)"
+      displayName: String Functions Output
+
+  - job: TestUtilityFunctions
+    displayName: Test Utility Functions (4)
+    pool:
+      vmImage: ubuntu-latest
+
+    steps:
+    - bash: |
+        echo "=== Utility Functions ==="
+        echo "length('Hello World'): $(length_string)"
+        echo "length('12345'): $(length_number)"
+        echo "convertToJson(environments): $(convertToJson_test)"
+        echo "counter('build', 1): $(counter_test)"
+      displayName: Utility Functions Output
+
+  - job: TestConditionalFunctions
+    displayName: Test Conditional Functions (3)
+    pool:
+      vmImage: ubuntu-latest
+
+    steps:
+    - bash: |
+        echo "=== Conditional Functions ==="
+        echo "iif(enabled, 'enabled', 'disabled'): $(iif_test)"
+        echo "if(eq(60, 60), 'sixty', 'other'): $(if_test)"
+        echo "elseif(gt(60, 30), 'greater', 'less'): $(elseif_test)"
+      displayName: Conditional Functions Output
+
+  - job: TestStatusFunctions
+    displayName: Test Status Functions (5)
+    pool:
+      vmImage: ubuntu-latest
+
+    steps:
+    - bash: |
+        echo "=== Status Functions ==="
+        echo "always(): $(always_test)"
+        echo "canceled(): $(canceled_test)"
+        echo "failed(): $(failed_test)"
+        echo "succeeded(): $(succeeded_test)"
+        echo "succeededOrFailed(): $(succeededOrFailed_test)"
+      displayName: Status Functions Output
+
+    - bash: echo "This should always run"
+      displayName: Always Condition Test
+      condition: ${{ always() }}
+
+    - bash: echo "This runs on success"
+      displayName: Succeeded Condition Test
+      condition: ${{ succeeded() }}
+
+  - job: ComprehensiveFunctionTest
+    displayName: Comprehensive Function Test
+    pool:
+      vmImage: ubuntu-latest
+
+    steps:
+    - bash: |
+        echo "========================================="
+        echo "ALL 33 AZURE DEVOPS EXPRESSION FUNCTIONS"
+        echo "========================================="
+        echo ""
+        echo "COMPARISON (6):"
+        echo "  eq, ne, gt, ge, lt, le"
+        echo ""
+        echo "LOGICAL (4):"
+        echo "  and, or, not, xor"
+        echo ""
+        echo "COLLECTION (5):"
+        echo "  coalesce, contains, containsValue, in, notIn"
+        echo ""
+        echo "STRING (9):"
+        echo "  lower, upper, startsWith, endsWith, trim"
+        echo "  replace, split, join, format"
+        echo ""
+        echo "UTILITY (4):"
+        echo "  length, convertToJson, counter, iif"
+        echo ""
+        echo "CONDITIONAL (3):"
+        echo "  iif, if, elseif"
+        echo ""
+        echo "STATUS (5):"
+        echo "  always, canceled, failed, succeeded, succeededOrFailed"
+        echo ""
+        echo "========================================="
+        echo "All function tests executed successfully!"
+        echo "========================================="
+      displayName: Function Test Summary

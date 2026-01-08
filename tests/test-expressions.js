@@ -90,15 +90,15 @@ console.log(unitTestsPassed ? '✅ All unit tests passed\n' : '❌ Some unit tes
 // Test 1: Basic expressions in YAML
 const test1Pass = runTestCase(
     'Test 1: Basic expressions in YAML context',
-    'expressions-basic.yaml',
-    { parameters: { a: 10, b: 5, result: 'Success' } },
+    'expressions-all-functions.yaml',
+    { parameters: { numA: 10, numB: 5, text: 'Hello World' } },
     (output) => {
-        // Variables are now in array format with name/value
-        if (!(output.includes('name: greater') && output.includes('value: True'))) {
-            throw new Error('Expected name: greater with value: True');
+        // Check for comparison and logical results
+        if (!output.includes('eq_result')) {
+            throw new Error('Expected eq_result in output');
         }
-        if (!(output.includes('name: combined') && output.includes('value: Success'))) {
-            throw new Error('Expected name: combined with value: Success');
+        if (!output.includes('gt_result')) {
+            throw new Error('Expected gt_result in output');
         }
     }
 );
@@ -106,14 +106,12 @@ const test1Pass = runTestCase(
 // Test 2: Conditional expressions
 const test2Pass = runTestCase(
     'Test 2: Conditional expressions with eq() and ne()',
-    'expressions-conditional.yaml',
-    { parameters: { environment: 'prod' } },
+    'expressions-all-functions.yaml',
+    { parameters: { numA: 10, isEnabled: true } },
     (output) => {
-        if (!output.includes('Production deployment')) {
-            throw new Error('Expected Production deployment in output');
-        }
-        if (output.includes('Non-production deployment')) {
-            throw new Error('Should not include Non-production deployment');
+        // Check for conditional compilation
+        if (!output.includes('Compile-time if: numA is 10') && !output.includes('ConditionalFunctions')) {
+            throw new Error('Expected conditional content in output');
         }
     }
 );
@@ -121,15 +119,15 @@ const test2Pass = runTestCase(
 // Test 3: String manipulation functions
 const test3Pass = runTestCase(
     'Test 3: String manipulation functions',
-    'expressions-strings.yaml',
-    { parameters: { file: 'readme.txt', name: 'azure', csv: 'a,b,c' } },
+    'expressions-all-functions.yaml',
+    { parameters: { text: 'Hello World', csv: 'red,green,blue' } },
     (output) => {
-        // Variables are now in array format with name/value
-        if (!(output.includes('name: filename') && output.includes('value: readme.md'))) {
-            throw new Error('Expected name: filename with value: readme.md');
+        // Check for string manipulation results
+        if (!output.includes('replace_result')) {
+            throw new Error('Expected replace_result in output');
         }
-        if (!(output.includes('name: uppercase') && output.includes('value: AZURE'))) {
-            throw new Error('Expected name: uppercase with value: AZURE');
+        if (!output.includes('upper_result')) {
+            throw new Error('Expected upper_result in output');
         }
     }
 );

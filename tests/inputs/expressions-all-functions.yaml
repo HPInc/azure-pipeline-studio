@@ -1,0 +1,225 @@
+# aps-format=false
+# Comprehensive test for all 33 Azure DevOps expression functions
+parameters:
+- name: numA
+  type: number
+  default: 10
+- name: numB
+  type: number
+  default: 5
+- name: text
+  type: string
+  default: 'Hello World'
+- name: prefix
+  type: string
+  default: 'Hello'
+- name: suffix
+  type: string
+  default: 'World'
+- name: empty
+  type: string
+  default: ''
+- name: csv
+  type: string
+  default: 'red,green,blue'
+- name: isEnabled
+  type: boolean
+  default: true
+- name: items
+  type: object
+  default:
+  - apple
+  - banana
+  - cherry
+
+
+variables:
+  # Comparison functions (6) - with positive and negative cases
+  eq_result_true: ${{ eq(parameters.numA, 10) }}
+  eq_result_false: ${{ eq(parameters.numA, 20) }}
+  ne_result_true: ${{ ne(parameters.numA, parameters.numB) }}
+  ne_result_false: ${{ ne(parameters.numA, 10) }}
+  gt_result_true: ${{ gt(parameters.numA, parameters.numB) }}
+  gt_result_false: ${{ gt(parameters.numB, parameters.numA) }}
+  ge_result_true: ${{ ge(parameters.numA, 10) }}
+  ge_result_false: ${{ ge(parameters.numB, parameters.numA) }}
+  lt_result_true: ${{ lt(parameters.numB, parameters.numA) }}
+  lt_result_false: ${{ lt(parameters.numA, parameters.numB) }}
+  le_result_true: ${{ le(parameters.numB, 5) }}
+  le_result_false: ${{ le(parameters.numA, parameters.numB) }}
+  # Logical functions (4)
+  and_result: ${{ and(parameters.isEnabled, true) }}
+  and_multi: ${{ and(true, true, parameters.isEnabled) }}
+  or_result: ${{ or(parameters.isEnabled, false) }}
+  or_multi: ${{ or(false, false, parameters.isEnabled) }}
+  not_result: ${{ not(false) }}
+  xor_result: ${{ xor(true, false) }}
+  # Nested logical expressions
+  nested_condition: ${{ and(eq(parameters.numA, 10), or(gt(parameters.numB, 3), lt(parameters.numB, 10))) }}
+  # Collection functions (5) - with positive and negative cases
+  coalesce_result1: ${{ coalesce(parameters.empty, parameters.empty, 'default') }}
+  coalesce_result2: ${{ coalesce(parameters.empty, 'first non-empty', 'second non-empty') }}
+  coalesce_result3: ${{ coalesce(parameters.text, 'fallback') }}
+  contains_result_true: ${{ contains(parameters.text, 'Hello') }}
+  contains_result_false: ${{ contains(parameters.text, 'Goodbye') }}
+  contains_csv_true: ${{ contains(parameters.csv, 'green') }}
+  contains_csv_false: ${{ contains(parameters.csv, 'yellow') }}
+  containsValue_result_true: ${{ containsValue(parameters.items, 'banana') }}
+  containsValue_result_false: ${{ containsValue(parameters.items, 'orange') }}
+  in_result_true: ${{ in('green', 'red', 'green', 'blue') }}
+  in_result_false: ${{ in('yellow', 'red', 'green', 'blue') }}
+  notIn_result_true: ${{ notIn('yellow', 'red', 'green', 'blue') }}
+  notIn_result_false: ${{ notIn('green', 'red', 'green', 'blue') }}
+  # String functions (9) - with positive and negative cases
+  lower_result: ${{ lower(parameters.text) }}
+  upper_result: ${{ upper(parameters.text) }}
+  startsWith_result_true: ${{ startsWith(parameters.text, parameters.prefix) }}
+  startsWith_result_false: ${{ startsWith(parameters.text, 'Goodbye') }}
+  startsWith_empty: ${{ startsWith(parameters.text, '') }}
+  endsWith_result_true: ${{ endsWith(parameters.text, parameters.suffix) }}
+  endsWith_result_false: ${{ endsWith(parameters.text, 'Test') }}
+  endsWith_empty: ${{ endsWith(parameters.text, '') }}
+  trim_result: ${{ trim('  spaces  ') }}
+  trim_empty: ${{ trim('') }}
+  replace_result: ${{ replace(parameters.text, 'World', 'Azure') }}
+  replace_notfound: ${{ replace(parameters.text, 'xyz', 'abc') }}
+  # split_result: split returns array - not valid in variables section
+  # split_single: split returns array - not valid in variables section
+  join_result: ${{ join(', ', split(parameters.csv, ',')) }}
+  join_empty: ${{ join('-', split('', ',')) }}
+  format_result: "${{ format('Number: {0}, Text: {1}', parameters.numA, parameters.text) }}"
+  format_single: "${{ format('Value: {0}', parameters.numA) }}"
+  # Utility functions (3)
+  length_text: ${{ length(parameters.text) }}
+  length_array: ${{ length(parameters.items) }}
+  convertToJson_result: ${{ convertToJson(parameters.items) }}
+  # counter is not a valid runtime expression function in Azure DevOps
+
+  # Conditional functions (1) - iif is the only runtime conditional expression
+  iif_result_true: ${{ iif(eq(parameters.numA, 10), 'ten', 'not ten') }}
+  iif_result_false: ${{ iif(eq(parameters.numA, 20), 'twenty', 'not twenty') }}
+  # if/elseif are compile-time directives, not runtime expression functions
+
+  # Status functions (always, canceled, failed, succeeded, succeededOrFailed)
+  # These are only valid in job/stage conditions, not in variable expressions
+  # See job conditions below for usage
+
+
+stages:
+- stage: AllFunctionsTest
+  displayName: Test All 33 Expression Functions
+
+  jobs:
+  - job: ComparisonFunctions
+    displayName: Comparison Functions (6)
+    condition: ${{ eq(parameters.numA, 10) }}
+
+    steps:
+    - script: |
+        echo "=== Comparison Functions - Positive & Negative Cases ==="
+        echo "eq(10, 10): $(eq_result_true) (expected: True)"
+        echo "eq(10, 20): $(eq_result_false) (expected: False)"
+        echo "ne(10, 5): $(ne_result_true) (expected: True)"
+        echo "ne(10, 10): $(ne_result_false) (expected: False)"
+        echo "gt(10, 5): $(gt_result_true) (expected: True)"
+        echo "gt(5, 10): $(gt_result_false) (expected: False)"
+        echo "ge(10, 10): $(ge_result_true) (expected: True)"
+        echo "ge(5, 10): $(ge_result_false) (expected: False)"
+        echo "lt(5, 10): $(lt_result_true) (expected: True)"
+        echo "lt(10, 5): $(lt_result_false) (expected: False)"
+        echo "le(5, 5): $(le_result_true) (expected: True)"
+        echo "le(10, 5): $(le_result_false) (expected: False)"
+      displayName: Test Comparison Functions
+
+  - job: LogicalFunctions
+    displayName: Logical Functions (4)
+
+    steps:
+    - script: |
+        echo "and_multi: $(and_multi)"
+        echo "or: $(or_result)"
+        echo "or_multi: $(or_multi)"
+        echo "not: $(not_result)"
+        echo "xor: $(xor_result)"
+        echo "nested: $(nested_condition)"
+        echo "xor: $(xor_result)"
+      displayName: Test Logical Functions
+
+  - job: CollectionFunctions
+    displayName: Collection Functions (5)
+
+    steps:
+    - script: |
+        echo "=== Collection Functions - Positive & Negative Cases ==="
+        echo "coalesce('', '', 'default'): $(coalesce_result1) (expected: default)"
+        echo "coalesce('', 'first', 'second'): $(coalesce_result2) (expected: first non-empty)"
+        echo "coalesce('Hello World', 'fallback'): $(coalesce_result3) (expected: Hello World)"
+        echo "contains('Hello World', 'Hello'): $(contains_result_true) (expected: True)"
+        echo "contains('Hello World', 'Goodbye'): $(contains_result_false) (expected: False)"
+        echo "contains('red,green,blue', 'green'): $(contains_csv_true) (expected: True)"
+        echo "contains('red,green,blue', 'yellow'): $(contains_csv_false) (expected: False)"
+        echo "containsValue([apple,banana,cherry], 'banana'): $(containsValue_result_true) (expected: True)"
+        echo "containsValue([apple,banana,cherry], 'orange'): $(containsValue_result_false) (expected: False)"
+        echo "in('green', 'red', 'green', 'blue'): $(in_result_true) (expected: True)"
+        echo "in('yellow', 'red', 'green', 'blue'): $(in_result_false) (expected: False)"
+        echo "notIn('yellow', 'red', 'green', 'blue'): $(notIn_result_true) (expected: True)"
+        echo "notIn('green', 'red', 'green', 'blue'): $(notIn_result_false) (expected: False)"
+      displayName: Test Collection Functions
+
+  - job: StringFunctions
+    displayName: String Functions (9)
+
+    steps:
+    - script: |
+        echo "=== String Functions - Positive & Negative Cases ==="
+        echo "lower('Hello World'): $(lower_result) (expected: hello world)"
+        echo "upper('Hello World'): $(upper_result) (expected: HELLO WORLD)"
+        echo "startsWith('Hello World', 'Hello'): $(startsWith_result_true) (expected: True)"
+        echo "startsWith('Hello World', 'Goodbye'): $(startsWith_result_false) (expected: False)"
+        echo "startsWith('Hello World', ''): $(startsWith_empty) (expected: True)"
+        echo "endsWith('Hello World', 'World'): $(endsWith_result_true) (expected: True)"
+        echo "endsWith('Hello World', 'Test'): $(endsWith_result_false) (expected: False)"
+        echo "endsWith('Hello World', ''): $(endsWith_empty) (expected: True)"
+        echo "trim('  spaces  '): $(trim_result) (expected: spaces)"
+        echo "trim(''): $(trim_empty) (expected: empty)"
+        echo "replace('Hello World', 'World', 'Azure'): $(replace_result) (expected: Hello Azure)"
+        echo "replace('Hello World', 'xyz', 'abc'): $(replace_notfound) (expected: Hello World)"
+        echo "join(', ', split('red,green,blue', ',')): $(join_result) (tests split & join)"
+        echo "join('-', split('', ',')): $(join_empty)"
+        echo "format('Number: {0}, Text: {1}', 10, 'Hello World'): $(format_result)"
+        echo "format('Value: {0}', 10): $(format_single)"
+      displayName: Test String Functions
+
+  - job: UtilityFunctions
+    displayName: Utility Functions (4)
+
+    steps:
+    - script: |
+        echo "=== Utility Functions - Positive & Negative Cases ==="
+        echo "length('Hello World'): $(length_text) (expected: 11)"
+        echo "length([apple,banana,cherry]): $(length_array) (expected: 3)"
+        echo "convertToJson([apple,banana,cherry]): $(convertToJson_result)"
+      displayName: Test Utility Functions
+
+  - job: ConditionalFunctions
+    displayName: Conditional & Status Functions
+    # Status functions like always(), succeeded(), failed() are used in conditions
+    condition: always()
+
+    steps:
+    - ${{ if eq(parameters.numA, 10) }}:
+      - script: echo "Compile-time if numA is 10"
+        displayName: Compile-time conditional insertion
+
+    - ${{ if ne(parameters.numA, 10) }}:
+      - script: echo "Compile-time if numA is not 10"
+        displayName: Compile-time conditional (should not appear)
+
+    - script: |
+        echo "=== Conditional Functions - Runtime iif() ==="
+        echo "iif(eq(10, 10), 'ten', 'not ten'): $(iif_result_true) (expected: ten)"
+        echo "iif(eq(10, 20), 'twenty', 'not twenty'): $(iif_result_false) (expected: not twenty)"
+        echo ""
+        echo "Note: if/elseif are compile-time directives (see above), not runtime functions"
+        echo "Note: always(), succeeded(), failed() etc. are used in job conditions (see this job's condition)"
+      displayName: Test Conditional Functions
