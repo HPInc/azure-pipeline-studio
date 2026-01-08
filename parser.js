@@ -116,17 +116,12 @@ class AzurePipelineParser {
             return;
         }
 
-        // Preserve quote styles during variable format conversion
         const variableQuoteStyles = new Map();
-
-        // Get the appropriate quote styles map
-        // After expandNode returns, mergedQuoteStyles is available in context
         const quoteStyles = context.mergedQuoteStyles || context.quoteResult?.quoteStyles || new Map();
 
         // Capture quote styles for each variable value before conversion
         Object.entries(doc.variables).forEach(([name, value]) => {
             if (typeof value === 'string') {
-                // Original path: variables.varName
                 const originalKey = this.getQuoteStyleUniqueKey(['variables', name], value);
                 const quoteStyle = quoteStyles.get(originalKey);
                 if (quoteStyle) {
@@ -441,7 +436,6 @@ class AzurePipelineParser {
 
                 const trimmedKey = content.replace(/\s+$/, '');
                 const hadExpression = context.scriptsWithExpressions?.has(trimmedKey);
-                const hasHeredoc = /<<[-]?\s*['"]?(\w+)['"]?/.test(content);
                 if (context.azureCompatible) {
                     value.type = hadExpression ? 'BLOCK_FOLDED' : 'BLOCK_LITERAL';
                 }
@@ -999,7 +993,7 @@ class AzurePipelineParser {
 
                 const singleKeyHandled = this._handleSingleKeyObjectInArray(element, array, index, context, result);
                 if (singleKeyHandled.handled) {
-                    index = singleKeyHandled.nextIndex ?? index;
+                    index = typeof singleKeyHandled.nextIndex === 'number' ? singleKeyHandled.nextIndex : index;
                     continue;
                 }
 
@@ -1164,6 +1158,13 @@ class AzurePipelineParser {
      * Handle a single-key object found inside an array during expansion.
      * Recognizes ${{ each }} and conditional directives and applies them,
      * appending produced items to `result`.
+     *
+     * Note on `nextIndex`: when returned, `nextIndex` is the "last-consumed-index"
+     * within the input `array` (i.e., the final index that was processed as
+     * part of the directive). Callers iterating with a `for` loop should set
+     * the loop index to `nextIndex` (the loop will increment it to continue),
+     * while callers using a `while` loop should advance to `nextIndex + 1`.
+     *
      * @param {any} element - The array element to inspect
      * @param {array} array - The parent array being iterated
      * @param {number} index - Current index within the parent array
@@ -1207,25 +1208,17 @@ class AzurePipelineParser {
                 Object.assign(result, eachResult.merged);
                 index = eachResult.nextIndex;
                 continue;
-            }
-
-            if (this.isConditionalDirective(rawKey)) {
+            } else if (this.isConditionalDirective(rawKey)) {
                 const conditional = this.expandConditionalEntries(entries, index, context);
                 Object.assign(result, conditional.merged);
                 index = conditional.nextIndex;
                 continue;
-            }
-
-            // Handle ${{ insert }} directive to merge object properties
-            if (this.isFullExpression(rawKey.trim())) {
-                const expr = this.stripExpressionDelimiters(rawKey.trim());
-                if (expr.trim() === 'insert') {
-                    const expandedValue = this.expandNodePreservingTemplates(value, context);
-                    if (expandedValue && typeof expandedValue === 'object' && !Array.isArray(expandedValue)) {
-                        Object.assign(result, expandedValue);
-                        continue;
-                    }
+            } else if (this.isInsertDirective(rawKey)) {
+                const expandedValue = this.expandNodePreservingTemplates(value, context);
+                if (expandedValue && typeof expandedValue === 'object' && !Array.isArray(expandedValue)) {
+                    Object.assign(result, expandedValue);
                 }
+                continue;
             }
 
             const key = this.replaceExpressionsInString(rawKey, context);
@@ -1376,6 +1369,20 @@ class AzurePipelineParser {
         return this.replaceExpressionsInString(value, context);
     }
 
+    /**
+     * Expand a sequence of conditional single-key objects (if/elseif/else) in an array.
+     *
+     * Returns an object with `items` (expanded branch items) and `nextIndex` indicating
+     * the last array index that was consumed as part of the conditional chain. Callers
+     * should treat `nextIndex` as "last-consumed-index" and advance to `nextIndex + 1`
+     * when using a while-loop, or set the for-loop index to `nextIndex` (the for-loop
+     * will increment it) when using a for-loop.
+     *
+     * @param {array} array - Parent array containing potential conditional chain
+     * @param {number} startIndex - Index in `array` where the conditional chain may start
+     * @param {object} context - Expansion context
+     * @returns {{items: array, nextIndex: number}}
+     */
     expandConditionalBlock(array, startIndex, context) {
         let index = startIndex;
         let branchTaken = false;
@@ -1411,6 +1418,11 @@ class AzurePipelineParser {
         return { items, nextIndex: index - 1 };
     }
 
+    /**
+     * Expand a sequence of conditional mapping entries (if/elseif/else) within an object's
+     * entries array. Returns `{ merged, nextIndex }` where `nextIndex` is the last
+     * entry index consumed by the conditional chain ("last-consumed-index").
+     */
     expandConditionalEntries(entries, startIndex, context) {
         let index = startIndex;
         let branchTaken = false;
@@ -1450,6 +1462,11 @@ class AzurePipelineParser {
         return scalar === undefined ? {} : { value: scalar };
     }
 
+    /**
+     * Expand a sequence of `each` mapping entries starting at `startIndex`.
+     * Returns `{ merged, nextIndex }` where `nextIndex` is the last entry index
+     * consumed by the expansion ("last-consumed-index").
+     */
     expandEachEntries(entries, startIndex, context) {
         let index = startIndex;
         const merged = {};
@@ -1561,6 +1578,13 @@ class AzurePipelineParser {
         return scalar === undefined ? [] : [scalar];
     }
 
+    /**
+     * Apply a single `each` directive (directive string + body) and return expanded
+     * items. This helper operates on a single directive and therefore does not
+     * return a `nextIndex` — callers should advance by one index after using it.
+     *
+     * @returns {{items: array}}
+     */
     applyEachDirective(directive, body, context) {
         const loop = this.parseEachDirective(directive);
         if (!loop) {
@@ -1912,26 +1936,18 @@ class AzurePipelineParser {
 
     // Job status check functions
     isCanceled(args) {
-        // In a real pipeline context, this would check if the pipeline was canceled
-        // For parsing/expansion purposes, we'll return false
         return false;
     }
 
     isFailed(args) {
-        // In a real pipeline context, this would check job dependencies
-        // For parsing/expansion purposes, we'll return false
         return false;
     }
 
     isSucceeded(args) {
-        // In a real pipeline context, this would check job dependencies
-        // For parsing/expansion purposes, we'll return true
         return true;
     }
 
     isSucceededOrFailed(args) {
-        // In a real pipeline context, this would check job dependencies
-        // For parsing/expansion purposes, we'll return true
         return true;
     }
 
@@ -2748,58 +2764,10 @@ class AzurePipelineParser {
                 }
 
                 if (typeof item === 'object' && item !== null && !Array.isArray(item)) {
-                    const entries = Object.entries(item);
-
-                    // Handle if/elseif/else conditional chains
-                    if (entries.length > 0 && this.isConditionalDirective(entries[0][0])) {
-                        let branchTaken = false;
-                        let j = i;
-
-                        while (j < node.length) {
-                            const chainItem = node[j];
-                            if (typeof chainItem !== 'object' || chainItem === null || Array.isArray(chainItem)) break;
-
-                            const chainEntries = Object.entries(chainItem);
-                            if (chainEntries.length !== 1) break;
-
-                            const [condKey, condBody] = chainEntries[0];
-                            if (!this.isConditionalDirective(condKey)) break;
-
-                            const shouldExecute =
-                                !branchTaken &&
-                                (this.isElseDirective(condKey) ||
-                                    this.toBoolean(
-                                        this.evaluateExpression(
-                                            this.isIfDirective(condKey)
-                                                ? this.parseIfCondition(condKey)
-                                                : this.parseElseIfCondition(condKey),
-                                            context
-                                        )
-                                    ));
-
-                            if (shouldExecute) {
-                                pushExpanded(result, this.expandNodePreservingTemplates(condBody, context));
-                                branchTaken = true;
-                            }
-
-                            j++;
-                            if (this.isElseDirective(condKey)) break;
-                        }
-                        i = j;
+                    const handled = this._handleSingleKeyObjectInArray(item, node, i, context, result);
+                    if (handled && handled.handled) {
+                        i = handled.nextIndex !== undefined ? handled.nextIndex + 1 : i + 1;
                         continue;
-                    }
-
-                    // Handle ${{ insert }} directive
-                    if (entries.length === 1) {
-                        const [key, value] = entries[0];
-                        if (typeof key === 'string' && this.isFullExpression(key.trim())) {
-                            const expr = this.stripExpressionDelimiters(key.trim()).trim();
-                            if (expr === 'insert') {
-                                pushExpanded(result, this.expandNodePreservingTemplates(value, context));
-                                i++;
-                                continue;
-                            }
-                        }
                     }
                 }
 
@@ -2862,16 +2830,13 @@ class AzurePipelineParser {
                 }
 
                 // Handle ${{ insert }} directive
-                if (typeof key === 'string' && this.isFullExpression(key.trim())) {
-                    const expr = this.stripExpressionDelimiters(key.trim());
-                    if (expr.trim() === 'insert') {
-                        const expandedValue = this.expandNodePreservingTemplates(value, context);
-                        if (expandedValue && typeof expandedValue === 'object' && !Array.isArray(expandedValue)) {
-                            Object.assign(result, expandedValue);
-                        }
-                        i++;
-                        continue;
+                if (this.isInsertDirective(key)) {
+                    const expandedValue = this.expandNodePreservingTemplates(value, context);
+                    if (expandedValue && typeof expandedValue === 'object' && !Array.isArray(expandedValue)) {
+                        Object.assign(result, expandedValue);
                     }
+                    i++;
+                    continue;
                 }
 
                 const expandedKey = typeof key === 'string' ? this.replaceExpressionsInString(key, context) : key;
@@ -2961,10 +2926,12 @@ class AzurePipelineParser {
     }
 
     isFullExpression(text) {
-        if (typeof text !== 'string' || !text.startsWith('${{') || !text.endsWith('}}')) {
+        if (typeof text !== 'string') return false;
+        const trimmed = text.trim();
+        if (!trimmed.startsWith('${{') || !trimmed.endsWith('}}')) {
             return false;
         }
-        const withoutOuter = text.slice(3, -2);
+        const withoutOuter = trimmed.slice(3, -2);
         return !withoutOuter.includes('}}');
     }
 
@@ -2972,14 +2939,23 @@ class AzurePipelineParser {
         if (typeof expr !== 'string') {
             return '';
         }
-        return expr
+        const trimmed = expr.trim();
+        return trimmed
             .replace(/^\$\{\{/, '')
             .replace(/\}\}$/, '')
             .trim();
     }
 
+    isInsertDirective(text) {
+        const trimmed = text.trim();
+        if (this.isFullExpression(trimmed)) {
+            return typeof text === 'string' && /^\$\{\{\s*insert\s*\}\}$/.test(trimmed);
+        }
+        return false;
+    }
+
     isEachDirective(text) {
-        return typeof text === 'string' && /^\$\{\{\s*each\s+/.test(text);
+        return typeof text === 'string' && /^\$\{\{\s*each\s+/.test(text.trim());
     }
 
     isConditionalDirective(text) {
@@ -2987,22 +2963,23 @@ class AzurePipelineParser {
     }
 
     isIfDirective(text) {
-        return typeof text === 'string' && /^\$\{\{\s*if\s+/.test(text);
+        return typeof text === 'string' && /^\$\{\{\s*if\s+/.test(text.trim());
     }
 
     isElseIfDirective(text) {
-        return typeof text === 'string' && /^\$\{\{\s*elseif\s+/.test(text);
+        return typeof text === 'string' && /^\$\{\{\s*elseif\s+/.test(text.trim());
     }
 
     isElseDirective(text) {
-        return typeof text === 'string' && /^\$\{\{\s*else\s*\}\}$/.test(text);
+        return typeof text === 'string' && /^\$\{\{\s*else\s*\}\}$/.test(text.trim());
     }
 
     parseIfCondition(text) {
         if (typeof text !== 'string') {
             return '';
         }
-        const match = text.match(/^\$\{\{\s*if\s+(.+?)\s*\}\}$/);
+        const t = text.trim();
+        const match = t.match(/^\$\{\{\s*if\s+(.+?)\s*\}\}$/);
         return match ? match[1] : '';
     }
 
@@ -3010,7 +2987,8 @@ class AzurePipelineParser {
         if (typeof text !== 'string') {
             return '';
         }
-        const match = text.match(/^\$\{\{\s*elseif\s+(.+?)\s*\}\}$/);
+        const t = text.trim();
+        const match = t.match(/^\$\{\{\s*elseif\s+(.+?)\s*\}\}$/);
         return match ? match[1] : '';
     }
 
@@ -3018,7 +2996,8 @@ class AzurePipelineParser {
         if (typeof text !== 'string') {
             return undefined;
         }
-        const match = text.match(/^\$\{\{\s*each\s+([a-zA-Z_]\w*)\s+in\s+(.+?)\s*\}\}$/);
+        const t = text.trim();
+        const match = t.match(/^\$\{\{\s*each\s+([a-zA-Z_]\w*)\s+in\s+(.+?)\s*\}\}$/);
         if (!match) {
             return undefined;
         }
