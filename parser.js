@@ -119,7 +119,7 @@ class AzurePipelineParser {
         }
 
         const variableQuoteStyles = new Map();
-        const quoteStyles = context.mergedQuoteStyles || context.quoteResult?.quoteStyles || new Map();
+        const quoteStyles = this._getQuoteStylesMap(context);
 
         // Capture quote styles for each variable value before conversion
         Object.entries(doc.variables).forEach(([name, value]) => {
@@ -151,8 +151,6 @@ class AzurePipelineParser {
                 quoteStyles.set(newKey, preserved.quoteStyle);
             }
         });
-
-        context.mergedQuoteStyles = quoteStyles;
     }
 
     /**
@@ -212,7 +210,7 @@ class AzurePipelineParser {
      * @param {string} identifier - Identifier from ancestor
      */
     restoreQuoteStyles(node, path, context = {}) {
-        const quoteStyles = context.mergedQuoteStyles || new Map();
+        const quoteStyles = this._getQuoteStylesMap(context);
         const stringsWithExpressions = context.stringsWithExpressions || new Set();
 
         // Delegate to the generic traversal with a handler that applies stored styles
@@ -507,7 +505,7 @@ class AzurePipelineParser {
     }
 
     buildExecutionContext(document, overrides) {
-        const parameters = this.extractParameters(document);
+        const { parameters, parameterMap } = this.extractParameters(document);
         const variables = this.extractVariables(document);
         const resources = this.normalizeResourcesConfig(
             document && typeof document === 'object' ? document.resources : undefined
@@ -525,6 +523,7 @@ class AzurePipelineParser {
 
         return {
             parameters: { ...parameters, ...overrideParameters },
+            parameterMap: { ...parameterMap },
             variables: { ...variables, ...overrideVariables },
             resources: mergedResources,
             locals: { ...locals },
@@ -536,7 +535,6 @@ class AzurePipelineParser {
             scriptsWithExpressions: new Set(), // Track scripts that had ${{}} before expansion
             scriptsWithLastLineExpressions: new Set(), // Track scripts that had ${{}} on last line before expansion
             stringsWithExpressions: new Set(), // Track path-based keys for strings that had ${{}} expressions
-            mergedQuoteStyles: overrides.mergedQuoteStyles || new Map(), // Quote styles map for preserving quotes through expansion
         };
     }
 
@@ -716,7 +714,7 @@ class AzurePipelineParser {
     }
 
     extractParameters(document) {
-        const result = {};
+        const result = { parameters: {}, parameterMap: {} };
         if (!document || typeof document !== 'object') {
             return result;
         }
@@ -729,18 +727,20 @@ class AzurePipelineParser {
         if (Array.isArray(parameters)) {
             for (const param of parameters) {
                 if (param && typeof param === 'object' && param.name) {
-                    const value = this.pickFirstDefined(param.value, param.default, param.values);
-                    result[param.name] = value !== undefined ? value : null;
+                    const value = param.default;
+                    result.parameters[param.name] = value !== undefined ? value : null;
+                    result.parameterMap[`parameters.${param.name}`] = `parameters.${parameters.indexOf(param)}.default`;
                 }
             }
         } else if (typeof parameters === 'object') {
             for (const [name, param] of Object.entries(parameters)) {
                 if (param && typeof param === 'object') {
-                    const value = this.pickFirstDefined(param.value, param.default, param.values);
-                    result[name] = value !== undefined ? value : null;
+                    const value = param.default;
+                    result.parameters[name] = value !== undefined ? value : null;
                 } else {
-                    result[name] = param;
+                    result.parameters[name] = param;
                 }
+                result.parameterMap[`parameters.${name}`] = `parameters.${name}`;
             }
         }
 
@@ -963,25 +963,10 @@ class AzurePipelineParser {
             expanded.__scriptsWithExpressions = context.scriptsWithExpressions || new Set();
             expanded.__scriptsWithLastLineExpressions = context.scriptsWithLastLineExpressions || new Set();
 
-            // Save merged quote styles using quoteResult
-            let mergedQuoteStyles = context.mergedQuoteStyles || new Map();
+            // Save quote styles using quoteResult
             const quoteResult = context.quoteResult;
             if (quoteResult && typeof quoteResult.save === 'function') {
-                const maybeMap = quoteResult.save(expanded, context);
-                if (maybeMap && maybeMap instanceof Map) {
-                    // Merge saved styles with any updates made during expansion
-                    for (const [key, value] of maybeMap.entries()) {
-                        if (!mergedQuoteStyles.has(key)) {
-                            mergedQuoteStyles.set(key, value);
-                        }
-                    }
-                } else if (expanded.__quoteStyles && expanded.__quoteStyles instanceof Map) {
-                    for (const [key, value] of expanded.__quoteStyles.entries()) {
-                        if (!mergedQuoteStyles.has(key)) {
-                            mergedQuoteStyles.set(key, value);
-                        }
-                    }
-                }
+                quoteResult.save(expanded, context);
             }
 
             // Extract and clean up all metadata from expanded document
@@ -990,9 +975,6 @@ class AzurePipelineParser {
             context.scriptsWithLastLineExpressions = expanded.__scriptsWithLastLineExpressions || new Set();
             delete expanded.__scriptsWithLastLineExpressions;
             if (expanded.__quoteStyles) delete expanded.__quoteStyles;
-
-            // Store merged quote styles in context for expandPipeline to use
-            context.mergedQuoteStyles = mergedQuoteStyles;
         }
 
         return expanded;
@@ -1021,7 +1003,7 @@ class AzurePipelineParser {
                     continue;
                 }
 
-                const expanded = this.expandNode(element, context);
+                const expanded = this.expandNode(element, context, parentKey);
                 if (expanded === undefined) continue;
 
                 // Handle array expansion - check items for template references
@@ -1109,7 +1091,7 @@ class AzurePipelineParser {
      * @returns {Map} Quote styles map
      */
     _getQuoteStylesMap(context) {
-        return context.mergedQuoteStyles || context.quoteResult?.quoteStyles || new Map();
+        return context.quoteResult?.quoteStyles || new Map();
     }
 
     /**
@@ -1151,28 +1133,48 @@ class AzurePipelineParser {
         if (!context.expansionPath || typeof expandedValue !== 'string') return;
 
         const quoteStyles = this._getQuoteStylesMap(context);
-        const uniqueKey = this.getQuoteStyleUniqueKey(context.expansionPath, expandedValue);
+        const expansionPathKey = this.getQuoteStyleUniqueKey(context.expansionPath, expandedValue);
 
         // Handle mixed expressions (not full expressions)
         if (isMixedExpression && !this.isMultilineString(expandedValue)) {
             if (expandedValue.includes(':')) {
-                quoteStyles.set(uniqueKey, 'QUOTE_SINGLE');
+                quoteStyles.set(expansionPathKey, 'QUOTE_SINGLE');
             } else {
                 if (!context.stringsWithExpressions) {
                     context.stringsWithExpressions = new Set();
                 }
-                context.stringsWithExpressions.add(uniqueKey);
+                context.stringsWithExpressions.add(expansionPathKey);
             }
             return;
         }
 
         // Handle full expressions that expanded
         if (isSingleLineFullExpression && expandedValue !== originalValue) {
-            const originalKey = this.getQuoteStyleUniqueKey(context.expansionPath, originalValue);
-            const originalQuoteStyle = quoteStyles.get(originalKey);
+            let parameterPath = context.expansionPath;
+            let quoteStyle = null;
 
-            if (originalQuoteStyle) {
-                quoteStyles.set(uniqueKey, expandedValue.includes(':') ? 'QUOTE_SINGLE' : originalQuoteStyle);
+            if (this.isParameter(originalValue)) {
+                const param = this.stripExpressionDelimiters(originalValue);
+                if (context.parameterMap[param]) {
+                    parameterPath = context.parameterMap[param].split('.');
+                }
+                const parameterKey = this.getQuoteStyleUniqueKey(parameterPath, expandedValue);
+                quoteStyle = quoteStyles.get(parameterKey);
+                let variablePath = context.expansionPath;
+                if (context.expansionPath.length >= 3 && context.expansionPath[2] === 'variables') {
+                    variablePath = context.expansionPath.filter((_, i) => i !== 2);
+                }
+                const variableKey = this.getQuoteStyleUniqueKey(variablePath, expandedValue);
+                if (quoteStyle) {
+                    quoteStyles.set(variableKey, quoteStyle);
+                }
+            } else {
+                // Look up quote style using the original expression, not the expanded value
+                const originalKey = this.getQuoteStyleUniqueKey(context.expansionPath, originalValue);
+                const quoteStyle = quoteStyles.get(originalKey);
+                if (quoteStyle) {
+                    quoteStyles.set(expansionPathKey, expandedValue.includes(':') ? 'QUOTE_SINGLE' : quoteStyle);
+                }
             }
         }
     }
@@ -2087,6 +2089,7 @@ class AzurePipelineParser {
     createChildContext(parent, locals) {
         return {
             parameters: parent.parameters,
+            parameterMap: parent.parameterMap,
             variables: parent.variables,
             resources: parent.resources,
             locals: { ...parent.locals, ...locals },
@@ -2103,6 +2106,7 @@ class AzurePipelineParser {
     createTemplateContext(parent, parameterOverrides, baseDir, options = {}) {
         return {
             parameters: { ...parent.parameters, ...parameterOverrides },
+            parameterMap: { ...parent.parameterMap },
             variables: { ...parent.variables }, // Preserve variables from parent context (includes overrides)
             resources: parent.resources,
             locals: { ...parent.locals },
@@ -2114,6 +2118,9 @@ class AzurePipelineParser {
             templateQuoteStyles: parent.templateQuoteStyles, // Preserve template quote styles map
             scriptsWithExpressions: parent.scriptsWithExpressions, // Preserve scripts tracking
             scriptsWithLastLineExpressions: parent.scriptsWithLastLineExpressions, // Preserve last line tracking
+            expansionPath: parent.expansionPath || [], // Preserve expansion path for quote tracking
+            stringsWithExpressions: parent.stringsWithExpressions, // Preserve strings with expressions tracking
+            quoteResult: parent.quoteResult, // Preserve quote result for quote tracking
         };
     }
 
@@ -2224,6 +2231,16 @@ class AzurePipelineParser {
             // Register template quote styles so captureQuoteStyles.save() can merge them later
             if (templateQuoteStyles.size > 0) {
                 context.templateQuoteStyles.set(resolvedPath, templateQuoteStyles);
+
+                // Merge template quote styles into current context immediately
+                // so they're available during expansion
+                if (context.quoteResult && context.quoteResult.quoteStyles) {
+                    for (const [key, style] of templateQuoteStyles.entries()) {
+                        if (!context.quoteResult.quoteStyles.has(key)) {
+                            context.quoteResult.quoteStyles.set(key, style);
+                        }
+                    }
+                }
             }
 
             templateDocument = yamlDoc.toJSON() || {};
@@ -2231,7 +2248,8 @@ class AzurePipelineParser {
             throw new Error(`Failed to parse template '${templatePathValue}': ${error.message}`);
         }
 
-        const defaultParameters = this.extractParameters(templateDocument);
+        const { parameters: defaultParameters, parameterMap: defaultParameterMap } =
+            this.extractParameters(templateDocument);
         const providedParameters = this.normalizeTemplateParameters(node.parameters, context);
 
         const templateDisplayPath = repositoryRef
@@ -2241,6 +2259,7 @@ class AzurePipelineParser {
         const updatedContext = {
             ...context,
             templateStack: [...(context.templateStack || []), templateDisplayPath],
+            parameterMap: { ...context.parameterMap, ...defaultParameterMap }, // Merge template's parameterMap
         };
 
         this.validateTemplateParameters(templateDocument, providedParameters, templatePathValue, updatedContext);
@@ -2252,7 +2271,31 @@ class AzurePipelineParser {
         });
 
         const expandedTemplate = this.expandNode(templateDocument, templateContext) || {};
+
+        console.log(
+            '[DEBUG] expandedTemplate.variables type:',
+            typeof expandedTemplate.variables,
+            'isArray:',
+            Array.isArray(expandedTemplate.variables)
+        );
+        console.log('[DEBUG] expandedTemplate.variables:', JSON.stringify(expandedTemplate.variables, null, 2));
+
+        // Convert template variables to array format before extracting body
+        this.convertVariablesToArrayFormat(expandedTemplate, templateContext);
+
         const body = this.extractTemplateBody(expandedTemplate);
+
+        // If the body is a variables array, normalize any remaining shorthand formats
+        if (Array.isArray(body) && body.length > 0 && this.isVariableArray(body)) {
+            const normalized = this.normalizeVariableArray(body, templateContext);
+            console.log('[DEBUG] Normalized template variables:', JSON.stringify(normalized, null, 2));
+            console.log(
+                '[DEBUG] Quote styles after normalization:',
+                Array.from(templateContext.quoteResult?.quoteStyles.entries() || [])
+            );
+            return normalized;
+        }
+
         return body;
     }
 
@@ -2636,6 +2679,79 @@ class AzurePipelineParser {
         return Object.keys(sanitized).length > 0 ? [sanitized] : [];
     }
 
+    /**
+     * Check if an array looks like a variables array.
+     * @param {array} arr - Array to check
+     * @returns {boolean}
+     */
+    isVariableArray(arr) {
+        if (!Array.isArray(arr) || arr.length === 0) return false;
+        // Check if items look like variable definitions
+        return arr.some(
+            (item) =>
+                item &&
+                typeof item === 'object' &&
+                !Array.isArray(item) &&
+                (('name' in item && ('value' in item || 'default' in item)) ||
+                    (Object.keys(item).length === 1 && !('template' in item)))
+        );
+    }
+
+    /**
+     * Normalize a variable array, converting any shorthand formats to full format.
+     * @param {array} variables - Variable array to normalize
+     * @param {object} context - Expansion context for quote tracking
+     * @returns {array} Normalized array
+     */
+    normalizeVariableArray(variables, context) {
+        const quoteStyles = context?.quoteResult?.quoteStyles;
+
+        return variables.map((item, index) => {
+            console.log(`[DEBUG normalizeVariableArray] Processing item ${index}:`, JSON.stringify(item));
+
+            if (!item || typeof item !== 'object' || Array.isArray(item)) {
+                return item;
+            }
+
+            // Already in array format
+            if ('name' in item && ('value' in item || 'default' in item)) {
+                console.log(`[DEBUG normalizeVariableArray] Item ${index} already in array format`);
+                return item;
+            }
+
+            // Template reference - don't convert
+            if ('template' in item) {
+                return item;
+            }
+
+            // Object format (shorthand) - convert to array format
+            // { varName: value } => { name: 'varName', value: value }
+            const entries = Object.entries(item);
+            if (entries.length === 1) {
+                const [name, value] = entries[0];
+
+                // Transfer quote style from old path to new path
+                if (quoteStyles && typeof value === 'string') {
+                    // Before conversion: variables.0.varName:value
+                    // After conversion: variables.0.value:value
+                    const oldKey = this.getQuoteStyleUniqueKey(['variables', index, name], value);
+                    const quoteStyle = quoteStyles.get(oldKey);
+                    console.log(`[DEBUG normalizeVariableArray] index=${index}, name=${name}, value='${value}'`);
+                    console.log(`[DEBUG normalizeVariableArray] oldKey=${oldKey}, quoteStyle=${quoteStyle}`);
+                    if (quoteStyle) {
+                        const newKey = this.getQuoteStyleUniqueKey(['variables', index, 'value'], value);
+                        console.log(`[DEBUG normalizeVariableArray] Setting newKey=${newKey} to ${quoteStyle}`);
+                        quoteStyles.set(newKey, quoteStyle);
+                    }
+                }
+
+                return { name, value };
+            }
+
+            return item;
+        });
+    }
+
     /** Evaluates a conditional directive key and returns true if the branch should execute. */
     evaluateConditional(condKey, context) {
         if (this.isElseDirective(condKey)) {
@@ -2694,6 +2810,14 @@ class AzurePipelineParser {
 
     isElseDirective(text) {
         return typeof text === 'string' && /^\$\{\{\s*else\s*\}\}$/.test(text.trim());
+    }
+
+    isParameter(text) {
+        return typeof text === 'string' && /^\$\{\{\s*parameters\./.test(text.trim());
+    }
+
+    isVariable(text) {
+        return typeof text === 'string' && /^\$\{\{\s*variables\./.test(text.trim());
     }
 
     parseIfCondition(text) {
