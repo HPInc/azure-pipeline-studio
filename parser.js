@@ -313,7 +313,6 @@ class AzurePipelineParser {
         if (!node) return;
 
         if (node.items && node.constructor.name === 'YAMLMap') {
-            const currentID = this.getContextIdentifier(node, '');
             for (const pair of node.items) {
                 const keyNode = pair.key;
                 if (!keyNode || !keyNode.value) continue;
@@ -321,7 +320,7 @@ class AzurePipelineParser {
                 path.push(keyNode.value);
                 //console.log(`Visiting path: ${path.join('.')}`);
                 try {
-                    handler(pair, path, currentID, quoteStyles);
+                    handler(pair, path, quoteStyles);
                 } catch (err) {
                     // Handler should not break traversal; swallow errors
                 }
@@ -343,14 +342,13 @@ class AzurePipelineParser {
     /**
      * Build a generic handler for YAML mapping pairs that invokes an injected
      * helper (e.g. `setQuoteStyle` or `getQuoteStyle`).
-     * @param {string} handlerKey - name of helper on `helpers` object
-     * @param {function} fallback - fallback function bound to `this`
+     * @param {function} func - helper function to invoke (e.g. setQuoteStyle or getQuoteStyle)
      * @param {object} options - { post: function }
-     * @returns {function} handler(pair, pathArr, currentID, quoteStyles, helpers)
+     * @returns {function} handler(pair, pathArr, qStyles)
      */
     buildQuoteHandler(func, options = {}) {
         const { post: postFunc = null } = options;
-        return (pair, pathArr, currentID, qStyles) => {
+        return (pair, pathArr, qStyles) => {
             const keyNode = pair.key;
             const valueNode = pair.value;
             if (!keyNode || !keyNode.value || !valueNode || typeof valueNode.value !== 'string') {
@@ -366,36 +364,6 @@ class AzurePipelineParser {
                 }
             }
         };
-    }
-
-    /**
-     * Extract a context identifier from a YAMLMap node.
-     * Priority: `name` > `displayName` > `task` > fallback value
-     * @param {object} node - YAMLMap node
-     * @param {string} fallback - Fallback context value
-     * @returns {string} context identifier
-     */
-    getContextIdentifier(node, fallback = '') {
-        if (!node || !node.items || node.constructor.name !== 'YAMLMap') {
-            return fallback;
-        }
-
-        let name = '';
-        let displayName = '';
-        let task = '';
-        for (const pair of node.items) {
-            if (pair.key && pair.value && typeof pair.value.value === 'string') {
-                const keyName = pair.key.value;
-                if (keyName === 'name') {
-                    name = pair.value.value;
-                    break;
-                }
-                if (keyName === 'displayName') displayName = pair.value.value;
-                if (keyName === 'task') task = pair.value.value;
-            }
-        }
-
-        return name || displayName || task || fallback;
     }
 
     /**
@@ -1035,6 +1003,11 @@ class AzurePipelineParser {
     _expandTemplateReferenceToResult(element, context, result, isVarArray) {
         const templateItems = this.expandTemplateReference(element, context);
         if (Array.isArray(templateItems) && templateItems.length) {
+            // Update quote style paths for template items being inserted
+            if (isVarArray && context.expansionPath && context.quoteResult) {
+                this._updateTemplateQuoteStylePaths(templateItems, context, result.length);
+            }
+
             result.push(...templateItems);
 
             if (isVarArray) {
@@ -1049,6 +1022,46 @@ class AzurePipelineParser {
                 }
             }
         }
+    }
+
+    /**
+     * Update quote style paths for template items being inserted into the document.
+     * Template items are tracked with template-relative paths (e.g., variables.0.value),
+     * but need to be looked up with document paths (e.g., stages.0.jobs.0.variables.0.value).
+     * @param {array} templateItems - Array of items from template expansion
+     * @param {object} context - Expansion context with expansionPath and quoteResult
+     * @param {number} insertIndex - Index in result array where items will be inserted
+     */
+    _updateTemplateQuoteStylePaths(templateItems, context, insertIndex) {
+        const quoteStyles = context.quoteResult?.quoteStyles;
+        if (!quoteStyles) return;
+
+        // The current expansionPath points to the template reference position
+        // Template items replace that position, so we use the same array index
+        const basePath = context.expansionPath.slice(0, -1); // Remove the last index (template ref position)
+        const startIndex = context.expansionPath[context.expansionPath.length - 1]; // Get template ref index
+
+        // Process each template item and update its quote style paths
+        templateItems.forEach((item, itemIndex) => {
+            if (!item || typeof item !== 'object' || Array.isArray(item)) return;
+
+            // Check all string fields in the item
+            Object.entries(item).forEach(([fieldName, fieldValue]) => {
+                if (typeof fieldValue !== 'string') return;
+
+                // Template path: variables.0.fieldName:content
+                const templateKey = `variables.${itemIndex}.${fieldName}:${fieldValue}`;
+                const quoteStyle = quoteStyles.get(templateKey);
+
+                if (quoteStyle) {
+                    // Document path: stages.0.jobs.0.variables.0.fieldName:content
+                    // Use startIndex + itemIndex to account for multiple template items
+                    const documentPath = [...basePath, startIndex + itemIndex, fieldName];
+                    const documentKey = this.getQuoteStyleUniqueKey(documentPath, fieldValue);
+                    quoteStyles.set(documentKey, quoteStyle);
+                }
+            });
+        });
     }
 
     /**
@@ -1150,31 +1163,38 @@ class AzurePipelineParser {
 
         // Handle full expressions that expanded
         if (isSingleLineFullExpression && expandedValue !== originalValue) {
-            let parameterPath = context.expansionPath;
-            let quoteStyle = null;
+            // First, try to look up quote style using the original expression
+            const originalKey = this.getQuoteStyleUniqueKey(context.expansionPath, originalValue);
+            let quoteStyle = quoteStyles.get(originalKey);
 
-            if (this.isParameter(originalValue)) {
+            // If not found and it's a parameter, try the parameter's definition path
+            if (!quoteStyle && this.isParameter(originalValue)) {
                 const param = this.stripExpressionDelimiters(originalValue);
+                let parameterPath = context.expansionPath;
                 if (context.parameterMap[param]) {
                     parameterPath = context.parameterMap[param].split('.');
                 }
                 const parameterKey = this.getQuoteStyleUniqueKey(parameterPath, expandedValue);
                 quoteStyle = quoteStyles.get(parameterKey);
-                let variablePath = context.expansionPath;
+            }
+
+            // Apply the quote style to the expanded value
+            if (quoteStyle) {
+                quoteStyles.set(expansionPathKey, expandedValue.includes(':') ? 'QUOTE_SINGLE' : quoteStyle);
+
+                // Also set for variable path if applicable
                 if (context.expansionPath.length >= 3 && context.expansionPath[2] === 'variables') {
-                    variablePath = context.expansionPath.filter((_, i) => i !== 2);
-                }
-                const variableKey = this.getQuoteStyleUniqueKey(variablePath, expandedValue);
-                if (quoteStyle) {
+                    const variablePath = context.expansionPath.filter((_, i) => i !== 2);
+                    const variableKey = this.getQuoteStyleUniqueKey(variablePath, expandedValue);
                     quoteStyles.set(variableKey, quoteStyle);
                 }
-            } else {
-                // Look up quote style using the original expression, not the expanded value
-                const originalKey = this.getQuoteStyleUniqueKey(context.expansionPath, originalValue);
-                const quoteStyle = quoteStyles.get(originalKey);
-                if (quoteStyle) {
-                    quoteStyles.set(expansionPathKey, expandedValue.includes(':') ? 'QUOTE_SINGLE' : quoteStyle);
-                }
+            }
+        } else {
+            // Using variables from variable template yaml expansion inside jobs/stages
+            const variablePath = expansionPathKey.replace(/^stages\.\d+\.jobs\.\d+\.variables\.\d+\./, '');
+            const quoteStyle = quoteStyles.get(variablePath);
+            if (quoteStyle) {
+                quoteStyles.set(expansionPathKey, quoteStyle);
             }
         }
     }
@@ -1461,7 +1481,11 @@ class AzurePipelineParser {
             }, {});
         }
 
-        if (body && typeof body === 'object') return this.expandObject(body, context);
+        if (body && typeof body === 'object') {
+            // Expand the object body directly, preserving context including expansionPath
+            const expanded = this.expandObject(body, context);
+            return expanded;
+        }
 
         const scalar = this.expandScalar(body, context);
         return scalar === undefined ? {} : { value: scalar };
@@ -2118,7 +2142,7 @@ class AzurePipelineParser {
             templateQuoteStyles: parent.templateQuoteStyles, // Preserve template quote styles map
             scriptsWithExpressions: parent.scriptsWithExpressions, // Preserve scripts tracking
             scriptsWithLastLineExpressions: parent.scriptsWithLastLineExpressions, // Preserve last line tracking
-            expansionPath: parent.expansionPath || [], // Preserve expansion path for quote tracking
+            expansionPath: [], // Reset expansion path for templates (template content is tracked separately)
             stringsWithExpressions: parent.stringsWithExpressions, // Preserve strings with expressions tracking
             quoteResult: parent.quoteResult, // Preserve quote result for quote tracking
         };
