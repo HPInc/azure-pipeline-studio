@@ -215,12 +215,15 @@ class AzurePipelineParser {
 
         // Delegate to the generic traversal with a handler that applies stored styles
         const handler = this.buildQuoteHandler(this.getQuoteStyle.bind(this), {
-            post: (quoteStyle, valueNode) => {
+            post: (quoteStyle, valueNode, pathArr) => {
                 if (valueNode?.value !== undefined && typeof valueNode.value === 'string') {
                     // Skip restoring quotes for strings that had MIXED template expressions
                     // Check using path-based unique key (stored during expansion)
-                    const uniqueKey = this.getQuoteStyleUniqueKey(path, valueNode.value);
+                    const uniqueKey = this.getQuoteStyleUniqueKey(pathArr, valueNode.value);
                     if (stringsWithExpressions.has(uniqueKey)) {
+                        valueNode.type = 'PLAIN';
+                    } else if (/\$\([^)]+\)/.test(valueNode.value)) {
+                        // Remove quotes for runtime variables like $(Agent.OS), $(Build.Reason), etc.
                         valueNode.type = 'PLAIN';
                     } else if (quoteStyle) {
                         // If value contains colon, normalize to single quotes (Azure behavior)
@@ -358,7 +361,7 @@ class AzurePipelineParser {
             const quoteStyle = func(pathArr, keyNode, valueNode, qStyles);
             if (typeof postFunc === 'function') {
                 try {
-                    postFunc(quoteStyle, valueNode);
+                    postFunc(quoteStyle, valueNode, pathArr);
                 } catch (err) {
                     // swallow post errors
                 }
@@ -503,6 +506,9 @@ class AzurePipelineParser {
             scriptsWithExpressions: new Set(), // Track scripts that had ${{}} before expansion
             scriptsWithLastLineExpressions: new Set(), // Track scripts that had ${{}} on last line before expansion
             stringsWithExpressions: new Set(), // Track path-based keys for strings that had ${{}} expressions
+            stageIndex: -1, // Track current stage index during expansion
+            jobIndex: -1, // Track current job index during expansion
+            stepIndex: -1, // Track current step index during expansion
         };
     }
 
@@ -955,17 +961,39 @@ class AzurePipelineParser {
         for (let index = 0; index < array.length; index += 1) {
             const element = array[index];
 
-            if (context.expansionPath) {
-                context.expansionPath.push(index);
+            if (!element) continue;
+
+            // Check if this is a template reference first
+            const isTemplate = this.isTemplateReference(element);
+
+            // Check if this is a directive block (conditional or each) that should not push to path
+            const isDirective =
+                this.isSingleKeyObject(element) &&
+                (this.isConditionalDirective(Object.keys(element)[0]) || this.isEachDirective(Object.keys(element)[0]));
+
+            // Track stage/job indices for direct (non-template, non-directive) stages/jobs
+            const expansionIndex =
+                isDirective || isTemplate ? index : this._trackIndicesForItems(element, parentKey, context, index);
+
+            // Don't push directive blocks to expansionPath
+            if (context.expansionPath && !isDirective) {
+                context.expansionPath.push(expansionIndex);
             }
 
             try {
-                if (this.isTemplateReference(element)) {
-                    this._expandTemplateReferenceToResult(element, context, result, isVarArray);
+                if (isTemplate) {
+                    this._expandTemplateReferenceToResult(element, context, result, parentKey);
                     continue;
                 }
 
-                const singleKeyHandled = this._handleSingleKeyObjectInArray(element, array, index, context, result);
+                const singleKeyHandled = this._handleSingleKeyObjectInArray(
+                    element,
+                    array,
+                    index,
+                    context,
+                    result,
+                    parentKey
+                );
                 if (singleKeyHandled.handled) {
                     index = typeof singleKeyHandled.nextIndex === 'number' ? singleKeyHandled.nextIndex : index;
                     continue;
@@ -974,15 +1002,11 @@ class AzurePipelineParser {
                 const expanded = this.expandNode(element, context, parentKey);
                 if (expanded === undefined) continue;
 
-                // Handle array expansion - check items for template references
-                if (Array.isArray(expanded)) {
-                    this._expandAndAppendArrayItems(expanded, context, result, isVarArray);
-                } else {
-                    result.push(expanded);
-                    this._updateVariableContext(expanded, isVarArray, context);
-                }
+                // Handle array expansion - normalize to array and process items
+                const items = Array.isArray(expanded) ? expanded : [expanded];
+                this._expandAndAppendArrayItems(items, context, result, isVarArray);
             } finally {
-                if (context.expansionPath) {
+                if (context.expansionPath && !isDirective) {
                     context.expansionPath.pop();
                 }
             }
@@ -998,26 +1022,74 @@ class AzurePipelineParser {
      * @param {object} element - The template reference node or template item
      * @param {object} context - Expansion context
      * @param {array} result - Array to append expanded items to
-     * @param {boolean} isVarArray - True when expanding inside a `variables` array
+     * @param {string} parentKey - The key of the parent node, used to determine context like `variables` array
      */
-    _expandTemplateReferenceToResult(element, context, result, isVarArray) {
+    _expandTemplateReferenceToResult(element, context, result, parentKey = '') {
+        const templatePath = element.template;
         const templateItems = this.expandTemplateReference(element, context);
         if (Array.isArray(templateItems) && templateItems.length) {
-            // Update quote style paths for template items being inserted
-            if (isVarArray && context.expansionPath && context.quoteResult) {
-                this._updateTemplateQuoteStylePaths(templateItems, context, result.length);
-            }
+            const currentResultLength = result.length;
+
+            // Capture the global index before adding template items
+            // This will be used for accurate quote style remapping
+            const startIndexForRemapping =
+                parentKey === 'steps'
+                    ? context.stepIndex + 1
+                    : parentKey === 'jobs'
+                      ? context.jobIndex + 1
+                      : parentKey === 'stages'
+                        ? context.stageIndex + 1
+                        : currentResultLength;
 
             result.push(...templateItems);
 
-            if (isVarArray) {
-                for (const item of templateItems) {
-                    if (item && typeof item === 'object' && !Array.isArray(item)) {
-                        const varName = item.name;
-                        const varValue = this.pickFirstDefined(item.value, item.default);
-                        if (varName && varValue !== undefined) {
-                            context.variables[varName] = varValue;
-                        }
+            if (!context.expansionPath || context.expansionPath.length < 2) return;
+
+            // Track indices and build path prefix for remapping
+            for (let itemIndex = 0; itemIndex < templateItems.length; itemIndex++) {
+                const item = templateItems[itemIndex];
+                if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+
+                if (parentKey === 'variables' && item.name && item.value !== undefined) {
+                    context.variables[item.name] = item.value;
+                }
+
+                // Track global indices for context (stages, jobs, steps counters)
+                this._trackIndicesForItems(item, parentKey, context, currentResultLength + itemIndex);
+            }
+
+            // Build context-aware path prefix using tracked indices
+            let pathPrefix = [];
+            if (parentKey === 'jobs') {
+                pathPrefix = ['stages', context.stageIndex]; // jobs are under a stage
+            } else if (parentKey === 'steps') {
+                pathPrefix = ['stages', context.stageIndex, 'jobs', context.jobIndex]; // steps are under a job
+            } else {
+                pathPrefix = context.expansionPath.slice(0, -2);
+            }
+
+            // Remap quote styles for all template items at once
+            if (templatePath && context.templateQuoteStyles) {
+                const resolvedTemplatePath =
+                    typeof templatePath === 'string'
+                        ? this.replaceExpressionsInString(templatePath, context)
+                        : templatePath;
+
+                // Find the actual file path in templateQuoteStyles
+                for (const [tplPath] of context.templateQuoteStyles.entries()) {
+                    if (
+                        tplPath.includes(resolvedTemplatePath) ||
+                        resolvedTemplatePath.includes(path.basename(tplPath))
+                    ) {
+                        this._remapTemplateQuoteStylesByValue(
+                            tplPath,
+                            parentKey,
+                            templateItems,
+                            startIndexForRemapping,
+                            pathPrefix,
+                            context
+                        );
+                        // Don't break - continue to check for nested templates
                     }
                 }
             }
@@ -1025,43 +1097,100 @@ class AzurePipelineParser {
     }
 
     /**
-     * Update quote style paths for template items being inserted into the document.
-     * Template items are tracked with template-relative paths (e.g., variables.0.value),
-     * but need to be looked up with document paths (e.g., stages.0.jobs.0.variables.0.value).
-     * @param {array} templateItems - Array of items from template expansion
-     * @param {object} context - Expansion context with expansionPath and quoteResult
-     * @param {number} insertIndex - Index in result array where items will be inserted
+     * Recursively remap quote styles from template-relative paths to expanded absolute paths.
+     * This version matches template quote styles to expanded items by VALUE, not by index.
+     * @param {string} templatePath - Path to the template file
+     * @param {string} parentKey - The parent key ('stages', 'jobs', 'steps', 'variables')
+     * @param {array} templateItems - The expanded items from the template
+     * @param {number} startIndex - Starting index in the result array where template items were inserted
+     * @param {array} pathPrefix - Context-aware path prefix for the expanded location
+     * @param {object} context - Expansion context
      */
-    _updateTemplateQuoteStylePaths(templateItems, context, insertIndex) {
-        const quoteStyles = context.quoteResult?.quoteStyles;
-        if (!quoteStyles) return;
+    _remapTemplateQuoteStylesByValue(templatePath, parentKey, templateItems, startIndex, pathPrefix, context) {
+        const quoteStyles = this._getQuoteStylesMap(context);
+        const templateQuoteStyles = context.templateQuoteStyles.get(templatePath);
 
-        // The current expansionPath points to the template reference position
-        // Template items replace that position, so we use the same array index
-        const basePath = context.expansionPath.slice(0, -1); // Remove the last index (template ref position)
-        const startIndex = context.expansionPath[context.expansionPath.length - 1]; // Get template ref index
+        if (!templateQuoteStyles || templateQuoteStyles.size === 0) return;
 
-        // Process each template item and update its quote style paths
-        templateItems.forEach((item, itemIndex) => {
-            if (!item || typeof item !== 'object' || Array.isArray(item)) return;
+        // Iterate through all template quote styles
+        for (const [key, style] of templateQuoteStyles.entries()) {
+            // Parse the key: "path.segments:value"
+            const colonIndex = key.lastIndexOf(':');
+            if (colonIndex === -1) continue;
 
-            // Check all string fields in the item
-            Object.entries(item).forEach(([fieldName, fieldValue]) => {
-                if (typeof fieldValue !== 'string') return;
+            const pathPart = key.substring(0, colonIndex);
+            const valuePart = key.substring(colonIndex + 1);
 
-                // Template path: variables.0.fieldName:content
-                const templateKey = `variables.${itemIndex}.${fieldName}:${fieldValue}`;
-                const quoteStyle = quoteStyles.get(templateKey);
+            // Extract the template index and property path
+            // e.g., "steps.1.displayName" -> index=1, propPath="displayName"
+            const pathSegments = pathPart.split('.');
+            if (pathSegments[0] !== parentKey) continue;
 
-                if (quoteStyle) {
-                    // Document path: stages.0.jobs.0.variables.0.fieldName:content
-                    // Use startIndex + itemIndex to account for multiple template items
-                    const documentPath = [...basePath, startIndex + itemIndex, fieldName];
-                    const documentKey = this.getQuoteStyleUniqueKey(documentPath, fieldValue);
-                    quoteStyles.set(documentKey, quoteStyle);
+            const templateIndex = parseInt(pathSegments[1], 10);
+            if (isNaN(templateIndex)) continue;
+
+            const propertyPath = pathSegments.slice(2).join('.');
+
+            // Find the matching item in templateItems by comparing the value at the property path
+            // First, try to match by template index (for better accuracy with duplicate values)
+            let matchedIndex = -1;
+
+            // Try the template index first if it's within bounds
+            if (templateIndex >= 0 && templateIndex < templateItems.length) {
+                const item = templateItems[templateIndex];
+                if (item && typeof item === 'object') {
+                    const itemValue = this._getNestedValue(item, propertyPath);
+                    if (itemValue === valuePart) {
+                        matchedIndex = templateIndex;
+                    }
                 }
-            });
-        });
+            }
+
+            // If template index didn't match, search all items
+            if (matchedIndex === -1) {
+                for (let i = 0; i < templateItems.length; i++) {
+                    const item = templateItems[i];
+                    if (!item || typeof item !== 'object') continue;
+
+                    // Get the value at the property path in this item
+                    const itemValue = this._getNestedValue(item, propertyPath);
+
+                    // If the values match, we found our item
+                    if (itemValue === valuePart) {
+                        matchedIndex = i;
+                        break;
+                    }
+                }
+            }
+
+            if (matchedIndex === -1) continue; // No match found
+
+            // Build the expanded path using the matched index
+            const expansionIndex = startIndex + matchedIndex;
+            const expandedPath = [...pathPrefix, parentKey, expansionIndex];
+            if (propertyPath) {
+                expandedPath.push(...propertyPath.split('.'));
+            }
+            const newPath = expandedPath.join('.');
+            const newKey = `${newPath}:${valuePart}`;
+            console.log(`Remapping quote style for template value '${valuePart}' from key '${key}' to '${newKey}'`);
+            // Set the remapped quote style
+            quoteStyles.set(newKey, style);
+        }
+    }
+
+    /**
+     * Helper to get a nested value from an object given a dot-separated path
+     */
+    _getNestedValue(obj, path) {
+        if (!path) return obj;
+        const parts = path.split('.');
+        let current = obj;
+        for (const part of parts) {
+            if (current == null || typeof current !== 'object') return undefined;
+            current = current[part];
+        }
+        return current;
     }
 
     /**
@@ -1146,12 +1275,46 @@ class AzurePipelineParser {
         if (!context.expansionPath || typeof expandedValue !== 'string') return;
 
         const quoteStyles = this._getQuoteStylesMap(context);
-        const expansionPathKey = this.getQuoteStyleUniqueKey(context.expansionPath, expandedValue);
+
+        // Build full path including stage/job/step indices like in _remapTemplateQuoteStylesByValue
+        let fullPath = [];
+        if (context.stepIndex >= 0) {
+            // We're in a step context - find where 'steps' appears in expansionPath and skip that portion
+            const stepsKeyIndex = context.expansionPath.indexOf('steps');
+            const relativePath =
+                stepsKeyIndex >= 0 ? context.expansionPath.slice(stepsKeyIndex + 2) : context.expansionPath;
+            fullPath = [
+                'stages',
+                context.stageIndex,
+                'jobs',
+                context.jobIndex,
+                'steps',
+                context.stepIndex,
+                ...relativePath,
+            ];
+        } else if (context.jobIndex >= 0) {
+            // We're in a job context - find where 'jobs' appears in expansionPath and skip that portion
+            const jobsKeyIndex = context.expansionPath.indexOf('jobs');
+            const relativePath =
+                jobsKeyIndex >= 0 ? context.expansionPath.slice(jobsKeyIndex + 2) : context.expansionPath;
+            fullPath = ['stages', context.stageIndex, 'jobs', context.jobIndex, ...relativePath];
+        } else if (context.stageIndex >= 0) {
+            // We're in a stage context - find where 'stages' appears in expansionPath and skip that portion
+            const stagesKeyIndex = context.expansionPath.indexOf('stages');
+            const relativePath =
+                stagesKeyIndex >= 0 ? context.expansionPath.slice(stagesKeyIndex + 2) : context.expansionPath;
+            fullPath = ['stages', context.stageIndex, ...relativePath];
+        } else {
+            // Root level or variable context
+            fullPath = [...context.expansionPath];
+        }
+
+        const expansionPathKey = this.getQuoteStyleUniqueKey(fullPath, expandedValue);
 
         // Handle mixed expressions (not full expressions)
         if (isMixedExpression && !this.isMultilineString(expandedValue)) {
             if (expandedValue.includes(':')) {
-                quoteStyles.set(expansionPathKey, 'QUOTE_SINGLE');
+                //quoteStyles.set(expansionPathKey, 'QUOTE_SINGLE');
             } else {
                 if (!context.stringsWithExpressions) {
                     context.stringsWithExpressions = new Set();
@@ -1164,13 +1327,13 @@ class AzurePipelineParser {
         // Handle full expressions that expanded
         if (isSingleLineFullExpression && expandedValue !== originalValue) {
             // First, try to look up quote style using the original expression
-            const originalKey = this.getQuoteStyleUniqueKey(context.expansionPath, originalValue);
+            const originalKey = this.getQuoteStyleUniqueKey(fullPath, originalValue);
             let quoteStyle = quoteStyles.get(originalKey);
 
             // If not found and it's a parameter, try the parameter's definition path
             if (!quoteStyle && this.isParameter(originalValue)) {
                 const param = this.stripExpressionDelimiters(originalValue);
-                let parameterPath = context.expansionPath;
+                let parameterPath = fullPath;
                 if (context.parameterMap[param]) {
                     parameterPath = context.parameterMap[param].split('.');
                 }
@@ -1189,14 +1352,37 @@ class AzurePipelineParser {
                     quoteStyles.set(variableKey, quoteStyle);
                 }
             }
-        } else {
-            // Using variables from variable template yaml expansion inside jobs/stages
-            const variablePath = expansionPathKey.replace(/^stages\.\d+\.jobs\.\d+\.variables\.\d+\./, '');
-            const quoteStyle = quoteStyles.get(variablePath);
-            if (quoteStyle) {
-                quoteStyles.set(expansionPathKey, quoteStyle);
-            }
         }
+    }
+
+    /**
+     * Track stage/job/step indices for items (single item or array).
+     * @param {any|array} items - Single item or array of items to track
+     * @param {string} parentKey - The parent key ('stages', 'jobs', or 'steps')
+     * @param {object} context - Expansion context
+     * @param {number} fallbackIndex - Index to return if no tracking occurs
+     * @returns {number} - The expansion index for single items, or fallbackIndex
+     */
+    _trackIndicesForItems(items, parentKey, context, fallbackIndex = 0) {
+        // Handle single item
+        if (!Array.isArray(items)) {
+            if (parentKey === 'stages' && items && typeof items === 'object' && 'stage' in items) {
+                context.stageIndex += 1;
+                context.jobIndex = -1; // Reset job index when stage changes
+                context.stepIndex = -1; // Reset step index when stage changes
+                return context.stageIndex;
+            } else if (parentKey === 'jobs' && items && typeof items === 'object' && 'job' in items) {
+                context.jobIndex += 1;
+                context.stepIndex = -1; // Reset step index when job changes
+                return context.jobIndex;
+            } else if (parentKey === 'steps' && items && typeof items === 'object') {
+                context.stepIndex += 1;
+                return context.stepIndex;
+            }
+            return fallbackIndex;
+        }
+
+        return fallbackIndex;
     }
 
     /**
@@ -1215,9 +1401,10 @@ class AzurePipelineParser {
      * @param {number} index - Current index within the parent array
      * @param {object} context - Expansion context
      * @param {array} result - Result array to append expanded items to
+     * @param {string} parentKey - The parent key for tracking indices
      * @returns {{handled: boolean, nextIndex?: number}} - Whether the element was handled and updated next index
      */
-    _handleSingleKeyObjectInArray(element, array, index, context, result) {
+    _handleSingleKeyObjectInArray(element, array, index, context, result, parentKey = null) {
         if (!this.isSingleKeyObject(element)) return { handled: false };
 
         const key = Object.keys(element)[0];
@@ -1225,14 +1412,16 @@ class AzurePipelineParser {
         if (this.isEachDirective(key)) {
             const applied = this.applyEachDirective(key, element[key], context);
             if (applied && Array.isArray(applied.items) && applied.items.length) {
+                this._trackIndicesForItems(applied.items, parentKey, context);
                 result.push(...applied.items);
             }
             return { handled: true };
         }
 
         if (this.isConditionalDirective(key)) {
-            const expanded = this.expandConditionalBlock(array, index, context);
+            const expanded = this.expandConditionalBlock(array, index, context, parentKey);
             if (expanded && Array.isArray(expanded.items) && expanded.items.length) {
+                this._trackIndicesForItems(expanded.items, parentKey, context);
                 result.push(...expanded.items);
             }
             return { handled: true, nextIndex: expanded.nextIndex };
@@ -1408,7 +1597,7 @@ class AzurePipelineParser {
      * @param {object} context - Expansion context
      * @returns {{items: array, nextIndex: number}}
      */
-    expandConditionalBlock(array, startIndex, context) {
+    expandConditionalBlock(array, startIndex, context, parentKey = null) {
         let index = startIndex;
         let branchTaken = false;
         let items = [];
@@ -1432,7 +1621,7 @@ class AzurePipelineParser {
             }
 
             if (!branchTaken && this.evaluateConditional(key, context)) {
-                items = this.flattenBranchValue(body, context);
+                items = this.flattenBranchValue(body, context, parentKey);
                 branchTaken = true;
             }
 
@@ -1594,13 +1783,13 @@ class AzurePipelineParser {
         return String(index);
     }
 
-    flattenBranchValue(value, context) {
+    flattenBranchValue(value, context, parentKey = null) {
         if (Array.isArray(value)) {
-            return this.expandArray(value, context);
+            return this.expandArray(value, context, parentKey);
         }
 
         if (value && typeof value === 'object') {
-            return [this.expandObject(value, context)];
+            return [this.expandObject(value, context, parentKey)];
         }
 
         const scalar = this.expandScalar(value, context);
@@ -1614,7 +1803,7 @@ class AzurePipelineParser {
      *
      * @returns {{items: array}}
      */
-    applyEachDirective(directive, body, context) {
+    applyEachDirective(directive, body, context, parentKey = null) {
         const loop = this.parseEachDirective(directive);
         if (!loop) {
             return { items: [] };
@@ -1627,7 +1816,7 @@ class AzurePipelineParser {
         normalizedCollection.forEach((item, idx) => {
             const locals = { [loop.variable]: item, [`${loop.variable}Index`]: idx };
             const iterationContext = this.createChildContext(context, locals);
-            const expanded = this.flattenBranchValue(body, iterationContext);
+            const expanded = this.flattenBranchValue(body, iterationContext, parentKey);
             items.push(...expanded);
         });
 
@@ -2124,6 +2313,9 @@ class AzurePipelineParser {
             scriptsWithLastLineExpressions: parent.scriptsWithLastLineExpressions, // Preserve last line tracking
             templateQuoteStyles: parent.templateQuoteStyles, // Preserve template quote styles map
             quoteResult: parent.quoteResult, // Preserve captured quote result
+            stageIndex: parent.stageIndex,
+            jobIndex: parent.jobIndex,
+            stepIndex: parent.stepIndex,
         };
     }
 
@@ -2145,6 +2337,9 @@ class AzurePipelineParser {
             expansionPath: [], // Reset expansion path for templates (template content is tracked separately)
             stringsWithExpressions: parent.stringsWithExpressions, // Preserve strings with expressions tracking
             quoteResult: parent.quoteResult, // Preserve quote result for quote tracking
+            stageIndex: parent.stageIndex,
+            jobIndex: parent.jobIndex,
+            stepIndex: parent.stepIndex,
         };
     }
 
@@ -2296,29 +2491,10 @@ class AzurePipelineParser {
 
         const expandedTemplate = this.expandNode(templateDocument, templateContext) || {};
 
-        console.log(
-            '[DEBUG] expandedTemplate.variables type:',
-            typeof expandedTemplate.variables,
-            'isArray:',
-            Array.isArray(expandedTemplate.variables)
-        );
-        console.log('[DEBUG] expandedTemplate.variables:', JSON.stringify(expandedTemplate.variables, null, 2));
-
         // Convert template variables to array format before extracting body
         this.convertVariablesToArrayFormat(expandedTemplate, templateContext);
 
         const body = this.extractTemplateBody(expandedTemplate);
-
-        // If the body is a variables array, normalize any remaining shorthand formats
-        if (Array.isArray(body) && body.length > 0 && this.isVariableArray(body)) {
-            const normalized = this.normalizeVariableArray(body, templateContext);
-            console.log('[DEBUG] Normalized template variables:', JSON.stringify(normalized, null, 2));
-            console.log(
-                '[DEBUG] Quote styles after normalization:',
-                Array.from(templateContext.quoteResult?.quoteStyles.entries() || [])
-            );
-            return normalized;
-        }
 
         return body;
     }
@@ -2685,22 +2861,17 @@ class AzurePipelineParser {
             return expandedTemplate;
         }
 
-        const sanitized = Object.fromEntries(Object.entries(expandedTemplate).filter(([key]) => key !== 'parameters'));
-
         const candidates = ['stages', 'jobs', 'steps', 'variables', 'stage', 'job', 'deployment', 'deployments'];
         for (const key of candidates) {
-            if (key in sanitized) {
-                const value = sanitized[key];
-                if (Array.isArray(value)) {
-                    return value;
-                }
-                if (value !== undefined) {
-                    return [value];
-                }
+            if (key === 'parameters') continue;
+            if (Object.prototype.hasOwnProperty.call(expandedTemplate, key)) {
+                const value = expandedTemplate[key];
+                if (Array.isArray(value)) return value;
+                if (value !== undefined) return [value];
             }
         }
 
-        return Object.keys(sanitized).length > 0 ? [sanitized] : [];
+        return [];
     }
 
     /**
@@ -2719,61 +2890,6 @@ class AzurePipelineParser {
                 (('name' in item && ('value' in item || 'default' in item)) ||
                     (Object.keys(item).length === 1 && !('template' in item)))
         );
-    }
-
-    /**
-     * Normalize a variable array, converting any shorthand formats to full format.
-     * @param {array} variables - Variable array to normalize
-     * @param {object} context - Expansion context for quote tracking
-     * @returns {array} Normalized array
-     */
-    normalizeVariableArray(variables, context) {
-        const quoteStyles = context?.quoteResult?.quoteStyles;
-
-        return variables.map((item, index) => {
-            console.log(`[DEBUG normalizeVariableArray] Processing item ${index}:`, JSON.stringify(item));
-
-            if (!item || typeof item !== 'object' || Array.isArray(item)) {
-                return item;
-            }
-
-            // Already in array format
-            if ('name' in item && ('value' in item || 'default' in item)) {
-                console.log(`[DEBUG normalizeVariableArray] Item ${index} already in array format`);
-                return item;
-            }
-
-            // Template reference - don't convert
-            if ('template' in item) {
-                return item;
-            }
-
-            // Object format (shorthand) - convert to array format
-            // { varName: value } => { name: 'varName', value: value }
-            const entries = Object.entries(item);
-            if (entries.length === 1) {
-                const [name, value] = entries[0];
-
-                // Transfer quote style from old path to new path
-                if (quoteStyles && typeof value === 'string') {
-                    // Before conversion: variables.0.varName:value
-                    // After conversion: variables.0.value:value
-                    const oldKey = this.getQuoteStyleUniqueKey(['variables', index, name], value);
-                    const quoteStyle = quoteStyles.get(oldKey);
-                    console.log(`[DEBUG normalizeVariableArray] index=${index}, name=${name}, value='${value}'`);
-                    console.log(`[DEBUG normalizeVariableArray] oldKey=${oldKey}, quoteStyle=${quoteStyle}`);
-                    if (quoteStyle) {
-                        const newKey = this.getQuoteStyleUniqueKey(['variables', index, 'value'], value);
-                        console.log(`[DEBUG normalizeVariableArray] Setting newKey=${newKey} to ${quoteStyle}`);
-                        quoteStyles.set(newKey, quoteStyle);
-                    }
-                }
-
-                return { name, value };
-            }
-
-            return item;
-        });
     }
 
     /** Evaluates a conditional directive key and returns true if the branch should execute. */
