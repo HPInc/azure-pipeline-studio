@@ -1,0 +1,22 @@
+parameters:
+- name: templateParam
+  type: string
+- name: quotedParam
+  type: string
+
+
+stages:
+- stage: Build
+
+  jobs:
+  - job: TestJob
+
+    steps:
+    - script: echo ${{ parameters.templateParam }}
+      displayName: 'Use template param'
+
+    - script: echo ${{ parameters.quotedParam }}
+      displayName: 'Use quoted param'
+
+    - script: echo $(parentVar)
+      displayName: 'Use parent variable'

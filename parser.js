@@ -504,6 +504,9 @@ class AzurePipelineParser {
             parameters: { ...parameters, ...overrideParameters },
             parameterMap: { ...parameterMap },
             variables: { ...variables, ...overrideVariables },
+            globalVariables: { ...variables, ...overrideVariables }, // Global-level variables
+            stageVariables: {}, // Stage-level variables (reset for each stage)
+            jobVariables: {}, // Job-level variables (reset for each job)
             resources: mergedResources,
             locals: { ...locals },
             baseDir,
@@ -1007,7 +1010,10 @@ class AzurePipelineParser {
                     continue;
                 }
 
-                const expanded = this.expandNode(element, context, parentKey);
+                // Check if we're entering a new stage or job scope
+                const scopedContext = this._createScopedContext(context, element, parentKey);
+
+                const expanded = this.expandNode(element, scopedContext, parentKey);
                 if (expanded === undefined) continue;
 
                 // Handle array expansion - normalize to array and process items
@@ -1129,6 +1135,9 @@ class AzurePipelineParser {
             const pathPart = key.substring(0, colonIndex);
             const valuePart = key.substring(colonIndex + 1);
 
+            // Skip parameter-related quote styles - they should stay scoped to the template
+            if (pathPart.startsWith('parameters.')) continue;
+
             // Extract the template index and property path
             // e.g., "steps.1.displayName" -> index=1, propPath="displayName"
             const pathSegments = pathPart.split('.');
@@ -1231,7 +1240,20 @@ class AzurePipelineParser {
         const varName = item.name;
         const varValue = this.pickFirstDefined(item.value, item.default);
         if (varName && varValue !== undefined) {
+            // Update the appropriate scope based on current context level
             context.variables[varName] = varValue;
+
+            // Also update the appropriate scoped variables
+            if (context.jobIndex >= 0) {
+                // We're in a job context, update job variables
+                context.jobVariables[varName] = varValue;
+            } else if (context.stageIndex >= 0) {
+                // We're in a stage context, update stage variables
+                context.stageVariables[varName] = varValue;
+            } else {
+                // We're at global level, update global variables
+                context.globalVariables[varName] = varValue;
+            }
         }
     }
 
@@ -1321,9 +1343,7 @@ class AzurePipelineParser {
 
         // Handle mixed expressions (not full expressions)
         if (isMixedExpression && !this.isMultilineString(expandedValue)) {
-            if (expandedValue.includes(':')) {
-                //quoteStyles.set(expansionPathKey, 'QUOTE_SINGLE');
-            } else {
+            if (!expandedValue.includes(':')) {
                 if (!context.stringsWithExpressions) {
                     context.stringsWithExpressions = new Set();
                 }
@@ -2312,6 +2332,9 @@ class AzurePipelineParser {
             parameters: parent.parameters,
             parameterMap: parent.parameterMap,
             variables: parent.variables,
+            globalVariables: parent.globalVariables,
+            stageVariables: parent.stageVariables,
+            jobVariables: parent.jobVariables,
             resources: parent.resources,
             locals: { ...parent.locals, ...locals },
             baseDir: parent.baseDir,
@@ -2329,9 +2352,12 @@ class AzurePipelineParser {
 
     createTemplateContext(parent, parameterOverrides, baseDir, options = {}) {
         return {
-            parameters: { ...parent.parameters, ...parameterOverrides },
-            parameterMap: { ...parent.parameterMap },
+            parameters: { ...parameterOverrides }, // Only use template's own parameters - don't inherit parent's
+            parameterMap: {}, // Don't inherit parent's parameterMap - template parameters are scoped to the template
             variables: { ...parent.variables }, // Preserve variables from parent context (includes overrides)
+            globalVariables: parent.globalVariables,
+            stageVariables: parent.stageVariables,
+            jobVariables: parent.jobVariables,
             resources: parent.resources,
             locals: { ...parent.locals },
             baseDir: baseDir || parent.baseDir,
@@ -2359,6 +2385,88 @@ class AzurePipelineParser {
             return Object.entries(value).map(([key, entryValue]) => ({ key, value: entryValue }));
         }
         return [];
+    }
+
+    /**
+     * Create a scoped context when entering a stage or job.
+     * @param {object} context - Current context
+     * @param {object} element - The element being expanded
+     * @param {string} parentKey - The parent key ('stages', 'jobs', etc.)
+     * @returns {object} - Scoped context or original context
+     */
+    _createScopedContext(context, element, parentKey) {
+        if (parentKey === 'stages' && element && typeof element === 'object' && 'stage' in element) {
+            // Entering a stage - create stage-scoped context
+            const scopedContext = { ...context };
+            scopedContext.stageVariables = {};
+            scopedContext.jobVariables = {};
+            scopedContext.variables = { ...context.globalVariables };
+
+            // If the stage has variables, extract them first
+            if (element.variables) {
+                const stageVars = this._extractVariablesFromNode(element.variables);
+                Object.assign(scopedContext.stageVariables, stageVars);
+                Object.assign(scopedContext.variables, stageVars);
+            }
+
+            return scopedContext;
+        }
+
+        if (parentKey === 'jobs' && element && typeof element === 'object' && 'job' in element) {
+            // Entering a job - create job-scoped context
+            const scopedContext = { ...context };
+            scopedContext.jobVariables = {};
+            scopedContext.variables = { ...context.globalVariables, ...context.stageVariables };
+
+            // If the job has variables, extract them first
+            if (element.variables) {
+                const jobVars = this._extractVariablesFromNode(element.variables);
+                Object.assign(scopedContext.jobVariables, jobVars);
+                Object.assign(scopedContext.variables, jobVars);
+            }
+
+            return scopedContext;
+        }
+
+        return context;
+    }
+
+    /**
+     * Extract variables from a variables node without full expansion.
+     * This is used to pre-extract stage/job variables for scoping before expanding the stage/job.
+     * @param {array|object} variablesNode - The variables node to extract from
+     * @returns {object} - Map of variable names to values
+     */
+    _extractVariablesFromNode(variablesNode) {
+        const vars = {};
+
+        if (!variablesNode) return vars;
+
+        if (Array.isArray(variablesNode)) {
+            for (const item of variablesNode) {
+                if (item && typeof item === 'object' && !Array.isArray(item)) {
+                    const name = item.name;
+                    const value = this.pickFirstDefined(item.value, item.default);
+                    if (name && value !== undefined) {
+                        vars[name] = value;
+                    }
+                }
+            }
+        } else if (typeof variablesNode === 'object') {
+            // Object format: { var1: value1, var2: { value: value2 }, ... }
+            for (const [name, varDef] of Object.entries(variablesNode)) {
+                if (varDef && typeof varDef === 'object' && !Array.isArray(varDef)) {
+                    const value = this.pickFirstDefined(varDef.value, varDef.default, varDef);
+                    if (value !== undefined) {
+                        vars[name] = value;
+                    }
+                } else {
+                    vars[name] = varDef;
+                }
+            }
+        }
+
+        return vars;
     }
 
     isSingleKeyObject(element) {

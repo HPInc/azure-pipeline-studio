@@ -12,7 +12,7 @@ All tests follow a consistent pattern:
 - Summary output with ✅/❌ indicators
 - Consolidated test runner: `run-template-expansion-tests.js`
 
-## Test Suites (10 Total)
+## Test Suites (12 Total)
 
 ### 1. test-heredoc.js
 **Purpose**: Tests heredoc syntax preservation during template expansion
@@ -323,6 +323,65 @@ All tests follow a consistent pattern:
 - Stage/job/step index tracking for accurate quote restoration
 
 **Bug Fixed**: Quote styles were not being correctly remapped when templates expanded to multiple items. Now uses value-based matching and proper index tracking.
+
+---
+
+### 11. test-parameter-scoping.js
+**Purpose**: Tests that parameters and their quote information are properly scoped to templates and don't leak to parent/child contexts
+
+**Test Cases**:
+- Parameter values expand correctly within templates
+- Parameters from root context can be passed to templates
+- Parameter quote information stays scoped to template
+- Runtime variables from parent context remain accessible
+- Template parameters are isolated (not accessible outside template)
+
+**Input Files**:
+- `inputs/parameter-scope-parent.yaml`
+- `inputs/parameter-scope-template.yaml`
+
+**Edge Cases Covered**:
+- Parameters with single quotes
+- Parameters with double quotes
+- Template parameters should not be in parent's `parameterMap`
+- Quote styles for parameter values don't leak to parent context
+- Root-level parameters can be passed as template parameter values
+- Variables (not parameters) are still inherited from parent
+
+**Bug Fixed**: 
+1. Parameters were leaking from parent to child template contexts - now each template has isolated parameter scope
+2. Parameter quote information was being remapped to parent context after template expansion - now filtered out during remapping
+3. `parameterMap` paths starting with `"parameters."` are now skipped during quote style remapping
+
+---
+
+### 12. test-variable-scoping.js
+**Purpose**: Tests that variables are properly scoped at global, stage, and job levels
+
+**Test Cases**:
+- Global variables accessible everywhere
+- Stage variables accessible within that stage and its jobs
+- Job variables accessible only within that specific job
+- Variables at more specific scopes override broader scopes
+- Job variables from one job don't leak into other jobs in the same stage
+- Stage variables from one stage don't leak into other stages
+
+**Input File**: `inputs/variable-scoping.yaml`
+
+**Edge Cases Covered**:
+- Variable shadowing: same variable name defined at multiple levels
+- Job isolation: Job1 variables (jobVar, sharedVar) don't affect Job2
+- Stage isolation: Stage1 variables (stageVar, sharedVar) don't affect Stage2
+- Scope precedence: job-level > stage-level > global-level
+- Global variables remain accessible in all scopes
+
+**Variable Scoping Rules Implemented**:
+- **Global variables**: Defined at root level, accessible everywhere
+- **Stage variables**: Defined in a stage, accessible to that stage and its jobs (but not other stages)
+- **Job variables**: Defined in a job, accessible only to that job's steps (not other jobs)
+- When entering a stage: context.variables = global + stage variables
+- When entering a job: context.variables = global + stage + job variables
+- Each scope starts fresh and doesn't inherit from sibling scopes
 
 ---
 

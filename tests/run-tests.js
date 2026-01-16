@@ -27,6 +27,8 @@ const tests = [
     'test-trailing-newlines.js',
     'test-runtime-variables.js',
     'test-multilevel-templates.js',
+    'test-parameter-scoping.js',
+    'test-variable-scoping.js',
     'test-formatting.js',
 ];
 
