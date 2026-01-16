@@ -12,7 +12,7 @@ All tests follow a consistent pattern:
 - Summary output with ✅/❌ indicators
 - Consolidated test runner: `run-template-expansion-tests.js`
 
-## Test Suites (8 Total)
+## Test Suites (10 Total)
 
 ### 1. test-heredoc.js
 **Purpose**: Tests heredoc syntax preservation during template expansion
@@ -268,6 +268,64 @@ All tests follow a consistent pattern:
 
 ---
 
+### 9. test-runtime-variables.js
+**Purpose**: Tests runtime variable handling (variables resolved at pipeline execution time)
+
+**Test Cases**:
+- Runtime variables are not quoted
+- Runtime variables in displayName
+- Runtime variables in environment variables
+- Mixed compile-time and runtime variables
+- Runtime variables in script blocks
+- Runtime variables with colons
+
+**Input File**: `inputs/runtime-variables.yaml`
+
+**Edge Cases Covered**:
+- `$(Agent.OS)` - no quotes applied
+- `$(Build.SourceBranch)` - no quotes in env
+- `$(Build.Reason)` - runtime variable preservation
+- Mixed `${{ parameters.x }}` (compile-time) and `$(Build.x)` (runtime)
+- Runtime variables with colons like `$(System.TeamFoundationCollectionUri)`
+- Azure compatible mode preserves runtime variable behavior
+
+**Bug Fixed**: Runtime variables were being quoted, which breaks Azure Pipelines execution. Now they remain unquoted regardless of context (even when colons are present).
+
+---
+
+### 10. test-multilevel-templates.js
+**Purpose**: Tests multi-level template expansion and quote style preservation through template boundaries
+
+**Test Cases**:
+- Stage template references
+- Step template references
+- Variable template references
+- Multi-level template expansion (template includes template)
+- Quote style preservation across template levels
+- Stage/job/step index tracking through templates
+
+**Input Files**:
+- `inputs/include-stage-template.yaml`
+- `inputs/include-step-template.yaml`
+- `inputs/include-variable-template.yaml`
+- `inputs/stage-multilevel.yaml`
+- `inputs/stage-toplevel.yaml`
+- `inputs/stage-secondlevel.yaml`
+- `inputs/stage-template.yaml`
+- `inputs/step-template.yaml`
+- `inputs/variable-template.yaml`
+
+**Edge Cases Covered**:
+- Templates that include other templates (3+ levels deep)
+- Conditional stages in top-level templates
+- Parameter passing through template levels
+- Quote style remapping for template-expanded items
+- Stage/job/step index tracking for accurate quote restoration
+
+**Bug Fixed**: Quote styles were not being correctly remapped when templates expanded to multiple items. Now uses value-based matching and proper index tracking.
+
+---
+
 ## Edge Cases Comprehensive Coverage
 
 ### Expression Spacing Variations
@@ -407,29 +465,29 @@ All tests follow a consistent pattern:
 ### Run All Tests
 ```bash
 cd tests
-node run-template-expansion-tests.js
+node run-tests.js
 ```
 
 ### Run Individual Test
 ```bash
 cd tests
-node test-formatting-expansion.js
+node test-formatting.js
 node test-heredoc.js -v  # with verbose output
 ```
 
 ### Expected Output
 ```
 ======================================================================
-Running Azure Pipeline Template Expansion Tests
+Running Azure Pipeline Tests
 ======================================================================
 
-[1/8] Running test-heredoc...
+[1/10] Running test-heredoc...
   All heredoc checks passed ✅
 
-[2/8] Running test-quote-preservation...
+[2/10] Running test-quote-preservation...
   All quote preservation tests passed ✅
 
-... (all 8 tests)
+... (all 10 tests)
 
 ======================================================================
 FINAL SUMMARY
@@ -439,14 +497,16 @@ FINAL SUMMARY
   ✅ PASS - test-quote-preservation
   ✅ PASS - test-microsoft-boolean-compatibility
   ✅ PASS - test-non-azure-compatible
-  ✅ PASS - expressions-test
+  ✅ PASS - test-expressions
   ✅ PASS - test-block-scalar-chomping
   ✅ PASS - test-trailing-newlines
-  ✅ PASS - test-formatting-expansion
+  ✅ PASS - test-runtime-variables
+  ✅ PASS - test-multilevel-templates
+  ✅ PASS - test-formatting
 
 ----------------------------------------------------------------------
-Total: 8 tests
-Passed: 8
+Total: 10 tests
+Passed: 10
 Failed: 0
 ----------------------------------------------------------------------
 
@@ -459,34 +519,45 @@ Failed: 0
 
 All test input YAML files include `# aps-format=false` directive to prevent auto-formatting:
 
-### Core Test Files (15 files)
+### Core Test Files (26 files)
 1. `full-test.yaml` (367 lines) - Comprehensive formatting & expansion
 2. `heredoc.yaml` - Heredoc syntax testing
-3. `quote-preservation-clean.yaml` - Quote handling
-4. `boolean-compat.yaml` - Boolean compatibility
-5. `boolean-edge-cases.yaml` - Boolean edge cases
-6. `non-azure-compat-chomping.yaml` - Block chomping
-7. `non-azure-compat-heredoc.yaml` - Non-Azure heredoc
-8. `expressions-basic.yaml` - Basic expression functions
-9. `expressions-conditional.yaml` - Conditional expressions
-10. `expressions-strings.yaml` - String functions
-11. `block-chomping-keep.yaml` - Keep chomping (+)
-12. `block-chomping-clip.yaml` - Clip chomping (default)
-13. `block-chomping-literal.yaml` - Literal block scalars
-14. `trailing-newlines.yaml` - Newline preservation
-15. `trailing-newlines-params.yaml` - Newlines with parameters
+3. `quote-preservation.yaml` - Quote handling
+4. `runtime-variables.yaml` - Runtime variable handling
+5. `include-stage-template.yaml` - Stage template inclusion
+6. `include-step-template.yaml` - Step template inclusion
+7. `include-variable-template.yaml` - Variable template inclusion
+8. `stage-multilevel.yaml` - Multi-level template expansion
+9. `stage-toplevel.yaml` - Top-level stage template
+10. `stage-secondlevel.yaml` - Second-level stage template
+11. `stage-template.yaml` - Stage template
+12. `step-template.yaml` - Step template
+13. `variable-template.yaml` - Variable template
+14. `non-azure-compat-chomping.yaml` - Block chomping
+15. `non-azure-compat-heredoc.yaml` - Non-Azure heredoc
+16. `expressions-all-functions.yaml` - All expression functions
+17. `block-chomping-keep.yaml` - Keep chomping (+)
+18. `block-chomping-clip.yaml` - Clip chomping (default)
+19. `block-chomping-literal.yaml` - Literal block scalars
+20. `trailing-newlines.yaml` - Newline preservation
+21. `trailing-newlines-params.yaml` - Newlines with parameters
 
 ---
 
 ## Coverage Statistics
 
 ### Overall
-- **Total Test Suites**: 8
-- **Total Test Cases**: 35+
-- **Test Input Files**: 15
-- **Lines of Test YAML**: 700+
-- **Template Expressions Tested**: 50+
+- **Total Test Suites**: 10
+- **Total Test Cases**: 45+
+- **Test Input Files**: 21
+- **Lines of Test YAML**: 1000+
+- **Template Expressions Tested**: 60+
 - **Pass Rate**: 100% ✅
+
+### Recent Additions (January 2026)
+- **test-runtime-variables.js**: 5 test cases for `$(Variable)` handling
+- **test-multilevel-templates.js**: 4 test cases for template expansion across multiple levels
+- **Bug fixes**: Runtime variable quoting, colon normalization, block scalar preservation
 
 ### full-test.yaml Coverage
 - **Stages**: 3
@@ -573,14 +644,17 @@ To add a new test case:
 
 ## Maintenance
 
-**Last Updated**: January 7, 2026
+**Last Updated**: January 16, 2026
 
 **Recent Changes**:
-- Added comprehensive quote handling test cases (13 new steps)
-- Variables format conversion: object format → array format with name/value
-- Quote removal for mixed template expressions
-- Full expression quote preservation
+- Added test-runtime-variables.js: Tests for `$(Agent.OS)` and other runtime variables
+- Added test-multilevel-templates.js: Tests for multi-level template expansion
+- Fixed runtime variable quoting bug: Runtime variables are no longer quoted
+- Fixed colon normalization: Values with colons now always use single quotes (unless runtime vars)
+- Fixed block scalar preservation: Multiline content uses block scalars in both Azure and non-Azure modes
+- Cleaned up debug console.log statements from parser.js
+- Updated TEST_CASES.md with comprehensive documentation
 
-**Test Status**: All passing ✅
+**Test Status**: All 10 tests passing ✅
 
-**Coverage**: Comprehensive - all known edge cases covered
+**Coverage**: Comprehensive - all known edge cases and recent bug fixes covered

@@ -1,0 +1,14 @@
+parameters:
+- name: env
+  type: string
+  default: production
+
+
+variables:
+- name: server
+  ${{ if eq(parameters.env, 'production') }}:
+    value: 'production.db.test.com'
+  ${{ elseif eq(parameters.env, 'staging') }}:
+    value: 'staging.db.test.com'
+  ${{ else }}:
+    value: 'dev.db.test.com'

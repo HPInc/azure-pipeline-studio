@@ -217,21 +217,19 @@ class AzurePipelineParser {
         const handler = this.buildQuoteHandler(this.getQuoteStyle.bind(this), {
             post: (quoteStyle, valueNode, pathArr) => {
                 if (valueNode?.value !== undefined && typeof valueNode.value === 'string') {
-                    // Skip restoring quotes for strings that had MIXED template expressions
-                    // Check using path-based unique key (stored during expansion)
                     const uniqueKey = this.getQuoteStyleUniqueKey(pathArr, valueNode.value);
-                    if (stringsWithExpressions.has(uniqueKey)) {
+                    const hadMixedExpression = stringsWithExpressions.has(uniqueKey);
+                    const hasColon = valueNode.value.includes(':');
+                    const hasRuntimeVar = /\$\([^)]+\)/.test(valueNode.value);
+
+                    if (hadMixedExpression) {
                         valueNode.type = 'PLAIN';
-                    } else if (/\$\([^)]+\)/.test(valueNode.value)) {
-                        // Remove quotes for runtime variables like $(Agent.OS), $(Build.Reason), etc.
+                    } else if (hasRuntimeVar) {
                         valueNode.type = 'PLAIN';
+                    } else if (hasColon) {
+                        valueNode.type = 'QUOTE_SINGLE';
                     } else if (quoteStyle) {
-                        // If value contains colon, normalize to single quotes (Azure behavior)
-                        if (valueNode.value.includes(':')) {
-                            valueNode.type = 'QUOTE_SINGLE';
-                        } else {
-                            valueNode.type = quoteStyle;
-                        }
+                        valueNode.type = quoteStyle;
                     }
                 }
             },
@@ -271,6 +269,11 @@ class AzurePipelineParser {
      */
     setQuoteStyle(path, keyNode, valueNode, quoteStyles) {
         const quoteType = valueNode.type;
+        if (keyNode?.value == 'PATTERNS') {
+            console.log(
+                `Capturing quote style for PATTERNS at path: ${path.join('.')}, value: '${valueNode.value}', type: ${quoteType}`
+            );
+        }
         if (quoteType !== 'QUOTE_SINGLE' && quoteType !== 'QUOTE_DOUBLE') return;
         if (typeof valueNode.value !== 'string') return;
 
@@ -322,6 +325,13 @@ class AzurePipelineParser {
 
                 path.push(keyNode.value);
                 //console.log(`Visiting path: ${path.join('.')}`);
+                //console.log(keyNode.value);
+                if (`${path.join('.')}`.includes('stages.4.jobs.0.steps.4.env.PATTERNS')) {
+                    console.log(
+                        `Restoring quote style for PATTERNS at path: ${path.join('.')}, value: '${pair.value?.value}'`
+                    );
+                }
+
                 try {
                     handler(pair, path, quoteStyles);
                 } catch (err) {
@@ -407,9 +417,7 @@ class AzurePipelineParser {
 
                 const trimmedKey = content.replace(/\s+$/, '');
                 const hadExpression = context.scriptsWithExpressions?.has(trimmedKey);
-                if (context.azureCompatible) {
-                    value.type = hadExpression ? 'BLOCK_FOLDED' : 'BLOCK_LITERAL';
-                }
+                value.type = hadExpression && context.azureCompatible ? 'BLOCK_FOLDED' : 'BLOCK_LITERAL';
                 value.value = this.normalizeTrailingNewlines(content, context.azureCompatible);
                 this.applyBlockScalarStyles(value, context);
             }
@@ -2485,10 +2493,13 @@ class AzurePipelineParser {
 
         const mergedParameters = { ...defaultParameters, ...providedParameters };
 
+        console.debug(`Current template path: ${templateDisplayPath}`);
         const templateContext = this.createTemplateContext(updatedContext, mergedParameters, templateBaseDir, {
             repositoryBaseDir: repositoryBaseDirectoryForContext,
         });
-
+        console.debug(
+            `stageIndex: ${templateContext.stageIndex} jobIndex: ${templateContext.jobIndex} stepIndex: ${templateContext.stepIndex}`
+        );
         const expandedTemplate = this.expandNode(templateDocument, templateContext) || {};
 
         // Convert template variables to array format before extracting body

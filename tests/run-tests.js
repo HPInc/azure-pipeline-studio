@@ -25,6 +25,8 @@ const tests = [
     'test-expressions.js',
     'test-block-scalar-chomping.js',
     'test-trailing-newlines.js',
+    'test-runtime-variables.js',
+    'test-multilevel-templates.js',
     'test-formatting.js',
 ];
 

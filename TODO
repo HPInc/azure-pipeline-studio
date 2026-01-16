@@ -1,0 +1,5 @@
+- Check for syntax where : is missing from ${{}}
+- Check , missing in comparison or other expression requiring it
+- Check else if v/s elseif
+- Check syntax where the yaml line start is not right
+- Avoid formatting when aps-format=false

@@ -1,0 +1,10 @@
+stages:
+- stage: Build
+
+  jobs:
+  - job: BuildJob
+
+    steps:
+    - template: step-template.yaml
+      parameters:
+        env: staging
