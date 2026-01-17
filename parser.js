@@ -608,7 +608,7 @@ class AzurePipelineParser {
         }
 
         for (const [key, expected] of Object.entries(criteria)) {
-            if (expected === undefined || expected === null || expected === '') {
+            if (expected == null || expected === '') {
                 continue;
             }
             if (!Object.prototype.hasOwnProperty.call(existing, key)) {
@@ -623,7 +623,7 @@ class AzurePipelineParser {
     }
 
     deepClone(value) {
-        if (value === undefined || value === null || typeof value !== 'object') {
+        if (value == null || typeof value !== 'object') {
             return value;
         }
         return JSON.parse(JSON.stringify(value));
@@ -851,7 +851,7 @@ class AzurePipelineParser {
         if (Array.isArray(variables)) {
             for (const variable of variables) {
                 if (variable && typeof variable === 'object' && variable.name) {
-                    result[variable.name] = this.pickFirstDefined(variable.value, variable.default);
+                    result[variable.name] = variable.value;
                 }
             }
         } else if (typeof variables === 'object') {
@@ -878,7 +878,7 @@ class AzurePipelineParser {
         }
 
         // If this is the root call (parentKey is null), handle all metadata
-        if (parentKey === null && this.isObject(expanded)) {
+        if (parentKey === null && this.isNonArrayObject(expanded)) {
             // Attach script metadata collected during expansion
             expanded.__scriptsWithExpressions = context.scriptsWithExpressions || new Set();
             expanded.__scriptsWithLastLineExpressions = context.scriptsWithLastLineExpressions || new Set();
@@ -1173,7 +1173,7 @@ class AzurePipelineParser {
         if (!isVarArray || !item || typeof item !== 'object' || Array.isArray(item)) return;
 
         const varName = item.name;
-        const varValue = this.pickFirstDefined(item.value, item.default);
+        const varValue = item.value;
         if (varName && varValue !== undefined) {
             // Update the appropriate scope based on current context level
             context.variables[varName] = varValue;
@@ -1421,7 +1421,7 @@ class AzurePipelineParser {
                 continue;
             } else if (this.isInsertDirective(rawKey)) {
                 const expandedValue = this.expandNodePreservingTemplates(value, context);
-                if (this.isObject(expandedValue)) {
+                if (this.isNonArrayObject(expandedValue)) {
                     Object.assign(result, expandedValue);
                 }
                 continue;
@@ -1635,7 +1635,7 @@ class AzurePipelineParser {
     expandConditionalMappingBranch(body, context) {
         if (Array.isArray(body)) {
             return this.expandArray(body, context).reduce((acc, item) => {
-                if (this.isObject(item)) {
+                if (this.isNonArrayObject(item)) {
                     return { ...acc, ...item };
                 }
                 return acc;
@@ -1706,12 +1706,12 @@ class AzurePipelineParser {
     }
 
     resolveEachIterationKey(item, index, iterationContext, variableName) {
-        if (item === undefined || item === null) {
+        if (item == null) {
             return String(index);
         }
 
         const unwrap = (value) => {
-            if (value === undefined || value === null) {
+            if (value == null) {
                 return undefined;
             }
             if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
@@ -1802,7 +1802,7 @@ class AzurePipelineParser {
 
         let result = input.replace(/\$\{\{\s*(.+?)\s*\}\}/g, (match, expr) => {
             const value = this.evaluateExpression(expr, context);
-            if (value === undefined || value === null) {
+            if (value == null) {
                 // Check if this is a parameter reference that might be a runtime variable
                 // If so, convert it to a runtime variable reference format
                 if (expr.trim().startsWith('parameters.')) {
@@ -1836,7 +1836,7 @@ class AzurePipelineParser {
     }
 
     evaluateExpression(expression, context) {
-        if (expression === undefined || expression === null) {
+        if (expression == null) {
             return undefined;
         }
 
@@ -1892,7 +1892,6 @@ class AzurePipelineParser {
         // Fix unescaped backslashes in string literals for Azure Pipelines compatibility
         // Azure Pipelines allows '\' in strings, but JavaScript requires '\\'
         // Use regex to find string literals and escape single backslashes within them
-
         return expr.replace(/(['"])((?:\\.|(?!\1).)*?)\1/g, (match, quote, content) => {
             // Process the string content to escape single backslashes
             // Replace single backslash with double, but preserve existing escape sequences
@@ -1902,9 +1901,7 @@ class AzurePipelineParser {
     }
 
     evaluateAst(node, context) {
-        if (!node) {
-            return undefined;
-        }
+        if (!node) return undefined;
 
         switch (node.type) {
             case 'Literal':
@@ -1919,14 +1916,8 @@ class AzurePipelineParser {
                 const obj = {};
                 node.properties.forEach((prop) => {
                     const keyNode = prop.key;
-                    const key = prop.computed
-                        ? this.evaluateAst(keyNode, context)
-                        : keyNode.type === 'Identifier'
-                          ? keyNode.name
-                          : this.evaluateAst(keyNode, context);
-                    if (key === undefined) {
-                        return;
-                    }
+                    const key = this.evaluatePropertyKey(keyNode, prop.computed, context);
+                    if (key === undefined) return;
                     obj[key] = this.evaluateAst(prop.value, context);
                 });
                 return obj;
@@ -1958,17 +1949,9 @@ class AzurePipelineParser {
                     : this.evaluateAst(node.alternate, context);
             case 'MemberExpression': {
                 const target = this.evaluateAst(node.object, context);
-                if (target === undefined || target === null) {
-                    return undefined;
-                }
-                const property = node.computed
-                    ? this.evaluateAst(node.property, context)
-                    : node.property.type === 'Identifier'
-                      ? node.property.name
-                      : this.evaluateAst(node.property, context);
-                if (property === undefined || property === null) {
-                    return undefined;
-                }
+                if (target == null) return undefined;
+                const property = this.evaluatePropertyKey(node.property, node.computed, context);
+                if (property == null) return undefined;
                 return target[property];
             }
             case 'CallExpression': {
@@ -1976,9 +1959,7 @@ class AzurePipelineParser {
                 const args = node.arguments.map((arg) => this.evaluateAst(arg, context));
                 if (callable?.builtinName) {
                     const result = this.evaluateFunction(callable.builtinName, args);
-                    if (result !== undefined) {
-                        return result;
-                    }
+                    if (result !== undefined) return result;
                 }
                 if (callable && typeof callable.fn === 'function') {
                     return callable.fn.apply(callable.thisArg !== undefined ? callable.thisArg : context, args);
@@ -2043,17 +2024,12 @@ class AzurePipelineParser {
 
         if (callee.type === 'MemberExpression') {
             const target = this.evaluateAst(callee.object, context);
-            if (target === undefined || target === null) {
+            if (target == null) {
                 return {};
             }
 
-            const property = callee.computed
-                ? this.evaluateAst(callee.property, context)
-                : callee.property.type === 'Identifier'
-                  ? callee.property.name
-                  : this.evaluateAst(callee.property, context);
-
-            if (property === undefined || property === null) {
+            const property = this.evaluatePropertyKey(callee.property, callee.computed, context);
+            if (property == null) {
                 return {};
             }
 
@@ -2135,7 +2111,7 @@ class AzurePipelineParser {
 
     compareValues(left, right) {
         const normalize = (input) => {
-            if (input === undefined || input === null) {
+            if (input == null) {
                 return '';
             }
             if (typeof input === 'string') {
@@ -2223,12 +2199,12 @@ class AzurePipelineParser {
         let value = current;
         for (let i = 0; i < segments.length; i++) {
             const segment = segments[i];
-            if (value === undefined || value === null) {
+            if (value == null) {
                 return undefined;
             }
             // If we're accessing a nested property (not top-level) that doesn't exist on an object,
             // return empty string instead of undefined (Azure DevOps behavior)
-            if (i > 0 && this.isObject(value) && !(segment in value)) {
+            if (i > 0 && this.isNonArrayObject(value) && !(segment in value)) {
                 return '';
             }
             value = value[segment];
@@ -2388,9 +2364,9 @@ class AzurePipelineParser {
 
         if (Array.isArray(variablesNode)) {
             for (const item of variablesNode) {
-                if (this.isObject(item)) {
+                if (this.isNonArrayObject(item)) {
                     const name = item.name;
-                    const value = this.pickFirstDefined(item.value, item.default);
+                    const value = item.value;
                     if (name && value !== undefined) {
                         vars[name] = value;
                     }
@@ -2399,8 +2375,8 @@ class AzurePipelineParser {
         } else if (typeof variablesNode === 'object') {
             // Object format: { var1: value1, var2: { value: value2 }, ... }
             for (const [name, varDef] of Object.entries(variablesNode)) {
-                if (this.isObject(varDef)) {
-                    const value = this.pickFirstDefined(varDef.value, varDef.default, varDef);
+                if (this.isNonArrayObject(varDef)) {
+                    const value = varDef.value;
                     if (value !== undefined) {
                         vars[name] = value;
                     }
@@ -2414,18 +2390,18 @@ class AzurePipelineParser {
     }
 
     isSingleKeyObject(element) {
-        return this.isObject(element) && Object.keys(element).length === 1;
+        return this.isNonArrayObject(element) && Object.keys(element).length === 1;
     }
 
     isEmptyObject(element) {
-        return this.isObject(element) && Object.keys(element).length === 0;
+        return this.isNonArrayObject(element) && Object.keys(element).length === 0;
     }
 
     isTemplateReference(element) {
-        return this.isObject(element) && 'template' in element;
+        return this.isNonArrayObject(element) && 'template' in element;
     }
 
-    isObject(element) {
+    isNonArrayObject(element) {
         return element && typeof element === 'object' && !Array.isArray(element);
     }
 
@@ -2722,7 +2698,7 @@ class AzurePipelineParser {
         return absoluteLocation;
     }
 
-    resolveTemplateWithinRepository(templatePath, currentDirectory, repositoryBaseDirectory) {
+    resolveTemplateWithinRepository(templatePath, cwd, repoBaseDir) {
         if (!templatePath) {
             return undefined;
         }
@@ -2734,15 +2710,12 @@ class AzurePipelineParser {
 
         const candidateBases = [];
 
-        if (repositoryBaseDirectory) {
-            candidateBases.push(repositoryBaseDirectory);
+        if (repoBaseDir) {
+            candidateBases.push(repoBaseDir);
         }
 
-        if (
-            currentDirectory &&
-            (!repositoryBaseDirectory || path.normalize(repositoryBaseDirectory) !== path.normalize(currentDirectory))
-        ) {
-            candidateBases.push(currentDirectory);
+        if (cwd && (!repoBaseDir || path.normalize(repoBaseDir) !== path.normalize(cwd))) {
+            candidateBases.push(cwd);
         }
 
         if (!candidateBases.length) {
@@ -2802,7 +2775,7 @@ class AzurePipelineParser {
                 continue;
             }
 
-            if (this.isObject(item)) {
+            if (this.isNonArrayObject(item)) {
                 const handled = this._handleSingleKeyObjectInArray(item, node, i, context, result);
                 if (handled && handled.handled) {
                     i = handled.nextIndex !== undefined ? handled.nextIndex + 1 : i + 1;
@@ -2857,7 +2830,7 @@ class AzurePipelineParser {
 
                     if (!branchTaken && this.evaluateConditional(condKey, context)) {
                         const expanded = this.expandNodePreservingTemplates(condBody, context);
-                        if (this.isObject(expanded)) {
+                        if (this.isNonArrayObject(expanded)) {
                             Object.assign(result, expanded);
                         }
                         branchTaken = true;
@@ -2873,7 +2846,7 @@ class AzurePipelineParser {
             // Handle ${{ insert }} directive
             if (this.isInsertDirective(key)) {
                 const expandedValue = this.expandNodePreservingTemplates(value, context);
-                if (expandedValue && this.isObject(expandedValue)) {
+                if (expandedValue && this.isNonArrayObject(expandedValue)) {
                     Object.assign(result, expandedValue);
                 }
                 i++;
@@ -2895,7 +2868,7 @@ class AzurePipelineParser {
         // Expand parameters but preserve template references for later expansion
         const evaluated = this.expandNodePreservingTemplates(parametersNode, context);
 
-        if (evaluated && this.isObject(evaluated)) {
+        if (evaluated && this.isNonArrayObject(evaluated)) {
             return evaluated;
         } else {
             return this._normalizeParameterArray(evaluated);
@@ -2910,7 +2883,7 @@ class AzurePipelineParser {
             if (Object.prototype.hasOwnProperty.call(item, 'name')) {
                 const key = item.name;
                 if (typeof key === 'string' && key.trim().length) {
-                    const value = this.pickFirstDefined(item.value, item.default, item.values);
+                    const value = item.default;
                     result[key.trim()] = value;
                 }
                 return;
@@ -2948,20 +2921,31 @@ class AzurePipelineParser {
     }
 
     /**
+     * Evaluate a property key from an AST node, handling computed and non-computed cases
+     * @param {*} keyNode - The key node to evaluate
+     * @param {boolean} computed - Whether the property is computed
+     * @param {*} context - The evaluation context
+     * @returns {*} The evaluated key value
+     */
+    evaluatePropertyKey(keyNode, computed, context) {
+        return computed
+            ? this.evaluateAst(keyNode, context)
+            : keyNode.type === 'Identifier'
+              ? keyNode.name
+              : this.evaluateAst(keyNode, context);
+    }
+
+    /**
      * Check if an array looks like a variables array.
      * @param {array} arr - Array to check
      * @returns {boolean}
      */
     isVariableArray(arr) {
         if (!Array.isArray(arr) || arr.length === 0) return false;
-        // Check if items look like variable definitions
         return arr.some(
             (item) =>
-                item &&
-                typeof item === 'object' &&
-                !Array.isArray(item) &&
-                (('name' in item && ('value' in item || 'default' in item)) ||
-                    (Object.keys(item).length === 1 && !('template' in item)))
+                this.isNonArrayObject(item) &&
+                (('name' in item && 'value' in item) || (Object.keys(item).length === 1 && !('template' in item)))
         );
     }
 
@@ -3127,15 +3111,6 @@ class AzurePipelineParser {
             return undefined;
         }
         return { variable: match[1], collection: match[2] };
-    }
-
-    pickFirstDefined(...values) {
-        for (const value of values) {
-            if (value !== undefined) {
-                return value;
-            }
-        }
-        return undefined;
     }
 }
 
