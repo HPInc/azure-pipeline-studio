@@ -2485,22 +2485,17 @@ class AzurePipelineParser {
             throw new Error(`Failed to parse template '${templatePath}': ${error.message}`);
         }
 
-        const { parameters: defaultParameters, parameterMap: defaultParameterMap } =
-            this.extractParameters(templateDocument);
+        const parameterInfo = this.extractParameters(templateDocument);
         const providedParameters = this.normalizeTemplateParameters(node.parameters, context);
-
+        const mergedParameters = { ...parameterInfo.parameters, ...providedParameters };
         const templateDisplayPath = repoRef ? `${repoRef.templatePath}@${repoRef.repository}` : templatePath;
-
         const updatedContext = {
             ...context,
             templateStack: [...(context.templateStack || []), templateDisplayPath],
-            parameterMap: { ...defaultParameterMap }, // Use only template's parameterMap, don't inherit parent's
+            parameterMap: { ...parameterInfo.parameterMap }, // Use only template's parameterMap, don't inherit parent's
         };
 
         this.validateTemplateParameters(templateDocument, providedParameters, templatePath, updatedContext);
-
-        const mergedParameters = { ...defaultParameters, ...providedParameters };
-
         const templateContext = this.createTemplateContext(updatedContext, mergedParameters, templateBaseDir, {
             repositoryBaseDir: repoBaseDirForContext,
         });
@@ -2515,9 +2510,7 @@ class AzurePipelineParser {
     }
 
     parseRepositoryTemplateReference(templatePathValue) {
-        if (typeof templatePathValue !== 'string') {
-            return undefined;
-        }
+        if (typeof templatePathValue !== 'string') return undefined;
 
         const atIndex = templatePathValue.lastIndexOf('@');
         if (atIndex <= 0 || atIndex === templatePathValue.length - 1) {
@@ -2590,9 +2583,7 @@ class AzurePipelineParser {
             (value) => typeof value === 'string' && value.trim().length
         );
 
-        if (!location) {
-            return undefined;
-        }
+        if (!location) return undefined;
 
         const replaced = this.replaceExpressionsInString(location, context);
         if (!replaced || typeof replaced !== 'string') {
@@ -2600,9 +2591,7 @@ class AzurePipelineParser {
         }
 
         const trimmed = replaced.trim();
-        if (!trimmed) {
-            return undefined;
-        }
+        if (!trimmed) return undefined;
 
         const expanded = this.expandUserHome(trimmed);
 
@@ -2621,9 +2610,7 @@ class AzurePipelineParser {
     }
 
     expandUserHome(input) {
-        if (typeof input !== 'string') {
-            return input;
-        }
+        if (typeof input !== 'string') return input;
 
         if (input.startsWith('~')) {
             return path.join(os.homedir(), input.slice(1));
@@ -2635,9 +2622,7 @@ class AzurePipelineParser {
     resolveRepositoryBaseDirectory(repoLocation, context) {
         const fallback = context.baseDir || process.cwd();
 
-        if (!repoLocation) {
-            return fallback;
-        }
+        if (!repoLocation) return fallback;
 
         const absoluteLocation = path.isAbsolute(repoLocation) ? repoLocation : path.resolve(fallback, repoLocation);
         try {
@@ -2656,9 +2641,7 @@ class AzurePipelineParser {
     }
 
     resolveRepoTemplate(templatePath, cwd, repoBaseDir) {
-        if (!templatePath) {
-            return undefined;
-        }
+        if (!templatePath) return undefined;
 
         const parts = String(templatePath)
             .replace(/^[\\/]+/, '')
