@@ -1438,7 +1438,7 @@ class AzurePipelineParser {
                     hadMultilineExpr: this.hasTemplateExpr(value) && this.isMultilineString(value),
                     stringHadExpressions: this.hasTemplateExpr(value),
                     lastLineHadExpression: this.lastLineHasTemplateExpression(value) && this.isMultilineString(value),
-                    isSingleLineFullExpression: this.isFullExpression(value) && !this.isMultilineString(value),
+                    isSingleLineFullExpression: this.isSingleLineFullExpression(value),
                     isMixedExpression: false,
                 };
                 flags.isMixedExpression = flags.stringHadExpressions && !flags.isSingleLineFullExpression;
@@ -1822,9 +1822,7 @@ class AzurePipelineParser {
                 if (lower === '__false__') return 'False';
             }
             // Handle JavaScript booleans
-            if (typeof value === 'boolean') {
-                return this.returnBoolean(value);
-            }
+            if (typeof value === 'boolean') return this.returnBoolean(value);
             return String(value);
         });
 
@@ -1836,28 +1834,18 @@ class AzurePipelineParser {
     }
 
     evaluateExpression(expression, context) {
-        if (expression == null) {
-            return undefined;
-        }
+        if (expression == null) return undefined;
 
         const expr = String(expression).trim();
-        if (expr.length === 0) {
-            return undefined;
-        }
+        if (expr.length === 0) return undefined;
 
         const ast = this.parseExpressionAst(expr);
-        if (ast) {
-            return this.evaluateAst(ast, context);
-        }
+        if (ast) return this.evaluateAst(ast, context);
 
         const resolved = this.resolveContextValue(expr, context);
-        if (resolved !== undefined) {
-            return resolved;
-        }
+        if (resolved !== undefined) return resolved;
 
-        if (this.looksLikeContextPath(expr)) {
-            return undefined;
-        }
+        if (this.looksLikeContextPath(expr)) return undefined;
 
         return expr;
     }
@@ -2407,78 +2395,64 @@ class AzurePipelineParser {
 
     expandTemplateReference(node, context) {
         const templateRaw = node.template;
-        const templatePathValue =
+        const templatePath =
             typeof templateRaw === 'string'
                 ? this.replaceExpressionsInString(templateRaw, context)
                 : this.expandScalar(templateRaw, context);
 
-        if (!templatePathValue || typeof templatePathValue !== 'string') {
+        if (!templatePath || typeof templatePath !== 'string') {
             return [];
         }
 
-        const repositoryRef = this.parseRepositoryTemplateReference(templatePathValue);
+        const repoRef = this.parseRepositoryTemplateReference(templatePath);
 
         let resolvedPath;
         let templateBaseDir;
-        let repositoryBaseDirectoryForContext = context.repositoryBaseDir || undefined;
+        let repoBaseDirForContext = context.repositoryBaseDir || undefined;
 
-        if (repositoryRef) {
-            const repositoryEntry = this.resolveRepositoryEntry(repositoryRef.repository, context);
-            if (!repositoryEntry) {
+        if (repoRef) {
+            const repoEntry = this.resolveRepositoryEntry(repoRef.repository, context);
+            if (!repoEntry) {
                 throw new Error(
-                    `Repository resource '${repositoryRef.repository}' is not defined for template '${templatePathValue}'.`
+                    `Repository resource '${repoRef.repository}' is not defined for template '${templatePath}'.`
                 );
             }
 
-            const repositoryLocation = this.resolveRepositoryLocation(repositoryEntry, context);
+            const repositoryLocation = this.resolveRepositoryLocation(repoEntry, context);
             if (!repositoryLocation) {
                 throw new Error(
-                    `Repository resource '${repositoryRef.repository}' does not define a local location. ` +
+                    `Repository resource '${repoRef.repository}' does not define a local location. ` +
                         `Set a 'location' for this resource (for example via the 'azurePipelineStudio.resourceLocations' setting).`
                 );
             }
 
-            const repositoryBaseDirectory = this.resolveRepositoryBaseDirectory(repositoryLocation, context);
-            repositoryBaseDirectoryForContext = repositoryBaseDirectory;
-            const currentDirectory = context.baseDir || repositoryBaseDirectory;
-            resolvedPath = this.resolveTemplateWithinRepository(
-                repositoryRef.templatePath,
-                currentDirectory,
-                repositoryBaseDirectory
-            );
-
+            const repoBaseDir = this.resolveRepositoryBaseDirectory(repositoryLocation, context);
+            repoBaseDirForContext = repoBaseDir;
+            const currentDir = context.baseDir || repoBaseDir;
+            resolvedPath = this.resolveRepoTemplate(repoRef.templatePath, currentDir, repoBaseDir);
             if (!resolvedPath) {
                 throw new Error(
-                    `Template file not found for repository '${repositoryRef.repository}': ${repositoryRef.templatePath}`
+                    `Template file not found for repository '${repoRef.repository}': ${repoRef.templatePath}`
                 );
             }
 
             templateBaseDir = path.dirname(resolvedPath);
         } else {
-            const repositoryBaseDirectory = context.repositoryBaseDir || undefined;
-            const candidatePath = this.resolveTemplateWithinRepository(
-                templatePathValue,
-                context.baseDir,
-                repositoryBaseDirectory
-            );
-
+            const repoBaseDir = context.repositoryBaseDir || undefined;
+            const candidatePath = this.resolveRepoTemplate(templatePath, context.baseDir, repoBaseDir);
             if (candidatePath) {
                 resolvedPath = candidatePath;
                 templateBaseDir = path.dirname(resolvedPath);
-                repositoryBaseDirectoryForContext = repositoryBaseDirectoryForContext || repositoryBaseDirectory;
+                repoBaseDirForContext = repoBaseDirForContext || repoBaseDir;
             } else {
                 const baseDir = context.baseDir || process.cwd();
-                resolvedPath = path.isAbsolute(templatePathValue)
-                    ? templatePathValue
-                    : path.resolve(baseDir, templatePathValue);
+                resolvedPath = path.isAbsolute(templatePath) ? templatePath : path.resolve(baseDir, templatePath);
                 templateBaseDir = path.dirname(resolvedPath);
             }
         }
 
         if (!fs.existsSync(resolvedPath)) {
-            const identifier = repositoryRef
-                ? `${repositoryRef.templatePath}@${repositoryRef.repository}`
-                : templatePathValue;
+            const identifier = repoRef ? `${repoRef.templatePath}@${repoRef.repository}` : templatePath;
             throw new Error(`Template file not found: ${identifier}`);
         }
 
@@ -2508,16 +2482,14 @@ class AzurePipelineParser {
 
             templateDocument = yamlDoc.toJSON() || {};
         } catch (error) {
-            throw new Error(`Failed to parse template '${templatePathValue}': ${error.message}`);
+            throw new Error(`Failed to parse template '${templatePath}': ${error.message}`);
         }
 
         const { parameters: defaultParameters, parameterMap: defaultParameterMap } =
             this.extractParameters(templateDocument);
         const providedParameters = this.normalizeTemplateParameters(node.parameters, context);
 
-        const templateDisplayPath = repositoryRef
-            ? `${repositoryRef.templatePath}@${repositoryRef.repository}`
-            : templatePathValue;
+        const templateDisplayPath = repoRef ? `${repoRef.templatePath}@${repoRef.repository}` : templatePath;
 
         const updatedContext = {
             ...context,
@@ -2525,12 +2497,12 @@ class AzurePipelineParser {
             parameterMap: { ...defaultParameterMap }, // Use only template's parameterMap, don't inherit parent's
         };
 
-        this.validateTemplateParameters(templateDocument, providedParameters, templatePathValue, updatedContext);
+        this.validateTemplateParameters(templateDocument, providedParameters, templatePath, updatedContext);
 
         const mergedParameters = { ...defaultParameters, ...providedParameters };
 
         const templateContext = this.createTemplateContext(updatedContext, mergedParameters, templateBaseDir, {
-            repositoryBaseDir: repositoryBaseDirectoryForContext,
+            repositoryBaseDir: repoBaseDirForContext,
         });
         const expandedTemplate = this.expandNode(templateDocument, templateContext) || {};
 
@@ -2570,61 +2542,53 @@ class AzurePipelineParser {
             return undefined;
         }
 
-        let repositoryEntry = undefined;
+        let repoEntry = undefined;
 
         // First check YAML-defined resources
         if (context.resources) {
             const repositories = context.resources.repositories;
             if (repositories) {
                 if (repositories[alias]) {
-                    repositoryEntry = repositories[alias];
+                    repoEntry = repositories[alias];
                 } else if (Array.isArray(repositories)) {
-                    repositoryEntry = repositories.find((entry) => this.getRepositoryAlias(entry) === alias);
+                    repoEntry = repositories.find((entry) => this.getRepositoryAlias(entry) === alias);
                 }
             }
         }
 
         // If found in YAML but has no location, supplement with external resourceLocations
-        if (repositoryEntry && context.resourceLocations && context.resourceLocations[alias]) {
+        if (repoEntry && context.resourceLocations && context.resourceLocations[alias]) {
             // Check if the repository entry already has a location field
-            const hasLocation =
-                repositoryEntry.location ||
-                repositoryEntry.path ||
-                repositoryEntry.directory ||
-                repositoryEntry.localPath;
-
+            const hasLocation = repoEntry.location || repoEntry.path || repoEntry.directory || repoEntry.localPath;
             if (!hasLocation) {
                 // Add location from external resourceLocations
-                repositoryEntry = {
-                    ...repositoryEntry,
+                repoEntry = {
+                    ...repoEntry,
                     location: context.resourceLocations[alias],
                 };
             }
         }
 
         // If not found in YAML at all, check external resourceLocations
-        if (!repositoryEntry && context.resourceLocations && context.resourceLocations[alias]) {
+        if (!repoEntry && context.resourceLocations && context.resourceLocations[alias]) {
             // Return a minimal repository entry with the location
-            repositoryEntry = {
+            repoEntry = {
                 repository: alias,
                 location: context.resourceLocations[alias],
             };
         }
 
-        return repositoryEntry;
+        return repoEntry;
     }
 
-    resolveRepositoryLocation(repositoryEntry, context) {
-        if (!repositoryEntry || typeof repositoryEntry !== 'object') {
+    resolveRepositoryLocation(repoEntry, context) {
+        if (!repoEntry || typeof repoEntry !== 'object') {
             return undefined;
         }
 
-        const location = [
-            repositoryEntry.location,
-            repositoryEntry.path,
-            repositoryEntry.directory,
-            repositoryEntry.localPath,
-        ].find((value) => typeof value === 'string' && value.trim().length);
+        const location = [repoEntry.location, repoEntry.path, repoEntry.directory, repoEntry.localPath].find(
+            (value) => typeof value === 'string' && value.trim().length
+        );
 
         if (!location) {
             return undefined;
@@ -2642,18 +2606,14 @@ class AzurePipelineParser {
 
         const expanded = this.expandUserHome(trimmed);
 
-        if (expanded && typeof repositoryEntry === 'object') {
+        if (expanded && typeof repoEntry === 'object') {
             // Preserve original value so callers can reference the resolved location later.
-            repositoryEntry.__resolvedLocation = expanded;
+            repoEntry.__resolvedLocation = expanded;
 
-            if (
-                !repositoryEntry.location ||
-                repositoryEntry.location === location ||
-                repositoryEntry.location === trimmed
-            ) {
-                repositoryEntry.location = expanded;
-            } else if (!repositoryEntry.localLocation) {
-                repositoryEntry.localLocation = expanded;
+            if (!repoEntry.location || repoEntry.location === location || repoEntry.location === trimmed) {
+                repoEntry.location = expanded;
+            } else if (!repoEntry.localLocation) {
+                repoEntry.localLocation = expanded;
             }
         }
 
@@ -2672,17 +2632,14 @@ class AzurePipelineParser {
         return input;
     }
 
-    resolveRepositoryBaseDirectory(repositoryLocation, context) {
+    resolveRepositoryBaseDirectory(repoLocation, context) {
         const fallback = context.baseDir || process.cwd();
 
-        if (!repositoryLocation) {
+        if (!repoLocation) {
             return fallback;
         }
 
-        const absoluteLocation = path.isAbsolute(repositoryLocation)
-            ? repositoryLocation
-            : path.resolve(fallback, repositoryLocation);
-
+        const absoluteLocation = path.isAbsolute(repoLocation) ? repoLocation : path.resolve(fallback, repoLocation);
         try {
             const stat = fs.statSync(absoluteLocation);
             if (stat.isFile()) {
@@ -2698,7 +2655,7 @@ class AzurePipelineParser {
         return absoluteLocation;
     }
 
-    resolveTemplateWithinRepository(templatePath, cwd, repoBaseDir) {
+    resolveRepoTemplate(templatePath, cwd, repoBaseDir) {
         if (!templatePath) {
             return undefined;
         }
@@ -2710,17 +2667,13 @@ class AzurePipelineParser {
 
         const candidateBases = [];
 
-        if (repoBaseDir) {
-            candidateBases.push(repoBaseDir);
-        }
+        if (repoBaseDir) candidateBases.push(repoBaseDir);
 
         if (cwd && (!repoBaseDir || path.normalize(repoBaseDir) !== path.normalize(cwd))) {
             candidateBases.push(cwd);
         }
 
-        if (!candidateBases.length) {
-            return undefined;
-        }
+        if (!candidateBases.length) return undefined;
 
         const candidateFiles = candidateBases.map((base) =>
             parts.length ? path.resolve(base, ...parts) : path.normalize(base)
@@ -2729,9 +2682,7 @@ class AzurePipelineParser {
         for (const candidate of candidateFiles) {
             try {
                 const stat = fs.statSync(candidate);
-                if (stat.isFile()) {
-                    return path.normalize(candidate);
-                }
+                if (stat.isFile()) return path.normalize(candidate);
             } catch (error) {
                 // Candidate does not exist relative to this base; continue searching
             }
@@ -2741,18 +2692,9 @@ class AzurePipelineParser {
     }
 
     expandNodePreservingTemplates(node, context) {
-        if (node === null || node === undefined) {
-            return node;
-        }
-
-        if (Array.isArray(node)) {
-            return this._expandArrayPreservingTemplates(node, context);
-        }
-
-        if (typeof node === 'object') {
-            return this._expandObjectPreservingTemplates(node, context);
-        }
-
+        if (node === null) return node;
+        if (Array.isArray(node)) return this._expandArrayPreservingTemplates(node, context);
+        if (typeof node === 'object') return this._expandObjectPreservingTemplates(node, context);
         return this.expandScalar(node, context);
     }
 
@@ -3024,6 +2966,14 @@ class AzurePipelineParser {
 
     isMultilineString(value) {
         return typeof value === 'string' && value.includes('\n');
+    }
+
+    isSingleLineFullExpression(value) {
+        if (typeof value !== 'string') {
+            return false;
+        }
+        const trimmed = value.trim();
+        return this.isFullExpression(trimmed) && !trimmed.includes('\n');
     }
 
     hasTemplateExpr(value) {
