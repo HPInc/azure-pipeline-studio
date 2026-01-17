@@ -216,20 +216,15 @@ class AzurePipelineParser {
         // Delegate to the generic traversal with a handler that applies stored styles
         const handler = this.buildQuoteHandler(this.getQuoteStyle.bind(this), {
             post: (quoteStyle, valueNode, pathArr) => {
-                if (valueNode?.value !== undefined && typeof valueNode.value === 'string') {
-                    const uniqueKey = this.getQuoteStyleUniqueKey(pathArr, valueNode.value);
-                    const hadMixedExpression = stringsWithExpressions.has(uniqueKey);
-                    const hasColon = valueNode.value.includes(':');
-                    const hasRuntimeVar = /\$\([^)]+\)/.test(valueNode.value);
-
-                    if (hadMixedExpression) {
+                if (this.isStringNodeValue(valueNode)) {
+                    if (this.hadMixedExpression(valueNode.value, pathArr, context)) {
                         valueNode.type = 'PLAIN';
-                    } else if (hasRuntimeVar) {
+                    } else if (this.hasRuntimeVariable(valueNode.value)) {
                         valueNode.type = 'PLAIN';
-                    } else if (hasColon) {
-                        valueNode.type = 'QUOTE_SINGLE';
                     } else if (quoteStyle) {
                         valueNode.type = quoteStyle;
+                    } else if (this.hasColon(valueNode.value)) {
+                        valueNode.type = 'QUOTE_SINGLE';
                     }
                 }
             },
@@ -247,12 +242,8 @@ class AzurePipelineParser {
      * @returns {string} - unique key for quote style lookup
      */
     getQuoteStyleUniqueKey(path, value) {
-        // Filter out conditional directive segments
         const normalizedPath = path.filter((segment) => {
-            // Remove conditional directives: ${{ if ... }}, ${{ else }}, ${{ elseif ... }}
-            if (typeof segment === 'string' && segment.includes('${{')) {
-                return false;
-            }
+            if (this.hasTemplateExpr(segment)) return false;
             return true;
         });
 
@@ -295,12 +286,14 @@ class AzurePipelineParser {
         if (!quoteStyles) return undefined;
 
         const keyName = keyNode && keyNode.value ? keyNode.value : undefined;
-        const valContent = valueNode && typeof valueNode.value === 'string' ? valueNode.value : undefined;
+        const valContent = this.isStringNodeValue(valueNode) ? valueNode.value : undefined;
 
         // Lookup using the same unique key generation as setQuoteStyle
         if (keyName !== undefined && valContent !== undefined) {
             const uniqueKey = this.getQuoteStyleUniqueKey(path, valContent);
-            return quoteStyles.get(uniqueKey);
+            const style = quoteStyles.get(uniqueKey);
+
+            return style;
         }
 
         return undefined;
@@ -325,7 +318,6 @@ class AzurePipelineParser {
 
                 path.push(keyNode.value);
                 //console.log(`Visiting path: ${path.join('.')}`);
-                //console.log(keyNode.value);
                 if (`${path.join('.')}`.includes('stages.4.jobs.0.steps.4.env.PATTERNS')) {
                     console.log(
                         `Restoring quote style for PATTERNS at path: ${path.join('.')}, value: '${pair.value?.value}'`
@@ -364,7 +356,7 @@ class AzurePipelineParser {
         return (pair, pathArr, qStyles) => {
             const keyNode = pair.key;
             const valueNode = pair.value;
-            if (!keyNode || !keyNode.value || !valueNode || typeof valueNode.value !== 'string') {
+            if (!this.isStringNodeValue(keyNode) || !this.isStringNodeValue(valueNode)) {
                 return;
             }
 
@@ -424,63 +416,6 @@ class AzurePipelineParser {
         } else if (node.items && node.constructor.name === 'YAMLSeq') {
             for (const item of node.items) this.applyBlockScalarStyles(item, context);
         }
-    }
-
-    hasTrailingSpaces(content) {
-        const lines = content.split('\n');
-        return lines.some((line, idx) => (idx < lines.length - 1 || line !== '' ? /[ \t]$/.test(line) : false));
-    }
-
-    /**
-     * Return true when the provided value is a string containing at least one newline.
-     * Safely returns false for non-strings.
-     * @param {any} value
-     * @returns {boolean}
-     */
-    isMultilineString(value) {
-        return typeof value === 'string' && value.includes('\n');
-    }
-
-    /**
-     * Return true when the provided value is a string containing a template expression
-     * in the form ${{ ... }}. Safely returns false for non-strings.
-     * @param {any} value
-     * @returns {boolean}
-     */
-    hasTemplateExpr(value) {
-        return typeof value === 'string' && value.includes('${{');
-    }
-
-    normalizeTrailingNewlines(content, azureCompatible) {
-        if (azureCompatible) {
-            return /\n[ \t]*\n\s*$/.test(content) ? content.replace(/\n+$/, '') + '\n\n' : content;
-        }
-        return /\n\n+$/.test(content) ? content.replace(/\n+$/, '') + '\n' : content;
-    }
-
-    /**
-     * Check if the last non-empty line is an Azure compile-time variable expression
-     * Used to determine if "keep" (+) chomping should be applied BEFORE expansion
-     * The line must end with }} to be considered a template expression line
-     * @param {string} content - The block scalar content (before expansion)
-     * @returns {boolean} - True if last non-empty line ends with }}
-     */
-    lastLineHasTemplateExpression(content) {
-        if (!content || !this.isMultilineString(content)) {
-            return false;
-        }
-
-        // Split into lines and find last non-empty line
-        const lines = content.split('\n');
-        for (let i = lines.length - 1; i >= 0; i--) {
-            const line = lines[i].trim();
-            if (line) {
-                // Check if this line ends with }} (is a compile-time variable expression)
-                // This matches lines like: ${{ parameters.properties }}
-                return line.endsWith('}}');
-            }
-        }
-        return false;
     }
 
     buildExecutionContext(document, overrides) {
@@ -943,7 +878,7 @@ class AzurePipelineParser {
         }
 
         // If this is the root call (parentKey is null), handle all metadata
-        if (parentKey === null && expanded && typeof expanded === 'object' && !Array.isArray(expanded)) {
+        if (parentKey === null && this.isObject(expanded)) {
             // Attach script metadata collected during expansion
             expanded.__scriptsWithExpressions = context.scriptsWithExpressions || new Set();
             expanded.__scriptsWithLastLineExpressions = context.scriptsWithLastLineExpressions || new Set();
@@ -1343,7 +1278,7 @@ class AzurePipelineParser {
 
         // Handle mixed expressions (not full expressions)
         if (isMixedExpression && !this.isMultilineString(expandedValue)) {
-            if (!expandedValue.includes(':')) {
+            if (!this.hasColon(expandedValue)) {
                 if (!context.stringsWithExpressions) {
                     context.stringsWithExpressions = new Set();
                 }
@@ -1352,26 +1287,35 @@ class AzurePipelineParser {
             return;
         }
 
+        let quoteStyle = null;
         // Handle full expressions that expanded
-        if (isSingleLineFullExpression && expandedValue !== originalValue) {
-            // First, try to look up quote style using the original expression
-            const originalKey = this.getQuoteStyleUniqueKey(fullPath, originalValue);
-            let quoteStyle = quoteStyles.get(originalKey);
+        if (isSingleLineFullExpression) {
+            if (originalValue == '${{ parameters.patterns }}') {
+                console.log(`Looking up quote style for empty expansion at key '${originalValue}'`);
+            }
 
-            // If not found and it's a parameter, try the parameter's definition path
-            if (!quoteStyle && this.isParameter(originalValue)) {
-                const param = this.stripExpressionDelimiters(originalValue);
-                let parameterPath = fullPath;
-                if (context.parameterMap[param]) {
-                    parameterPath = context.parameterMap[param].split('.');
+            if (expandedValue === '' || this.globQuotePattern.test(expandedValue)) {
+                // First, try to look up quote style using the original expression
+                const originalKey = this.getQuoteStyleUniqueKey(fullPath, originalValue);
+                quoteStyle = quoteStyles.get(originalKey);
+
+                // If not found and it's a parameter, try the parameter's definition path
+                if (!quoteStyle && this.isParameter(originalValue)) {
+                    const param = this.stripExpressionDelimiters(originalValue);
+                    let parameterPath = fullPath;
+                    if (context.parameterMap[param]) {
+                        parameterPath = context.parameterMap[param].split('.');
+                    }
+                    const parameterKey = this.getQuoteStyleUniqueKey(parameterPath, expandedValue);
+                    quoteStyle = quoteStyles.get(parameterKey);
                 }
-                const parameterKey = this.getQuoteStyleUniqueKey(parameterPath, expandedValue);
-                quoteStyle = quoteStyles.get(parameterKey);
+            } else {
+                quoteStyle = 'PLAIN';
             }
 
             // Apply the quote style to the expanded value
             if (quoteStyle) {
-                quoteStyles.set(expansionPathKey, expandedValue.includes(':') ? 'QUOTE_SINGLE' : quoteStyle);
+                quoteStyles.set(expansionPathKey, this.hasColon(expandedValue) ? 'QUOTE_SINGLE' : quoteStyle);
 
                 // Also set for variable path if applicable
                 if (context.expansionPath.length >= 3 && context.expansionPath[2] === 'variables') {
@@ -1477,7 +1421,7 @@ class AzurePipelineParser {
                 continue;
             } else if (this.isInsertDirective(rawKey)) {
                 const expandedValue = this.expandNodePreservingTemplates(value, context);
-                if (expandedValue && typeof expandedValue === 'object' && !Array.isArray(expandedValue)) {
+                if (this.isObject(expandedValue)) {
                     Object.assign(result, expandedValue);
                 }
                 continue;
@@ -1691,7 +1635,7 @@ class AzurePipelineParser {
     expandConditionalMappingBranch(body, context) {
         if (Array.isArray(body)) {
             return this.expandArray(body, context).reduce((acc, item) => {
-                if (item && typeof item === 'object' && !Array.isArray(item)) {
+                if (this.isObject(item)) {
                     return { ...acc, ...item };
                 }
                 return acc;
@@ -2284,7 +2228,7 @@ class AzurePipelineParser {
             }
             // If we're accessing a nested property (not top-level) that doesn't exist on an object,
             // return empty string instead of undefined (Azure DevOps behavior)
-            if (i > 0 && typeof value === 'object' && !Array.isArray(value) && !(segment in value)) {
+            if (i > 0 && this.isObject(value) && !(segment in value)) {
                 return '';
             }
             value = value[segment];
@@ -2353,7 +2297,7 @@ class AzurePipelineParser {
     createTemplateContext(parent, parameterOverrides, baseDir, options = {}) {
         return {
             parameters: { ...parameterOverrides }, // Only use template's own parameters - don't inherit parent's
-            parameterMap: {}, // Don't inherit parent's parameterMap - template parameters are scoped to the template
+            parameterMap: { ...parent.parameterMap }, // Preserve parameterMap for this template expansion
             variables: { ...parent.variables }, // Preserve variables from parent context (includes overrides)
             globalVariables: parent.globalVariables,
             stageVariables: parent.stageVariables,
@@ -2444,7 +2388,7 @@ class AzurePipelineParser {
 
         if (Array.isArray(variablesNode)) {
             for (const item of variablesNode) {
-                if (item && typeof item === 'object' && !Array.isArray(item)) {
+                if (this.isObject(item)) {
                     const name = item.name;
                     const value = this.pickFirstDefined(item.value, item.default);
                     if (name && value !== undefined) {
@@ -2455,7 +2399,7 @@ class AzurePipelineParser {
         } else if (typeof variablesNode === 'object') {
             // Object format: { var1: value1, var2: { value: value2 }, ... }
             for (const [name, varDef] of Object.entries(variablesNode)) {
-                if (varDef && typeof varDef === 'object' && !Array.isArray(varDef)) {
+                if (this.isObject(varDef)) {
                     const value = this.pickFirstDefined(varDef.value, varDef.default, varDef);
                     if (value !== undefined) {
                         vars[name] = value;
@@ -2470,11 +2414,19 @@ class AzurePipelineParser {
     }
 
     isSingleKeyObject(element) {
-        return element && typeof element === 'object' && !Array.isArray(element) && Object.keys(element).length === 1;
+        return this.isObject(element) && Object.keys(element).length === 1;
+    }
+
+    isEmptyObject(element) {
+        return this.isObject(element) && Object.keys(element).length === 0;
     }
 
     isTemplateReference(element) {
-        return element && typeof element === 'object' && !Array.isArray(element) && 'template' in element;
+        return this.isObject(element) && 'template' in element;
+    }
+
+    isObject(element) {
+        return element && typeof element === 'object' && !Array.isArray(element);
     }
 
     expandTemplateReference(node, context) {
@@ -2594,20 +2546,16 @@ class AzurePipelineParser {
         const updatedContext = {
             ...context,
             templateStack: [...(context.templateStack || []), templateDisplayPath],
-            parameterMap: { ...context.parameterMap, ...defaultParameterMap }, // Merge template's parameterMap
+            parameterMap: { ...defaultParameterMap }, // Use only template's parameterMap, don't inherit parent's
         };
 
         this.validateTemplateParameters(templateDocument, providedParameters, templatePathValue, updatedContext);
 
         const mergedParameters = { ...defaultParameters, ...providedParameters };
 
-        console.debug(`Current template path: ${templateDisplayPath}`);
         const templateContext = this.createTemplateContext(updatedContext, mergedParameters, templateBaseDir, {
             repositoryBaseDir: repositoryBaseDirectoryForContext,
         });
-        console.debug(
-            `stageIndex: ${templateContext.stageIndex} jobIndex: ${templateContext.jobIndex} stepIndex: ${templateContext.stepIndex}`
-        );
         const expandedTemplate = this.expandNode(templateDocument, templateContext) || {};
 
         // Convert template variables to array format before extracting body
@@ -2824,113 +2772,119 @@ class AzurePipelineParser {
             return node;
         }
 
-        // Helper to push expanded values into result array
-        const pushExpanded = (result, expanded) => {
-            if (expanded === null || expanded === undefined) return;
-            if (Array.isArray(expanded)) {
-                result.push(...expanded);
-            } else {
-                result.push(expanded);
-            }
-        };
-
         if (Array.isArray(node)) {
-            const result = [];
-            let i = 0;
-
-            while (i < node.length) {
-                const item = node[i];
-
-                if (this.isTemplateReference(item)) {
-                    result.push(item);
-                    i++;
-                    continue;
-                }
-
-                if (typeof item === 'object' && item !== null && !Array.isArray(item)) {
-                    const handled = this._handleSingleKeyObjectInArray(item, node, i, context, result);
-                    if (handled && handled.handled) {
-                        i = handled.nextIndex !== undefined ? handled.nextIndex + 1 : i + 1;
-                        continue;
-                    }
-                }
-
-                const expanded = this.expandNodePreservingTemplates(item, context);
-                if (expanded !== null && expanded !== undefined) {
-                    if (
-                        typeof expanded === 'object' &&
-                        !Array.isArray(expanded) &&
-                        Object.keys(expanded).length === 0
-                    ) {
-                        i++;
-                        continue;
-                    }
-                    result.push(expanded);
-                }
-                i++;
-            }
-            return result;
+            return this._expandArrayPreservingTemplates(node, context);
         }
 
         if (typeof node === 'object') {
-            if (this.isTemplateReference(node)) {
-                const result = { template: node.template };
-                if (node.parameters) {
-                    result.parameters = this.expandNodePreservingTemplates(node.parameters, context);
-                }
-                return result;
+            return this._expandObjectPreservingTemplates(node, context);
+        }
+
+        return this.expandScalar(node, context);
+    }
+
+    /**
+     * Expand an array node while preserving template references.
+     * @param {array} node - The array to expand
+     * @param {object} context - Expansion context
+     * @returns {array} - Expanded array
+     */
+    _expandArrayPreservingTemplates(node, context) {
+        const result = [];
+        let i = 0;
+
+        while (i < node.length) {
+            const item = node[i];
+
+            if (this.isTemplateReference(item)) {
+                result.push(item);
+                i++;
+                continue;
             }
 
-            const result = {};
-            const entries = Object.entries(node);
-            let i = 0;
-
-            while (i < entries.length) {
-                const [key, value] = entries[i];
-
-                if (this.isConditionalDirective(key)) {
-                    let branchTaken = false;
-                    let j = i;
-
-                    while (j < entries.length) {
-                        const [condKey, condBody] = entries[j];
-                        if (!this.isConditionalDirective(condKey)) {
-                            break;
-                        }
-
-                        if (!branchTaken && this.evaluateConditional(condKey, context)) {
-                            const expanded = this.expandNodePreservingTemplates(condBody, context);
-                            if (expanded && typeof expanded === 'object' && !Array.isArray(expanded)) {
-                                Object.assign(result, expanded);
-                            }
-                            branchTaken = true;
-                        }
-
-                        j++;
-                        if (this.isElseDirective(condKey)) break;
-                    }
-                    i = j;
+            if (this.isObject(item)) {
+                const handled = this._handleSingleKeyObjectInArray(item, node, i, context, result);
+                if (handled && handled.handled) {
+                    i = handled.nextIndex !== undefined ? handled.nextIndex + 1 : i + 1;
                     continue;
                 }
+            }
 
-                // Handle ${{ insert }} directive
-                if (this.isInsertDirective(key)) {
-                    const expandedValue = this.expandNodePreservingTemplates(value, context);
-                    if (expandedValue && typeof expandedValue === 'object' && !Array.isArray(expandedValue)) {
-                        Object.assign(result, expandedValue);
-                    }
+            const expanded = this.expandNodePreservingTemplates(item, context);
+            if (expanded !== null) {
+                if (this.isEmptyObject(expanded)) {
                     i++;
                     continue;
                 }
+                result.push(expanded);
+            }
+            i++;
+        }
+        return result;
+    }
 
-                const expandedKey = typeof key === 'string' ? this.replaceExpressionsInString(key, context) : key;
-                result[expandedKey] = this.expandNodePreservingTemplates(value, context);
-                i++;
+    /**
+     * Expand an object node while preserving template references.
+     * @param {object} node - The object to expand
+     * @param {object} context - Expansion context
+     * @returns {object} - Expanded object
+     */
+    _expandObjectPreservingTemplates(node, context) {
+        if (this.isTemplateReference(node)) {
+            const result = { template: node.template };
+            if (node.parameters) {
+                result.parameters = this.expandNodePreservingTemplates(node.parameters, context);
             }
             return result;
         }
 
-        return this.expandScalar(node, context);
+        const result = {};
+        const entries = Object.entries(node);
+        let i = 0;
+
+        while (i < entries.length) {
+            const [key, value] = entries[i];
+
+            if (this.isConditionalDirective(key)) {
+                let branchTaken = false;
+                let j = i;
+
+                while (j < entries.length) {
+                    const [condKey, condBody] = entries[j];
+                    if (!this.isConditionalDirective(condKey)) {
+                        break;
+                    }
+
+                    if (!branchTaken && this.evaluateConditional(condKey, context)) {
+                        const expanded = this.expandNodePreservingTemplates(condBody, context);
+                        if (this.isObject(expanded)) {
+                            Object.assign(result, expanded);
+                        }
+                        branchTaken = true;
+                    }
+
+                    j++;
+                    if (this.isElseDirective(condKey)) break;
+                }
+                i = j;
+                continue;
+            }
+
+            // Handle ${{ insert }} directive
+            if (this.isInsertDirective(key)) {
+                const expandedValue = this.expandNodePreservingTemplates(value, context);
+                if (expandedValue && this.isObject(expandedValue)) {
+                    Object.assign(result, expandedValue);
+                }
+                i++;
+                continue;
+            }
+
+            const expandedKey = typeof key === 'string' ? this.replaceExpressionsInString(key, context) : key;
+            result[expandedKey] = this.expandNodePreservingTemplates(value, context);
+            i++;
+        }
+        return result;
     }
 
     normalizeTemplateParameters(parametersNode, context) {
@@ -2941,7 +2895,7 @@ class AzurePipelineParser {
         // Expand parameters but preserve template references for later expansion
         const evaluated = this.expandNodePreservingTemplates(parametersNode, context);
 
-        if (evaluated && typeof evaluated === 'object' && !Array.isArray(evaluated)) {
+        if (evaluated && this.isObject(evaluated)) {
             return evaluated;
         } else {
             return this._normalizeParameterArray(evaluated);
@@ -3077,6 +3031,72 @@ class AzurePipelineParser {
 
     isVariable(text) {
         return typeof text === 'string' && /^\$\{\{\s*variables\./.test(text.trim());
+    }
+
+    hasTrailingSpaces(content) {
+        const lines = content.split('\n');
+        return lines.some((line, idx) => (idx < lines.length - 1 || line !== '' ? /[ \t]$/.test(line) : false));
+    }
+
+    isMultilineString(value) {
+        return typeof value === 'string' && value.includes('\n');
+    }
+
+    hasTemplateExpr(value) {
+        return typeof value === 'string' && value.includes('${{');
+    }
+
+    hasRuntimeVariable(value) {
+        return typeof value === 'string' && /\$\([^)]+\)/.test(value);
+    }
+
+    hasColon(value) {
+        return typeof value === 'string' && value.includes(':');
+    }
+
+    isStringNodeValue(node) {
+        return node?.value !== undefined && typeof node.value === 'string';
+    }
+
+    // Check if a string had mixed expressions (compile-time + literal text) during expansion.
+    hadMixedExpression(value, path, context) {
+        if (typeof value !== 'string' || !context.stringsWithExpressions) {
+            return false;
+        }
+        const uniqueKey = this.getQuoteStyleUniqueKey(path, value);
+        return context.stringsWithExpressions.has(uniqueKey);
+    }
+
+    normalizeTrailingNewlines(content, azureCompatible) {
+        if (azureCompatible) {
+            return /\n[ \t]*\n\s*$/.test(content) ? content.replace(/\n+$/, '') + '\n\n' : content;
+        }
+        return /\n\n+$/.test(content) ? content.replace(/\n+$/, '') + '\n' : content;
+    }
+
+    /**
+     * Check if the last non-empty line is an Azure compile-time variable expression
+     * Used to determine if "keep" (+) chomping should be applied BEFORE expansion
+     * The line must end with }} to be considered a template expression line
+     * @param {string} content - The block scalar content (before expansion)
+     * @returns {boolean} - True if last non-empty line ends with }}
+     */
+    lastLineHasTemplateExpression(content) {
+        if (!content || !this.isMultilineString(content)) {
+            return false;
+        }
+
+        // Split into lines and find last non-empty line
+        const lines = content.split('\n');
+        for (let i = lines.length - 1; i >= 0; i--) {
+            const line = lines[i].trim();
+            if (line) {
+                // Check if this line ends with }} (is a compile-time variable expression)
+                // This matches lines like: ${{ parameters.properties }}
+                return line.endsWith('}}');
+            }
+        }
+        return false;
     }
 
     parseIfCondition(text) {
