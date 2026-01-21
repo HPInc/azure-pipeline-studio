@@ -211,20 +211,22 @@ class AzurePipelineParser {
      */
     restoreQuoteStyles(node, path, context = {}) {
         const quoteStyles = this._getQuoteStylesMap(context);
-        const stringsWithExpressions = context.stringsWithExpressions || new Set();
 
         // Delegate to the generic traversal with a handler that applies stored styles
         const handler = this.buildQuoteHandler(this.getQuoteStyle.bind(this), {
             post: (quoteStyle, valueNode, pathArr) => {
                 if (this.isStringNodeValue(valueNode)) {
-                    if (this.hadMixedExpression(valueNode.value, pathArr, context)) {
+                    if (valueNode.value === '') {
+                        // Azure normalizes empty strings to single quotes (check this first before other conditions)
+                        valueNode.type = 'QUOTE_SINGLE';
+                    } else if (this.hadMixedExpression(valueNode.value, pathArr, context)) {
                         valueNode.type = 'PLAIN';
                     } else if (this.hasRuntimeVariable(valueNode.value)) {
                         valueNode.type = 'PLAIN';
-                    } else if (quoteStyle) {
-                        valueNode.type = quoteStyle;
                     } else if (this.hasColon(valueNode.value)) {
                         valueNode.type = 'QUOTE_SINGLE';
+                    } else if (quoteStyle) {
+                        valueNode.type = quoteStyle;
                     }
                 }
             },
@@ -1201,6 +1203,18 @@ class AzurePipelineParser {
         return context.quoteResult?.quoteStyles || new Map();
     }
 
+    ensureContextSet(container, key) {
+        const existing = container && container[key];
+        if (existing instanceof Set) return existing;
+        const set = new Set();
+        if (container) container[key] = set;
+        return set;
+    }
+
+    ensureStringsWithExpressions(context) {
+        return this.ensureContextSet(context, 'stringsWithExpressions');
+    }
+
     /**
      * Track a string value that had template expressions for quote and script handling.
      * @param {string} expandedValue - The expanded string value
@@ -1214,16 +1228,10 @@ class AzurePipelineParser {
 
         const contentKey = expandedValue.replace(/\s+$/, '');
 
-        if (!context.scriptsWithExpressions) {
-            context.scriptsWithExpressions = new Set();
-        }
-        context.scriptsWithExpressions.add(contentKey);
+        this.ensureContextSet(context, 'scriptsWithExpressions').add(contentKey);
 
         if (lastLineHadExpression) {
-            if (!context.scriptsWithLastLineExpressions) {
-                context.scriptsWithLastLineExpressions = new Set();
-            }
-            context.scriptsWithLastLineExpressions.add(contentKey);
+            this.ensureContextSet(context, 'scriptsWithLastLineExpressions').add(contentKey);
         }
     }
 
@@ -1279,10 +1287,7 @@ class AzurePipelineParser {
         // Handle mixed expressions (not full expressions)
         if (isMixedExpression && !this.isMultilineString(expandedValue)) {
             if (!this.hasColon(expandedValue)) {
-                if (!context.stringsWithExpressions) {
-                    context.stringsWithExpressions = new Set();
-                }
-                context.stringsWithExpressions.add(expansionPathKey);
+                this.ensureStringsWithExpressions(context).add(expansionPathKey);
             }
             return;
         }
@@ -1294,23 +1299,36 @@ class AzurePipelineParser {
                 console.log(`Looking up quote style for empty expansion at key '${originalValue}'`);
             }
 
-            if (expandedValue === '' || this.globQuotePattern.test(expandedValue)) {
-                // First, try to look up quote style using the original expression
-                const originalKey = this.getQuoteStyleUniqueKey(fullPath, originalValue);
-                quoteStyle = quoteStyles.get(originalKey);
+            // First, try to look up quote style using the original expression (for all cases)
+            const originalKey = this.getQuoteStyleUniqueKey(fullPath, originalValue);
+            quoteStyle = quoteStyles.get(originalKey);
 
-                // If not found and it's a parameter, try the parameter's definition path
-                if (!quoteStyle && this.isParameter(originalValue)) {
-                    const param = this.stripExpressionDelimiters(originalValue);
+            // If not found and value is empty or glob pattern, try parameter lookup
+            if (!quoteStyle && (expandedValue === '' || this.globQuotePattern.test(expandedValue))) {
+                const param = this.stripExpressionDelimiters(originalValue);
+                let sourceParam = null;
+
+                // Try to extract parameter from function calls like trim(parameters.x)
+                if (param.includes('(') && param.includes(')')) {
+                    sourceParam = this.extractSourceParameter(param);
+                } else if (this.isParameter(originalValue)) {
+                    sourceParam = param;
+                }
+
+                // Look up the source parameter's quote style
+                if (sourceParam) {
                     let parameterPath = fullPath;
-                    if (context.parameterMap[param]) {
-                        parameterPath = context.parameterMap[param].split('.');
+                    if (context.parameterMap[sourceParam]) {
+                        parameterPath = context.parameterMap[sourceParam].split('.');
                     }
                     const parameterKey = this.getQuoteStyleUniqueKey(parameterPath, expandedValue);
                     quoteStyle = quoteStyles.get(parameterKey);
                 }
-            } else {
-                quoteStyle = 'PLAIN';
+
+                // If still not found and it's a glob pattern, default to single quotes (Azure convention)
+                if (!quoteStyle && this.globQuotePattern.test(expandedValue)) {
+                    quoteStyle = 'QUOTE_SINGLE';
+                }
             }
 
             // Apply the quote style to the expanded value
@@ -1323,6 +1341,13 @@ class AzurePipelineParser {
                     const variableKey = this.getQuoteStyleUniqueKey(variablePath, expandedValue);
                     quoteStyles.set(variableKey, quoteStyle);
                 }
+            }
+
+            // Mark that this path came from a full expression producing an empty string,
+            // so restore logic can prefer Azure's single-quote normalization.
+            if (expandedValue === '') {
+                const emptyKey = this.getQuoteStyleUniqueKey(fullPath, expandedValue);
+                this.ensureStringsWithExpressions(context).add(emptyKey);
             }
         }
     }
@@ -2968,7 +2993,49 @@ class AzurePipelineParser {
     }
 
     hasColon(value) {
-        return typeof value === 'string' && value.includes(':');
+        if (typeof value !== 'string' || !value.includes(':')) {
+            return false;
+        }
+
+        // URLs (http://, https://) don't need quotes despite colons
+        if (/^https?:\/\//.test(value)) return false;
+
+        // MSBuild properties (/p:Property=Value) don't need quotes
+        if (/^\/[a-zA-Z]+:/.test(value)) return false;
+
+        // Pattern: ": " (colon-space) suggests YAML key-value, needs quotes
+        if (/: /.test(value)) return true;
+
+        // Colon at the very start always needs quotes
+        if (value.startsWith(':')) return true;
+
+        // Otherwise, colon in middle without space after is usually safe (HH:MM:SS, IP addresses, etc.)
+        return false;
+    }
+
+    /**
+     * Extract the deepest parameter name from an expression.
+     * E.g., "trim(parameters.signingPatterns)" -> "parameters.signingPatterns"
+     *       "parameters.pattern" -> "parameters.pattern"
+     * @param {string} expr - Expression string
+     * @returns {string|null} - Extracted parameter name or null
+     */
+    extractSourceParameter(expr) {
+        // Match parameter references, including nested ones
+        const paramRegex = /parameters\.[a-zA-Z_][\w.]*/g;
+        const matches = expr.match(paramRegex);
+
+        if (matches && matches.length > 0) {
+            // Return the last (deepest) parameter reference
+            return matches[matches.length - 1];
+        }
+
+        // If the expression itself is just a parameter reference
+        if (/^parameters\.[a-zA-Z_][\w.]*$/.test(expr)) {
+            return expr;
+        }
+
+        return null;
     }
 
     isStringNodeValue(node) {

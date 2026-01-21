@@ -3,3 +3,4 @@
 - Check else if v/s elseif
 - Check syntax where the yaml line start is not right
 - Avoid formatting when aps-format=false
+- Evaluate "Testing ${{ parameters.testVal }} for quotes" (testVal value in single quotes)

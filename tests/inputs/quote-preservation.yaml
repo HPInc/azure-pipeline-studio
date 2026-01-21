@@ -4,6 +4,9 @@ parameters:
 - name: emptyValue
   type: string
   default: ''
+- name: emptyDouble
+  type: string
+  default: ""
 - name: pattern
   type: string
   default: '**/test.dll'
@@ -172,3 +175,70 @@ stages:
         echo "Command: $COMMAND"
         echo "Path: $PATH"
       displayName: Complex Bash Quote Scenarios
+
+    # New test cases for quote preservation fixes
+
+    # Empty string normalization - should use single quotes
+
+    - bash: echo
+      displayName: Empty String Test
+      env:
+        EMPTY_DOUBLE: ""
+        EMPTY_SINGLE: ''
+        EMPTY_DEFAULT: ${{ parameters.emptyValue }}
+        EMPTY_PARAM_DOUBLE: ${{ parameters.emptyDouble }}
+    # Colon handling - MSBuild arguments should NOT be quoted
+
+    - bash: echo
+      displayName: MSBuild Arguments Test (Colons)
+      env:
+        MSBUILD_ARG: /p:GeneratePackageOnBuild=False
+        CONFIG_ARG: '/p:Configuration=Release'
+        VERSION_ARG: /p:Version=1.0.0
+    # Colon handling - URLs should NOT be quoted
+
+    - bash: echo
+      displayName: URL Test (Colons)
+      env:
+        GITHUB_URL: https://github.com
+        HTTP_URL: http://example.com
+        GIT_REPO: https://github.com/user/repo.git
+    # Colon handling - Key-value ambiguity should require quotes
+
+    - bash: echo
+      displayName: Key-Value Ambiguity Test
+      env:
+        MAPPING: 'key: value'
+        FORMATTED: 'Time: 12:30:45'
+    # Parameter chain tracking through functions
+
+    - bash: echo
+      displayName: Function Chain Tracking Test
+      env:
+        # Quotes should be preserved through trim() function
+        TRIMMED_PATTERN: ${{ trim(parameters.pattern) }}
+        # Quotes should be preserved through parameters passed via insert
+        NESTED_VALUE: ${{ parameters.value }}
+    # Complex object parameters with colons
+
+    - bash: echo
+      displayName: Complex Object Parameters
+      env:
+        BUILD_ARGS: /p:Property=Value /p:Another=Test
+        ASSEMBLY_VERSION: /p:AssemblyVersion=1.2.3.4
+        GIT_ENDPOINT: https://dev.azure.com/org/project
+    # Edge cases - multiple colons without space (should not require quotes)
+
+    - bash: echo
+      displayName: Multiple Colons Edge Cases
+      env:
+        TIME_FORMAT: HH:MM:SS
+        IP_ADDRESS: 192.168.1.1
+        PORT_MAPPING: localhost:8080
+    # Edge cases - colon at start (should require quotes)
+
+    - bash: echo
+      displayName: Colon at Start
+      env:
+        STARTS_WITH_COLON: ':leadingColon'
+        NORMAL_VALUE: 'normalValue'
