@@ -50,6 +50,9 @@ class AzurePipelineParser {
         }
         const context = this.buildExecutionContext(document, overrides);
         context.quoteResult = this.captureQuoteStyles(yamlDoc.contents, []);
+        // Initialize tracking sets in quoteResult so they persist through expansion
+        context.quoteResult.stringsWithExpressions = new Set();
+        context.quoteResult.fullParameterExpressions = new Set();
         context.azureCompatible = overrides.azureCompatible || false;
         context.templateQuoteStyles = new Map();
 
@@ -217,8 +220,29 @@ class AzurePipelineParser {
             post: (quoteStyle, valueNode, pathArr) => {
                 if (this.isStringNodeValue(valueNode)) {
                     if (valueNode.value === '') {
-                        // Azure normalizes empty strings to single quotes (check this first before other conditions)
-                        valueNode.type = 'QUOTE_SINGLE';
+                        // Azure always normalizes empty strings to single quotes
+                        // Exception: empty strings defined inline (not from parameters) preserve original quote style
+                        if (
+                            quoteStyle === 'QUOTE_DOUBLE' &&
+                            !this.hadFullParameterExpression(valueNode.value, pathArr, context)
+                        ) {
+                            valueNode.type = 'QUOTE_DOUBLE';
+                        } else {
+                            valueNode.type = 'QUOTE_SINGLE';
+                        }
+                    } else if (
+                        (val &&
+                            (val.includes('Release') || val.includes('test-value')) &&
+                            console.log(`[DEBUG] About to check hadFullParam for "${val}"`)) ||
+                        this.hadFullParameterExpression(valueNode.value, pathArr, context)
+                    ) {
+                        // Full parameter expression: Azure removes template quotes and outputs PLAIN
+                        // Exception: values with colons get single quotes
+                        if (this.hasColon(valueNode.value)) {
+                            valueNode.type = 'QUOTE_SINGLE';
+                        } else {
+                            valueNode.type = 'PLAIN';
+                        }
                     } else if (this.hadMixedExpression(valueNode.value, pathArr, context)) {
                         valueNode.type = 'PLAIN';
                     } else if (this.hasRuntimeVariable(valueNode.value)) {
@@ -1212,7 +1236,13 @@ class AzurePipelineParser {
     }
 
     ensureStringsWithExpressions(context) {
-        return this.ensureContextSet(context, 'stringsWithExpressions');
+        // Store in quoteResult so it persists through restore phase
+        return this.ensureContextSet(context.quoteResult, 'stringsWithExpressions');
+    }
+
+    ensureFullParameterExpressions(context) {
+        // Store in quoteResult so it persists through restore phase
+        return this.ensureContextSet(context.quoteResult, 'fullParameterExpressions');
     }
 
     /**
@@ -1342,6 +1372,10 @@ class AzurePipelineParser {
                     quoteStyles.set(variableKey, quoteStyle);
                 }
             }
+
+            // Track that this value came from a full parameter expression
+            // Azure removes template quotes and uses parameter's original quote style
+            this.ensureFullParameterExpressions(context).add(expansionPathKey);
 
             // Mark that this path came from a full expression producing an empty string,
             // so restore logic can prefer Azure's single-quote normalization.
@@ -3049,6 +3083,17 @@ class AzurePipelineParser {
         }
         const uniqueKey = this.getQuoteStyleUniqueKey(path, value);
         return context.stringsWithExpressions.has(uniqueKey);
+    }
+
+    hadFullParameterExpression(value, path, context) {
+        const fullParameterExpressions =
+            context.quoteResult?.fullParameterExpressions || context.fullParameterExpressions;
+        if (typeof value !== 'string' || !fullParameterExpressions) {
+            return false;
+        }
+        const uniqueKey = this.getQuoteStyleUniqueKey(path, value);
+        const result = fullParameterExpressions.has(uniqueKey);
+        return result;
     }
 
     normalizeTrailingNewlines(content, azureCompatible) {
