@@ -24,8 +24,22 @@
       ],
       "program": "${workspaceFolder}/extension.js",
       "args": [
-        "tests/test-presteps.yml"
+        "/root/codeway.yaml",
+        "-r", "templates=/root/workspace/templates/",
+        "-v", "Build.Reason=Manual",  "-v", "Build.SourceBranch=refs/heads/p1", "-v", "Build.SourceBranchName=p1", "-v", "System.TeamFoundationCollectionUri=https://dev.azure.com/hp", "-v", "System.TeamProject=OneClient",
+        //"${workspaceFolder}/tests/inputs/include-step-template.yaml",
+        "-x", "-f", "-a"
       ]
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Test case",
+      "skipFiles": [
+        "<node_internals>/**"
+      ],
+      "program": "${workspaceFolder}/tests/test-heredoc.js",
+      "args": []
     }
   ],
   "version": "0.2.0"

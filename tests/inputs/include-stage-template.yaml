@@ -1,0 +1,8 @@
+stages:
+- template: stage-template.yaml
+  parameters:
+    name: Stage1
+
+- template: stage-template.yaml
+  parameters:
+    name: Stage2

@@ -1,0 +1,20 @@
+# aps-format=false
+parameters:
+- name: projectName
+  type: string
+  default: 'MyProject'
+
+
+stages:
+- stage: Build
+  displayName: Clip Chomping Test
+
+  jobs:
+  - job: Test
+    displayName: Test Expression In Middle
+
+    steps:
+    - bash: |
+        echo "Project: ${{ parameters.projectName }}"
+        echo "Done"
+      displayName: Test clip chomping

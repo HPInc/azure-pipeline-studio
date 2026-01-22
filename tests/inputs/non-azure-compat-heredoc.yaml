@@ -1,0 +1,22 @@
+# aps-format=false
+parameters:
+- name: var
+  type: string
+  default: 'value'
+
+
+stages:
+- stage: HeredocTest
+  displayName: Heredoc Empty Lines Test
+
+  jobs:
+  - job: Test
+    displayName: Test Heredoc Behavior
+
+    steps:
+    - bash: |
+        cat <<EOF
+        Line 1 ${{ parameters.var }}
+        Line 2
+        EOF
+      displayName: Test heredoc with expression

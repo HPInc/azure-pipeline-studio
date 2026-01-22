@@ -1,0 +1,328 @@
+# aps-format=false
+
+parameters:
+- name: emptyValue
+  type: string
+  default: ''
+- name: emptyDouble
+  type: string
+  default: ""
+- name: pattern
+  type: string
+  default: '**/test.dll'
+- name: enabled
+  type: boolean
+  default: true
+- name: value
+  type: string
+  default: test-value
+- name: flag
+  type: boolean
+  default: false
+- name: poolName
+  type: string
+  default: 'Default'
+- name: arch
+  type: string
+  default: 'x64'
+- name: version
+  type: string
+  default: 'latest'
+- name: message1
+  type: string
+  default: 'This is a comment on the pull request.'
+- name: message2
+  type: string
+  default: "This is a post PR comment or trunk."
+- name: buildConfiguration
+  type: string
+  default: 'Release'
+- name: message
+  type: string
+  default: 'Build completed successfully.'
+# Additional parameters for consolidated quote-preservation scenarios
+- name: patternsGlob
+  type: string
+  default: '**/test.dll'
+- name: urlWithColon
+  type: string
+  default: 'http://example.com'
+- name: plainVersion
+  type: string
+  default: '1.2.3'
+- name: emptyParam
+  type: string
+  default: ''
+- name: patternMixed
+  type: string
+  default: '*.dll'
+- name: patternDef1
+  type: string
+  default: '**/test.dll'
+- name: patternDef2
+  type: string
+  default: "*.exe"
+- name: glob1
+  type: string
+  default: '**/Logging.dll'
+- name: glob2
+  type: string
+  default: '**/*.dll'
+- name: glob3
+  type: string
+  default: '**/src/**/*.ts'
+- name: trimPattern
+  type: string
+  default: '**/test.dll'
+# Test variables with quotes in object format
+
+
+variables:
+  myString: 'quoted value'
+  myNumber: 42
+  myPattern: "*.txt"
+  env: 'production'
+  var1: 'single-quoted'
+  var2: "double-quoted"
+
+
+stages:
+- stage: Stage1
+
+  jobs:
+  - job: Job1
+
+    steps:
+    - bash: echo
+      displayName: PATTERN Test
+      env:
+        PATTERN: '${{ parameters.pattern }}'
+
+    - bash: echo
+      displayName: Glob Pattern from Parameter
+      env:
+        PATTERNS: ${{ parameters.patternsGlob }}
+
+    - bash: echo
+      displayName: URL with Colon
+      env:
+        URL: ${{ parameters.urlWithColon }}
+
+    - bash: echo
+      displayName: Plain Version Value
+      env:
+        VERSION_SIMPLE: ${{ parameters.plainVersion }}
+
+    - bash: echo
+      displayName: Empty Param Value
+      env:
+        EMPTY_PARAM: ${{ parameters.emptyParam }}
+
+    - bash: echo
+      displayName: Mixed Expression Value
+      env:
+        MIXED: prefix-${{ parameters.patternMixed }}-suffix
+
+    - bash: echo
+      displayName: EMPTY Test
+      env:
+        EMPTY: '${{ parameters.emptyValue }}'
+
+    - task: Bash@3
+      displayName: Inline Target Test
+      inputs:
+        targetType: inline
+
+    - bash: |
+        var="${{ parameters.enabled }}"
+      displayName: Enabled Var Test
+
+    - bash: echo
+      displayName: With/Without Quotes Test
+      env:
+        WITH_QUOTES: '${{ parameters.value }}'
+        WITHOUT_QUOTES: ${{ parameters.value }}
+
+    - bash: echo
+      displayName: Quoted Bool Test
+      env:
+        QUOTED_BOOL: '${{ parameters.flag }}'
+
+    - bash: echo
+      displayName: Pool Arch Version Test
+      env:
+        POOL: ${{ parameters.poolName }}
+        ARCH: ${{ parameters.arch }}
+        VERSION: ${{ parameters.version }}
+
+    - task: PythonScript@0
+      displayName: Comment on Pull Request
+      inputs:
+        scriptSource: 'inline'
+        script: |
+          print('${{ parameters.message1 }}')
+
+    - task: PythonScript@0
+      displayName: Post PR Comment or Trunk
+      inputs:
+        scriptSource: inline
+        script: |
+          print('${{ parameters.message2 }}')
+
+    - task: Bash@3
+      displayName: Test App
+      inputs:
+        targetType: inline
+        script: echo test
+
+    - task: Bash@3
+      displayName: Alpha
+      inputs:
+        targetType: 'inline'
+
+    - task: Bash@3
+      displayName: Beta
+      inputs:
+        targetType: inline
+
+    - bash: echo
+      displayName: Definition Section Patterns
+      env:
+        PAT_DEF1: ${{ parameters.patternDef1 }}
+        PAT_DEF2: ${{ parameters.patternDef2 }}
+    # Quote behavior scenarios
+
+    - bash: 'echo When : present in value, quotes will be preserved'
+      displayName: 'a : b'
+
+    - bash: 'echo When : present in value along with a compile-time variable, single quote will be used, even when input uses double quote'
+      displayName: "${{ parameters.buildConfiguration }} : b"
+
+    - bash: 'echo When : present in value along with a compile-time variable, single quote will be used'
+      displayName: '${{ parameters.buildConfiguration }} : b'
+
+    - bash: 'echo When : is not present in value along with a compile-time variable, quotes will be removed'
+      displayName: 'Testing ${{ parameters.buildConfiguration }}'
+
+    - bash: 'echo When : is not present in value without a compile-time variable, quotes will be preserved'
+      displayName: 'Testing quotes'
+
+    - bash: echo 'When some part have single quotes, quotes are preserved'
+      displayName: 'Testing single quotes'
+
+    - bash: echo "When some part have double quotes, quotes are preserved"
+      displayName: 'Testing double quotes'
+    # Full expression scenarios - quotes preserved
+
+    - bash: echo "test"
+      displayName: Full Expression Quote Tests
+      env:
+        CONFIG: '${{ parameters.buildConfiguration }}'
+        MESSAGE: "${{ parameters.message }}"
+
+    - bash: echo PATTERNS
+      displayName: Glob Pattern Set
+      env:
+        PAT1: ${{ parameters.glob1 }}
+        PAT2: ${{ parameters.glob2 }}
+        PAT3: ${{ parameters.glob3 }}
+
+    - bash: echo TRIMMED
+      displayName: Trimmed Pattern Function
+      env:
+        TRIMMED: ${{ trim(parameters.trimPattern) }}
+
+    - bash: echo LITERAL
+      displayName: Literal Glob Pattern
+      env:
+        LITERAL: '**/test.dll'
+    # Mixed expression scenarios - quotes removed
+
+    - bash: echo "test"
+      displayName: Mixed Expression Quote Tests
+      env:
+        BUILD_CMD: 'dotnet build --config ${{ parameters.buildConfiguration }}'
+        TEST_CMD: "dotnet test --logger trx --config ${{ parameters.buildConfiguration }}"
+    # Complex quote scenarios in bash scripts
+
+    - bash: |
+        # Full expression - quotes preserved
+        CONFIG='${{ parameters.buildConfiguration }}'
+
+        # Mixed expression - quotes removed
+        COMMAND='build --config ${{ parameters.buildConfiguration }} --output bin'
+
+        # Multiple expressions - quotes removed
+        PATH='${{ parameters.buildConfiguration }}/${{ parameters.message }}/output'
+
+        echo "Config: $CONFIG"
+        echo "Command: $COMMAND"
+        echo "Path: $PATH"
+      displayName: Complex Bash Quote Scenarios
+
+    # New test cases for quote preservation fixes
+
+    # Empty string normalization - should use single quotes
+
+    - bash: echo
+      displayName: Empty String Test
+      env:
+        EMPTY_DOUBLE: ""
+        EMPTY_SINGLE: ''
+        EMPTY_DEFAULT: ${{ parameters.emptyValue }}
+        EMPTY_PARAM_DOUBLE: ${{ parameters.emptyDouble }}
+    # Colon handling - MSBuild arguments should NOT be quoted
+
+    - bash: echo
+      displayName: MSBuild Arguments Test (Colons)
+      env:
+        MSBUILD_ARG: /p:GeneratePackageOnBuild=False
+        CONFIG_ARG: '/p:Configuration=Release'
+        VERSION_ARG: /p:Version=1.0.0
+    # Colon handling - URLs should NOT be quoted
+
+    - bash: echo
+      displayName: URL Test (Colons)
+      env:
+        GITHUB_URL: https://github.com
+        HTTP_URL: http://example.com
+        GIT_REPO: https://github.com/user/repo.git
+    # Colon handling - Key-value ambiguity should require quotes
+
+    - bash: echo
+      displayName: Key-Value Ambiguity Test
+      env:
+        MAPPING: 'key: value'
+        FORMATTED: 'Time: 12:30:45'
+    # Parameter chain tracking through functions
+
+    - bash: echo
+      displayName: Function Chain Tracking Test
+      env:
+        # Quotes should be preserved through trim() function
+        TRIMMED_PATTERN: ${{ trim(parameters.pattern) }}
+        # Quotes should be preserved through parameters passed via insert
+        NESTED_VALUE: ${{ parameters.value }}
+    # Complex object parameters with colons
+
+    - bash: echo
+      displayName: Complex Object Parameters
+      env:
+        BUILD_ARGS: /p:Property=Value /p:Another=Test
+        ASSEMBLY_VERSION: /p:AssemblyVersion=1.2.3.4
+        GIT_ENDPOINT: https://dev.azure.com/org/project
+    # Edge cases - multiple colons without space (should not require quotes)
+
+    - bash: echo
+      displayName: Multiple Colons Edge Cases
+      env:
+        TIME_FORMAT: HH:MM:SS
+        IP_ADDRESS: 192.168.1.1
+        PORT_MAPPING: localhost:8080
+    # Edge cases - colon at start (should require quotes)
+
+    - bash: echo
+      displayName: Colon at Start
+      env:
+        STARTS_WITH_COLON: ':leadingColon'
+        NORMAL_VALUE: 'normalValue'

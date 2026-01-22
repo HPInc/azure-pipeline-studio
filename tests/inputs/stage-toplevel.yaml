@@ -1,0 +1,26 @@
+parameters:
+  param1: value1
+  param2: value2
+
+
+stages:
+- ${{ if eq(parameters.param1, 'value1') }}:
+  - stage: Stage0
+
+    jobs:
+    - job: Job0
+
+      steps:
+      - bash: |
+          echo "Stage.0.Job.0"
+        displayName: "Echo Stage 0 Job 0"
+
+- template: stage-secondlevel.yaml
+- stage: Stage2
+
+  jobs:
+  - job: Job2
+
+    steps:
+    - bash: |
+        echo "Stage.2.Job.2"

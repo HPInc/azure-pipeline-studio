@@ -1,0 +1,26 @@
+# aps-format=false
+parameters:
+- name: properties
+  type: string
+  default: ''
+- name: projectName
+  type: string
+  default: 'MyProject'
+
+
+stages:
+- stage: Build
+  displayName: Chomping Test Stage
+
+  jobs:
+  - job: Test
+    displayName: Test Empty Expression At End
+
+    steps:
+    - task: SonarQubeAnalyze@4
+      displayName: Test chomping with empty expression
+      inputs:
+        extraProperties: |
+          sonar.projectKey=${{ parameters.projectName }}
+          sonar.verbose=true
+          ${{ parameters.properties }}

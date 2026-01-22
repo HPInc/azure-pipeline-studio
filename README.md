@@ -34,7 +34,7 @@ node extension-bundle.js --help
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/HPInc/azure-pipeline-studio.git
-    rev: v1.0.0
+    rev: v1.0.7
     hooks:
       - id: azure-pipeline-formatter
 ```
@@ -235,7 +235,7 @@ Automatically format YAML files before commit. Uses 282KB standalone bundle with
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/HPInc/azure-pipeline-studio.git
-    rev: v1.0.0
+    rev: v1.0.7
     hooks:
       - id: azure-pipeline-formatter
         args: [-R, ., -f, indent=4]  # Optional: customize format
@@ -267,12 +267,12 @@ Control formatting per file using special comments in the first 5 lines:
 
 **Disable formatting:**
 ```yaml
-# ado-yaml-format=false
+# aps-format=false
 ```
 
 **Custom options:**
 ```yaml
-# ado-yaml-format indent=4,lineWidth=120,newline=\r\n
+# aps-format indent=4,lineWidth=120,newline=\r\n
 ```
 
 **Supported Options:**

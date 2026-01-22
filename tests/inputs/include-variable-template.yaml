@@ -1,0 +1,13 @@
+stages:
+- stage: Build
+
+  jobs:
+  - job: BuildJob
+    variables:
+    - template: variable-template.yaml
+- stage: Deploy
+
+  jobs:
+  - job: DeployJob
+    variables:
+    - template: variable-template.yaml

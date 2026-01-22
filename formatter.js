@@ -25,7 +25,16 @@ function replaceTemplateExpressionsWithPlaceholders(content) {
 
     const result = content.replace(templateExpressionPattern, (match) => {
         const placeholder = '__EXPR_PLACEHOLDER_' + counter + '__';
-        placeholderMap.set(placeholder, match);
+        let normalized = match;
+
+        if (match.startsWith('${{') && match.endsWith('}}') && !/[\r\n\t]/.test(match)) {
+            // If the expression contains newlines or tabs, preserve inner formatting exactly
+            // (e.g. multi-line expressions or expressions with tabs should not be collapsed)
+            // Normalize to have exactly one space after '{{' and before '}}' when missing
+            normalized = match.replace(/^\$\{\{\s*/, '${{ ').replace(/\s*\}\}$/, ' }}');
+        }
+
+        placeholderMap.set(placeholder, normalized);
         counter++;
         return placeholder;
     });
@@ -46,6 +55,8 @@ function restoreTemplateExpressions(content, placeholderMap) {
     for (const [placeholder, originalExpression] of placeholderMap) {
         result = result.replace(new RegExp(escapeRegExp(placeholder), 'g'), originalExpression);
     }
+    // Remove spaces between closing expression and colon: '}} :' -> '}}:'
+    result = result.replace(/\}\}\s+:/g, '}}:');
     return result;
 }
 
@@ -180,8 +191,8 @@ function restoreEmptyValues(content, commentMap) {
 /**
  * Parse file-level formatting directives from YAML comments
  * Supports:
- *   # ado-yaml-format=false (disables formatting)
- *   # ado-yaml-format newline=\r\n,lineWidth=120,indent=4 (custom options)
+ *   # aps-format=false (disables formatting)
+ *   # aps-format newline=\r\n,lineWidth=120,indent=4 (custom options)
  *
  * @param {string} content - The YAML content
  * @returns {{ disabled: boolean, options: object|null }}
@@ -197,13 +208,13 @@ function parseFormatDirectives(content) {
         const trimmed = line.trim();
 
         // Check for disable directive
-        if (trimmed === '# ado-yaml-format=false' || trimmed === '# ado-yaml-format: false') {
+        if (trimmed === '# aps-format=false' || trimmed === '# aps-format: false') {
             result.disabled = true;
             return result;
         }
 
         // Check for options directive
-        const optionsMatch = trimmed.match(/^#\s*ado-yaml-format[:\s]+(.+)$/);
+        const optionsMatch = trimmed.match(/^#\s*aps-format[:\s]+(.+)$/);
         if (optionsMatch) {
             const optionsStr = optionsMatch[1].trim();
             result.options = parseDirectiveOptions(optionsStr);
@@ -844,8 +855,9 @@ function formatYaml(content, options = {}) {
     // Check for file-level formatting directives
     const directives = parseFormatDirectives(content);
 
-    // If formatting is disabled, return original content
-    if (directives.disabled) {
+    // If formatting is disabled via file directive, return original content
+    // unless the caller explicitly passed options (caller intent should override file directive).
+    if (directives.disabled && (!options || Object.keys(options).length === 0)) {
         return baseResult;
     }
 
@@ -889,6 +901,7 @@ function formatYaml(content, options = {}) {
                   : 1,
         sectionSpacing: options && typeof options.sectionSpacing === 'boolean' ? options.sectionSpacing : false,
         wasExpanded: options && typeof options.wasExpanded === 'boolean' ? options.wasExpanded : false,
+        azureCompatible: options && typeof options.azureCompatible === 'boolean' ? options.azureCompatible : false,
     };
 
     try {
@@ -904,7 +917,7 @@ function formatYaml(content, options = {}) {
 
         if (doc.errors && doc.errors.length > 0) {
             const genuineErrors = doc.errors.filter(
-                (e) => !e.message || !e.message.includes('Invalid escape sequence'),
+                (e) => !e.message || !e.message.includes('Invalid escape sequence')
             );
 
             if (genuineErrors.length > 0) {
@@ -951,7 +964,7 @@ function formatYaml(content, options = {}) {
         if (effective.wasExpanded && effective.azureCompatible) {
             normalized = normalized.replace(
                 new RegExp(`(?:${escapeRegExp(newline)})*$`),
-                `${newline}${newline}${newline}`,
+                `${newline}${newline}${newline}`
             );
         } else {
             normalized = normalized.replace(new RegExp(`(?:${escapeRegExp(newline)})*$`), newline);
@@ -987,4 +1000,6 @@ function formatYaml(content, options = {}) {
 module.exports = {
     formatYaml,
     escapeRegExp,
+    replaceTemplateExpressionsWithPlaceholders,
+    restoreTemplateExpressions,
 };

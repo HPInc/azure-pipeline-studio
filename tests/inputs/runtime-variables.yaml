@@ -1,0 +1,50 @@
+# aps-format=false
+# Test for runtime variable handling
+# Runtime variables like $(Agent.OS) should not be quoted
+
+parameters:
+- name: environment
+  default: production
+
+
+stages:
+- stage: Test
+
+  jobs:
+  - job: TestJob
+    pool:
+      vmImage: ubuntu-latest
+
+    steps:
+    # Runtime variables in displayName - should not be quoted
+    - bash: echo "OS is $(Agent.OS)"
+      displayName: 'Running on $(Agent.OS)'
+    # Runtime variables in environment - should not be quoted
+
+    - bash: echo 'Branch $BRANCH, Reason $REASON'
+      displayName: Test Runtime Variables
+      env:
+        BRANCH: '$(Build.SourceBranch)'
+        REASON: '$(Build.Reason)'
+        OS: '$(Agent.OS)'
+    # Mixed runtime and compile-time variables
+
+    - bash: echo "Environment $ENV, OS $OS"
+      displayName: Mixed Variables
+      env:
+        ENV: '${{ parameters.environment }}'
+        OS: '$(Agent.OS)'
+    # Runtime variables in script
+
+    - bash: |
+        echo "Build ID: $(Build.BuildId)"
+        echo "Agent Name: $(Agent.Name)"
+        echo "Source Branch: $(Build.SourceBranch)"
+      displayName: Script with Runtime Variables
+
+    # Runtime variable with colon - should still not be quoted
+
+    - bash: echo 'URI $(System.TeamFoundationCollectionUri)'
+      displayName: Runtime Variable with Colon
+      env:
+        URI: '$(System.TeamFoundationCollectionUri)'

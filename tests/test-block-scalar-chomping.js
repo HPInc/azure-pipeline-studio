@@ -1,8 +1,87 @@
+#!/usr/bin/env node
+
+const fs = require('fs');
+const path = require('path');
+const minimist = require('minimist');
 const { AzurePipelineParser } = require('../parser.js');
+
+const parser = new AzurePipelineParser();
 
 console.log('Testing Block Scalar Chomping Indicators\n');
 
-const parser = new AzurePipelineParser();
+const argv = minimist(process.argv.slice(2), { boolean: ['v', 'verbose'] });
+const verbose = argv.v || argv.verbose;
+
+// Helper to run a test case
+function runTestCase(name, yamlFile, params, azureCompatible, assertions) {
+    console.log(`=== ${name} ===`);
+    const filePath = path.join(__dirname, 'inputs', yamlFile);
+    const data = fs.readFileSync(filePath, 'utf8');
+
+    const output = parser.expandPipelineFromString(data, Object.assign({ azureCompatible }, params || {}));
+
+    if (verbose) {
+        console.log('\n--- Parser output ---');
+        console.log(output);
+        console.log('--- end output ---\n');
+    }
+
+    let passed = true;
+    try {
+        assertions(output);
+        console.log('✅ PASS\n');
+    } catch (error) {
+        console.log('❌ FAIL: ' + error.message + '\n');
+        passed = false;
+    }
+
+    return passed;
+}
+
+// Test 1: Expression expanding to empty at end should trigger >+ chomping
+const test1Pass = runTestCase(
+    'Test 1: Expression expanding to empty at end should trigger >+ chomping',
+    'block-chomping-keep.yaml',
+    { parameters: { properties: '', projectName: 'MyProject' } },
+    true,
+    (output) => {
+        if (!/extraProperties:\s*>\+/.test(output)) {
+            throw new Error('Should have >+ chomping indicator');
+        }
+    }
+);
+
+// Test 2: Expression in middle should use > (clip chomping)
+const test2Pass = runTestCase(
+    'Test 2: Expression in middle should use > (clip chomping)',
+    'block-chomping-clip.yaml',
+    { parameters: { projectName: 'MyProject' } },
+    true,
+    (output) => {
+        if (!/script:\s*>[^\+\-]/.test(output)) {
+            throw new Error('Should have > (clip) chomping');
+        }
+    }
+);
+
+// Test 3: No expressions should use | (literal)
+const test3Pass = runTestCase(
+    'Test 3: No expressions should use | (literal) style',
+    'block-chomping-literal.yaml',
+    {},
+    true,
+    (output) => {
+        if (!/script:\s*\|/.test(output)) {
+            throw new Error('Should have | (literal) style');
+        }
+    }
+);
+
+// Summary
+const allPassed = test1Pass && test2Pass && test3Pass;
+console.log('=== Summary ===');
+console.log(allPassed ? 'All block scalar chomping tests passed ✅' : 'Some tests failed ❌');
+process.exit(allPassed ? 0 : 1);
 
 // Test 1: Expression expanding to empty at end of block should trigger >+ chomping
 const input1 = `parameters:
@@ -26,7 +105,7 @@ console.log('Test 1: Expression expanding to empty at end should trigger >+ chom
 console.log('Input (with expression at end):');
 console.log(input1);
 
-const expanded1 = parser.expandPipelineToString(input1, {
+const expanded1 = parser.expandPipelineFromString(input1, {
     variables: {
         projectName: 'MyProject',
     },
@@ -74,7 +153,7 @@ console.log('\n\nTest 2: Expression in middle should use > (clip chomping)');
 console.log('Input:');
 console.log(input2);
 
-const expanded2 = parser.expandPipelineToString(input2, {
+const expanded2 = parser.expandPipelineFromString(input2, {
     parameters: {
         projectName: 'MyProject',
     },
@@ -102,7 +181,7 @@ console.log('\n\nTest 3: No expressions should use | (literal) style');
 console.log('Input:');
 console.log(input3);
 
-const expanded3 = parser.expandPipelineToString(input3, {
+const expanded3 = parser.expandPipelineFromString(input3, {
     azureCompatible: true,
 });
 
@@ -134,7 +213,7 @@ console.log('\n\nTest 4: Multiple lines with last expression expanding to empty'
 console.log('Input:');
 console.log(input4);
 
-const expanded4 = parser.expandPipelineToString(input4, {
+const expanded4 = parser.expandPipelineFromString(input4, {
     parameters: {
         extra: '',
     },
@@ -168,7 +247,7 @@ console.log('\n\nTest 5: Whitespace-only expression should be cleaned but newlin
 console.log('Input:');
 console.log(input5);
 
-const expanded5 = parser.expandPipelineToString(input5, {
+const expanded5 = parser.expandPipelineFromString(input5, {
     parameters: {
         spacing: '   ', // Whitespace only
     },

@@ -1,9 +1,0 @@
-# Stage template that uses ${{ insert }} directive
-parameters:
-- name: buildParams
-  type: object
-
-
-stages:
-- stage: ${{ parameters.buildParams.stageName }}
-  ${{ insert }}: ${{ parameters.buildParams }}

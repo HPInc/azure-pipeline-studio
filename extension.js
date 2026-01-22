@@ -34,7 +34,7 @@ function activate(context) {
         vscode.workspace.registerTextDocumentContentProvider(renderedScheme, {
             onDidChange: renderedEmitter.event,
             provideTextDocumentContent: (uri) => renderedContent.get(uri.toString()) || '',
-        }),
+        })
     );
 
     const getRenderTargetUri = (document) => {
@@ -137,7 +137,7 @@ function activate(context) {
         }
 
         const fullRange = document.validateRange(
-            new vscode.Range(0, 0, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER),
+            new vscode.Range(0, 0, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER)
         );
         const edit = new vscode.WorkspaceEdit();
         edit.replace(document.uri, fullRange, formatResult.text);
@@ -174,7 +174,7 @@ function activate(context) {
             };
 
             console.log('Parser overrides:', JSON.stringify(parserOverrides, null, 2));
-            const expandedYaml = parser.expandPipelineToString(sourceText, parserOverrides);
+            const expandedYaml = parser.expandPipelineFromString(sourceText, parserOverrides);
 
             const formatOptions = getFormatSettings(document);
             formatOptions.fileName = document.fileName;
@@ -285,7 +285,7 @@ function activate(context) {
             }
 
             await renderYamlDocument(editor.document, { azureCompatible: true });
-        },
+        }
     );
     context.subscriptions.push(commandAzureCompatibleDisposable);
 
@@ -299,7 +299,7 @@ function activate(context) {
             }
 
             await formatOriginalDocument(editor.document);
-        },
+        }
     );
     context.subscriptions.push(formatOriginalCommandDisposable);
 
@@ -313,7 +313,7 @@ function activate(context) {
                 console.error('[Azure Pipeline Studio] Error in configure command:', error);
                 vscode.window.showErrorMessage(`Configuration error: ${error.message}`);
             }
-        },
+        }
     );
     context.subscriptions.push(configureCommandDisposable);
 
@@ -322,7 +322,7 @@ function activate(context) {
             if (document.uri.scheme === renderedScheme) {
                 renderedContent.delete(document.uri.toString());
             }
-        }),
+        })
     );
 
     async function handleConfigureResourceLocationRequest(initialAlias) {
@@ -334,7 +334,7 @@ function activate(context) {
 
         if (!targetDocument) {
             vscode.window.showInformationMessage(
-                'Open an Azure Pipeline YAML file before configuring resource locations.',
+                'Open an Azure Pipeline YAML file before configuring resource locations.'
             );
             return;
         }
@@ -435,7 +435,7 @@ function activate(context) {
             {
                 placeHolder: `Select how to specify location for repository '${alias}'`,
                 ignoreFocusOut: true,
-            },
+            }
         );
 
         if (!methodChoice) {
@@ -507,7 +507,7 @@ function activate(context) {
             await config.update('resourceLocations', updatedEntries, target);
 
             console.log(
-                `[Azure Pipeline Studio] Successfully saved repository '${alias}' location: ${sanitizedLocation}`,
+                `[Azure Pipeline Studio] Successfully saved repository '${alias}' location: ${sanitizedLocation}`
             );
 
             vscode.window.showInformationMessage(`Repository '${alias}' location saved.`);
@@ -531,7 +531,7 @@ function activate(context) {
             }
 
             void renderYamlDocument(document, { silent: true });
-        }),
+        })
     );
 
     context.subscriptions.push(
@@ -550,7 +550,7 @@ function activate(context) {
             if (refreshOnSave) {
                 void renderYamlDocument(document, { silent: true });
             }
-        }),
+        })
     );
 }
 
@@ -666,7 +666,7 @@ function buildFormatOptionsFromCli(entries) {
 
 function formatFilesRecursively(targets, extensions, formatOptions) {
     const normalizedExtensions = new Set(
-        Array.isArray(extensions) ? extensions.map((ext) => normalizeExtension(ext)).filter(Boolean) : [],
+        Array.isArray(extensions) ? extensions.map((ext) => normalizeExtension(ext)).filter(Boolean) : []
     );
 
     if (!normalizedExtensions.size) {
@@ -877,7 +877,7 @@ function runCli(args) {
         });
 
         console.log(
-            `Processed ${recursiveResult.totalFiles} file(s); formatted ${recursiveResult.formattedFiles.length}.`,
+            `Processed ${recursiveResult.totalFiles} file(s); formatted ${recursiveResult.formattedFiles.length}.`
         );
 
         recursiveResult.warnings.forEach((entry) => {
@@ -956,7 +956,7 @@ function runCli(args) {
                     }
                 }
                 try {
-                    expandedYaml = cliParser.expandPipelineToString(sourceText, parserOptions);
+                    expandedYaml = cliParser.expandPipelineFromString(sourceText, parserOptions);
                     yamlToFormat = expandedYaml;
                 } catch (expandError) {
                     console.error(`[${filePath}] Template expansion failed: ${expandError.message}`);
@@ -974,6 +974,7 @@ function runCli(args) {
             // Mark that expansion happened so Microsoft compatibility knows to apply transformations
             if (argv['expand-templates']) {
                 fileOptions.wasExpanded = true;
+                fileOptions.azureCompatible = argv['azure-compatible'] || false;
             }
 
             const formatted = formatYaml(yamlToFormat, fileOptions);

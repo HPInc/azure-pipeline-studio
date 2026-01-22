@@ -1,0 +1,70 @@
+variables:
+- name: globalVar
+  value: 'global-value'
+- name: sharedVar
+  value: 'global-shared'
+
+stages:
+- stage: Stage1
+  variables:
+  - name: stageVar
+    value: 'stage1-value'
+  - name: sharedVar
+    value: 'stage1-shared'
+
+  jobs:
+  - job: Job1
+    variables:
+    - name: jobVar
+      value: 'job1-value'
+    - name: sharedVar
+      value: 'job1-shared'
+
+    steps:
+    - script: echo ${{ variables.globalVar }}
+      displayName: 'Global var in Job1'
+
+    - script: echo ${{ variables.stageVar }}
+      displayName: 'Stage var in Job1'
+
+    - script: echo ${{ variables.jobVar }}
+      displayName: 'Job var in Job1'
+
+    - script: echo ${{ variables.sharedVar }}
+      displayName: 'Shared var (should be job1-shared)'
+
+  - job: Job2
+    variables:
+    - name: jobVar
+      value: 'job2-value'
+
+    steps:
+    - script: echo ${{ variables.globalVar }}
+      displayName: 'Global var in Job2'
+
+    - script: echo ${{ variables.stageVar }}
+      displayName: 'Stage var in Job2'
+
+    - script: echo ${{ variables.jobVar }}
+      displayName: 'Job var in Job2 (different from Job1)'
+
+    - script: echo ${{ variables.sharedVar }}
+      displayName: 'Shared var (should be stage1-shared, not job1-shared)'
+
+- stage: Stage2
+  variables:
+  - name: stageVar
+    value: 'stage2-value'
+
+  jobs:
+  - job: Job3
+
+    steps:
+    - script: echo ${{ variables.globalVar }}
+      displayName: 'Global var in Stage2'
+
+    - script: echo ${{ variables.stageVar }}
+      displayName: 'Stage var in Stage2 (different from Stage1)'
+
+    - script: echo ${{ variables.sharedVar }}
+      displayName: 'Shared var (should be global-shared, not stage1-shared)'

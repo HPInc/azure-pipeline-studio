@@ -3,3 +3,4 @@
 *.vsix
 /temp
 package-lock.json
+.vscode/launch.json
