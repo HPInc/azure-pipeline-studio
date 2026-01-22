@@ -18,7 +18,7 @@ const TASK_TYPE_MAP = Object.freeze({
 class AzurePipelineParser {
     constructor(options = {}) {
         this.expressionCache = new Map();
-        this.globQuotePattern = /\*\*|[*/]\/|\/[*/]/;
+        this.globQuotePattern = /[\*\?\[\]]|\/[\*\?\[]|[*/]\/|\/[*/]/;
     }
 
     expandPipelineFromFile(filePath, overrides = {}) {
@@ -219,6 +219,7 @@ class AzurePipelineParser {
             post: (quoteStyle, valueNode, pathArr) => {
                 if (!this.isStringNodeValue(valueNode)) return;
 
+                const hasFullParameterExpression = this.hasFullParameterExpression(valueNode.value, pathArr, context);
                 // Parameters/variables definition sections should keep their original quote styles
                 const isDefinitionSection =
                     pathArr.length >= 1 && (pathArr[0] === 'parameters' || pathArr[0] === 'variables');
@@ -226,18 +227,17 @@ class AzurePipelineParser {
                 if (valueNode.value === '') {
                     // Azure normalizes empty strings to single quotes
                     // Exception: inline empty double quotes (not from parameter expansion) stay double quoted
-                    if (
-                        quoteStyle === 'QUOTE_DOUBLE' &&
-                        !this.hadFullParameterExpression(valueNode.value, pathArr, context)
-                    ) {
+                    if (quoteStyle === 'QUOTE_DOUBLE' && !hasFullParameterExpression) {
                         valueNode.type = 'QUOTE_DOUBLE';
                     } else {
                         valueNode.type = 'QUOTE_SINGLE';
                     }
-                } else if (!isDefinitionSection && this.hadFullParameterExpression(valueNode.value, pathArr, context)) {
-                    // Full parameter expression: colon/glob patterns → single quotes,
-                    // non-Azure mode with quoteStyle → preserve style, otherwise plain
-                    if (this.hasColon(valueNode.value) || this.globQuotePattern.test(valueNode.value)) {
+                } else if (!isDefinitionSection && hasFullParameterExpression) {
+                    const hasColon = this.hasColon(valueNode.value);
+                    const isExpressionLike = this.isConditionExpression(valueNode.value);
+                    if (!hasColon && !isExpressionLike && this.globQuotePattern.test(valueNode.value)) {
+                        valueNode.type = 'QUOTE_SINGLE';
+                    } else if (this.isKeyValueLike(valueNode.value)) {
                         valueNode.type = 'QUOTE_SINGLE';
                     } else if (!context.azureCompatible && quoteStyle) {
                         valueNode.type = quoteStyle;
@@ -248,7 +248,7 @@ class AzurePipelineParser {
                     valueNode.type = 'PLAIN';
                 } else if (this.hasRuntimeVariable(valueNode.value)) {
                     valueNode.type = 'PLAIN';
-                } else if (this.hasColon(valueNode.value)) {
+                } else if (this.isKeyValueLike(valueNode.value)) {
                     valueNode.type = 'QUOTE_SINGLE';
                 } else if (quoteStyle) {
                     valueNode.type = quoteStyle;
@@ -1240,7 +1240,7 @@ class AzurePipelineParser {
      * @param {object} context - Expansion context
      * @param {object} flags - Object with expression type flags
      */
-    _handleQuoteStyleTracking(expandedValue, originalValue, context, flags) {
+    trackQuoteStylesForExpressions(expandedValue, originalValue, context, flags) {
         const { isMixedExpression, isSingleLineFullExpression } = flags;
 
         if (!context.expansionPath || typeof expandedValue !== 'string') return;
@@ -1251,15 +1251,15 @@ class AzurePipelineParser {
         let fullPath = [];
         if (context.stepIndex >= 0) {
             // We're in a step context - find where 'steps' appears in expansionPath and skip that portion
-            const path = this._relativePathAfterKey(context.expansionPath, 'steps');
+            const path = this.relativePathAfterKey(context.expansionPath, 'steps');
             fullPath = ['stages', context.stageIndex, 'jobs', context.jobIndex, 'steps', context.stepIndex, ...path];
         } else if (context.jobIndex >= 0) {
             // We're in a job context - find where 'jobs' appears in expansionPath and skip that portion
-            const path = this._relativePathAfterKey(context.expansionPath, 'jobs');
+            const path = this.relativePathAfterKey(context.expansionPath, 'jobs');
             fullPath = ['stages', context.stageIndex, 'jobs', context.jobIndex, ...path];
         } else if (context.stageIndex >= 0) {
             // We're in a stage context - find where 'stages' appears in expansionPath and skip that portion
-            const path = this._relativePathAfterKey(context.expansionPath, 'stages');
+            const path = this.relativePathAfterKey(context.expansionPath, 'stages');
             fullPath = ['stages', context.stageIndex, ...path];
         } else {
             // Root level or variable context
@@ -1270,7 +1270,7 @@ class AzurePipelineParser {
 
         // Handle mixed expressions (not full expressions)
         if (isMixedExpression && !this.isMultilineString(expandedValue)) {
-            if (!this.hasColon(expandedValue)) {
+            if (!this.isKeyValueLike(expandedValue)) {
                 this.ensureStringsWithExpressions(context).add(expansionPathKey);
             }
             return;
@@ -1281,10 +1281,14 @@ class AzurePipelineParser {
         if (isSingleLineFullExpression) {
             // First, try to look up quote style using the original expression (for all cases)
             const originalKey = this.getQuoteStyleUniqueKey(fullPath, originalValue);
+            const isExpressionLike = this.isConditionExpression(expandedValue);
             quoteStyle = quoteStyles.get(originalKey);
 
             // If not found and value is empty or glob pattern, try parameter lookup
-            if (!quoteStyle && (expandedValue === '' || this.globQuotePattern.test(expandedValue))) {
+            if (
+                !quoteStyle &&
+                (expandedValue === '' || (this.globQuotePattern.test(expandedValue) && !isExpressionLike))
+            ) {
                 const param = this.stripExpressionDelimiters(originalValue);
                 let sourceParam = null;
 
@@ -1302,18 +1306,22 @@ class AzurePipelineParser {
                         parameterPath = context.parameterMap[sourceParam].split('.');
                     }
                     const parameterKey = this.getQuoteStyleUniqueKey(parameterPath, expandedValue);
-                    quoteStyle = quoteStyles.get(parameterKey);
+                    if (!this.hasColon(expandedValue)) {
+                        quoteStyle = quoteStyles.get(parameterKey);
+                    }
                 }
 
                 // If still not found and it's a glob pattern, default to single quotes (Azure convention)
-                if (!quoteStyle && this.globQuotePattern.test(expandedValue)) {
+                if (!quoteStyle && this.globQuotePattern.test(expandedValue) && !isExpressionLike) {
                     quoteStyle = 'QUOTE_SINGLE';
                 }
             }
 
             // Apply the quote style to the expanded value
             if (quoteStyle) {
-                quoteStyles.set(expansionPathKey, this.hasColon(expandedValue) ? 'QUOTE_SINGLE' : quoteStyle);
+                if (!this.hasColon(expandedValue)) {
+                    quoteStyles.set(expansionPathKey, this.isKeyValueLike(expandedValue) ? 'QUOTE_SINGLE' : quoteStyle);
+                }
 
                 // Also set for variable path if applicable
                 if (context.expansionPath.length >= 3 && context.expansionPath[2] === 'variables') {
@@ -1334,12 +1342,6 @@ class AzurePipelineParser {
                 this.ensureStringsWithExpressions(context).add(emptyKey);
             }
         }
-    }
-
-    _relativePathAfterKey(expansionPath, key) {
-        if (!Array.isArray(expansionPath)) return [];
-        const keyIndex = expansionPath.indexOf(key);
-        return keyIndex >= 0 ? expansionPath.slice(keyIndex + 2) : expansionPath;
     }
 
     /**
@@ -1461,7 +1463,7 @@ class AzurePipelineParser {
                 const expandedValue = this.expandNode(value, context, key);
                 if (expandedValue === undefined) continue;
 
-                this._handleQuoteStyleTracking(expandedValue, value, context, flags);
+                this.trackQuoteStylesForExpressions(expandedValue, value, context, flags);
                 this._trackExpressionValue(expandedValue, context, flags);
 
                 // Track single-line full expressions that expanded to multiline
@@ -2974,25 +2976,29 @@ class AzurePipelineParser {
         return typeof value === 'string' && /\$\([^)]+\)/.test(value);
     }
 
-    hasColon(value) {
-        if (typeof value !== 'string' || !value.includes(':')) {
-            return false;
-        }
-
-        // URLs (http://, https://) don't need quotes despite colons
-        if (/^https?:\/\//.test(value)) return false;
-
-        // MSBuild properties (/p:Property=Value) don't need quotes
-        if (/^\/[a-zA-Z]+:/.test(value)) return false;
-
+    isKeyValueLike(value) {
+        if (typeof value !== 'string') return false;
         // Pattern: ": " (colon-space) suggests YAML key-value, needs quotes
-        if (/: /.test(value)) return true;
+        return /: /.test(value);
+    }
 
-        // Colon at the very start always needs quotes
-        if (value.startsWith(':')) return true;
+    relativePathAfterKey(path, key) {
+        if (!Array.isArray(path)) return [];
+        const keyIndex = path.indexOf(key);
+        return keyIndex >= 0 ? path.slice(keyIndex + 2) : path;
+    }
 
-        // Otherwise, colon in middle without space after is usually safe (HH:MM:SS, IP addresses, etc.)
-        return false;
+    hasColon(value) {
+        return typeof value === 'string' && value.includes(':');
+    }
+
+    isConditionExpression(value) {
+        if (typeof value !== 'string') return false;
+        const trimmed = value.trim();
+        if (!trimmed) return false;
+        const functionCall = /^[a-zA-Z_][\w\.]*\(.*\)$/.test(trimmed);
+        const variableIndex = /\b(?:variables|parameters|env|dependencies)\[/.test(trimmed);
+        return functionCall || variableIndex;
     }
 
     /**
@@ -3033,7 +3039,7 @@ class AzurePipelineParser {
         return context.stringsWithExpressions.has(uniqueKey);
     }
 
-    hadFullParameterExpression(value, path, context) {
+    hasFullParameterExpression(value, path, context) {
         const fullParameterExpressions = context.quoteResult?.fullParameterExpressions;
         if (typeof value !== 'string' || !fullParameterExpressions) {
             return false;

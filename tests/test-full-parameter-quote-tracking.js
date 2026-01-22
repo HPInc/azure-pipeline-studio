@@ -77,15 +77,18 @@ runTestCase(
     }
 );
 
-// Test 2: Full parameter expression with colon - should be quoted
+// Test 2: Full parameter expression with URL - URLs should not be quoted
 runTestCase(
     'Test 2: Full parameter expression with colon',
     { parameters: { urlWithColon: 'http://example.com' } },
     true,
     (output) => {
-        // URL with colon from full parameter expression should be quoted
-        if (!output.includes("URL: 'http://example.com'")) {
-            throw new Error('Expected URL with colon to be single-quoted from full parameter expression');
+        // URLs don't need quoting even though they contain colons
+        if (!output.includes('URL: http://example.com')) {
+            throw new Error('Expected URL to be unquoted (URLs do not require quoting in YAML)');
+        }
+        if (output.includes("URL: 'http://example.com'")) {
+            throw new Error('URL should not be quoted');
         }
     }
 );
