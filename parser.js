@@ -947,22 +947,14 @@ class AzurePipelineParser {
                     continue;
                 }
 
-                const singleKeyHandled = this._handleSingleKeyObjectInArray(
-                    element,
-                    array,
-                    index,
-                    context,
-                    result,
-                    parentKey
-                );
-                if (singleKeyHandled.handled) {
-                    index = typeof singleKeyHandled.nextIndex === 'number' ? singleKeyHandled.nextIndex : index;
+                const singleKeyObj = this._handleSingleKeyObject(element, array, index, context, result, parentKey);
+                if (singleKeyObj.handled) {
+                    index = typeof singleKeyObj.nextIndex === 'number' ? singleKeyObj.nextIndex : index;
                     continue;
                 }
 
                 // Check if we're entering a new stage or job scope
                 const scopedContext = this._createScopedContext(context, element, parentKey);
-
                 const expanded = this.expandNode(element, scopedContext, parentKey);
                 if (expanded === undefined) continue;
 
@@ -993,17 +985,15 @@ class AzurePipelineParser {
         const templateItems = this.expandTemplateReference(element, context);
         if (Array.isArray(templateItems) && templateItems.length) {
             const currentResultLength = result.length;
+            const idxMap = {
+                steps: context.stepIndex,
+                jobs: context.jobIndex,
+                stages: context.stageIndex,
+            };
 
-            // Capture the global index before adding template items
-            // This will be used for accurate quote style remapping
-            const startIndexForRemapping =
-                parentKey === 'steps'
-                    ? context.stepIndex + 1
-                    : parentKey === 'jobs'
-                      ? context.jobIndex + 1
-                      : parentKey === 'stages'
-                        ? context.stageIndex + 1
-                        : currentResultLength;
+            const remapStart = Object.prototype.hasOwnProperty.call(idxMap, parentKey)
+                ? idxMap[parentKey] + 1
+                : currentResultLength;
 
             result.push(...templateItems);
 
@@ -1034,22 +1024,16 @@ class AzurePipelineParser {
 
             // Remap quote styles for all template items at once
             if (templatePath && context.templateQuoteStyles) {
-                const resolvedTemplatePath =
-                    typeof templatePath === 'string'
-                        ? this.replaceExpressionsInString(templatePath, context)
-                        : templatePath;
+                const resolvedTmplPath = this.replaceExpressionsInString(templatePath, context);
 
                 // Find the actual file path in templateQuoteStyles
-                for (const [tplPath] of context.templateQuoteStyles.entries()) {
-                    if (
-                        tplPath.includes(resolvedTemplatePath) ||
-                        resolvedTemplatePath.includes(path.basename(tplPath))
-                    ) {
+                for (const [tmplPath] of context.templateQuoteStyles.entries()) {
+                    if (tmplPath.includes(resolvedTmplPath) || resolvedTmplPath.includes(path.basename(tmplPath))) {
                         this._remapTemplateQuoteStylesByValue(
-                            tplPath,
+                            tmplPath,
                             parentKey,
                             templateItems,
-                            startIndexForRemapping,
+                            remapStart,
                             pathPrefix,
                             context
                         );
@@ -1119,10 +1103,7 @@ class AzurePipelineParser {
                     const item = templateItems[i];
                     if (!item || typeof item !== 'object') continue;
 
-                    // Get the value at the property path in this item
                     const itemValue = this._getNestedValue(item, propertyPath);
-
-                    // If the values match, we found our item
                     if (itemValue === valuePart) {
                         matchedIndex = i;
                         break;
@@ -1270,30 +1251,16 @@ class AzurePipelineParser {
         let fullPath = [];
         if (context.stepIndex >= 0) {
             // We're in a step context - find where 'steps' appears in expansionPath and skip that portion
-            const stepsKeyIndex = context.expansionPath.indexOf('steps');
-            const relativePath =
-                stepsKeyIndex >= 0 ? context.expansionPath.slice(stepsKeyIndex + 2) : context.expansionPath;
-            fullPath = [
-                'stages',
-                context.stageIndex,
-                'jobs',
-                context.jobIndex,
-                'steps',
-                context.stepIndex,
-                ...relativePath,
-            ];
+            const path = this._relativePathAfterKey(context.expansionPath, 'steps');
+            fullPath = ['stages', context.stageIndex, 'jobs', context.jobIndex, 'steps', context.stepIndex, ...path];
         } else if (context.jobIndex >= 0) {
             // We're in a job context - find where 'jobs' appears in expansionPath and skip that portion
-            const jobsKeyIndex = context.expansionPath.indexOf('jobs');
-            const relativePath =
-                jobsKeyIndex >= 0 ? context.expansionPath.slice(jobsKeyIndex + 2) : context.expansionPath;
-            fullPath = ['stages', context.stageIndex, 'jobs', context.jobIndex, ...relativePath];
+            const path = this._relativePathAfterKey(context.expansionPath, 'jobs');
+            fullPath = ['stages', context.stageIndex, 'jobs', context.jobIndex, ...path];
         } else if (context.stageIndex >= 0) {
             // We're in a stage context - find where 'stages' appears in expansionPath and skip that portion
-            const stagesKeyIndex = context.expansionPath.indexOf('stages');
-            const relativePath =
-                stagesKeyIndex >= 0 ? context.expansionPath.slice(stagesKeyIndex + 2) : context.expansionPath;
-            fullPath = ['stages', context.stageIndex, ...relativePath];
+            const path = this._relativePathAfterKey(context.expansionPath, 'stages');
+            fullPath = ['stages', context.stageIndex, ...path];
         } else {
             // Root level or variable context
             fullPath = [...context.expansionPath];
@@ -1369,6 +1336,12 @@ class AzurePipelineParser {
         }
     }
 
+    _relativePathAfterKey(expansionPath, key) {
+        if (!Array.isArray(expansionPath)) return [];
+        const keyIndex = expansionPath.indexOf(key);
+        return keyIndex >= 0 ? expansionPath.slice(keyIndex + 2) : expansionPath;
+    }
+
     /**
      * Track stage/job/step indices for items (single item or array).
      * @param {any|array} items - Single item or array of items to track
@@ -1418,7 +1391,7 @@ class AzurePipelineParser {
      * @param {string} parentKey - The parent key for tracking indices
      * @returns {{handled: boolean, nextIndex?: number}} - Whether the element was handled and updated next index
      */
-    _handleSingleKeyObjectInArray(element, array, index, context, result, parentKey = null) {
+    _handleSingleKeyObject(element, array, index, context, result, parentKey = null) {
         if (!this.isSingleKeyObject(element)) return { handled: false };
 
         const key = Object.keys(element)[0];
@@ -2193,34 +2166,28 @@ class AzurePipelineParser {
         }
 
         const [first, ...rest] = segments;
+        const walkIfHas = (container) =>
+            container && Object.prototype.hasOwnProperty.call(container, first)
+                ? this.walkSegments(container[first], rest)
+                : undefined;
 
-        if (context.locals && Object.prototype.hasOwnProperty.call(context.locals, first)) {
-            return this.walkSegments(context.locals[first], rest);
+        const localMatch = walkIfHas(context.locals);
+        if (localMatch !== undefined) return localMatch;
+
+        const directTargets = {
+            parameters: context.parameters,
+            variables: context.variables,
+            resources: context.resources,
+        };
+        if (Object.prototype.hasOwnProperty.call(directTargets, first)) {
+            return this.walkSegments(directTargets[first], rest);
         }
 
-        if (first === 'parameters') {
-            return this.walkSegments(context.parameters, rest);
-        }
+        const parameterMatch = walkIfHas(context.parameters);
+        if (parameterMatch !== undefined) return parameterMatch;
 
-        if (first === 'variables') {
-            return this.walkSegments(context.variables, rest);
-        }
-
-        if (first === 'resources') {
-            return this.walkSegments(context.resources, rest);
-        }
-
-        if (Object.prototype.hasOwnProperty.call(context.parameters, first)) {
-            return this.walkSegments(context.parameters[first], rest);
-        }
-
-        if (Object.prototype.hasOwnProperty.call(context.variables, first)) {
-            return this.walkSegments(context.variables[first], rest);
-        }
-
-        if (context.locals && Object.prototype.hasOwnProperty.call(context.locals, first)) {
-            return this.walkSegments(context.locals[first], rest);
-        }
+        const variableMatch = walkIfHas(context.variables);
+        if (variableMatch !== undefined) return variableMatch;
 
         return undefined;
     }
@@ -2254,22 +2221,20 @@ class AzurePipelineParser {
     }
 
     toBoolean(value) {
-        if (typeof value === 'boolean') {
-            return value;
-        }
-        if (typeof value === 'number') {
-            return value !== 0;
-        }
-        if (typeof value === 'string') {
-            const lowered = value.toLowerCase();
-            if (lowered === '__true__' || lowered === 'true') {
-                return true;
+        switch (typeof value) {
+            case 'boolean':
+                return value;
+            case 'number':
+                return value !== 0;
+            case 'string': {
+                const lowered = value.toLowerCase();
+                if (lowered === '__true__' || lowered === 'true') return true;
+                if (lowered === '__false__' || lowered === 'false' || lowered.length === 0) return false;
+                return Boolean(value);
             }
-            if (lowered === '__false__' || lowered === 'false' || lowered.length === 0) {
-                return false;
-            }
+            default:
+                return Boolean(value);
         }
-        return Boolean(value);
     }
 
     /** Returns boolean as marker string (__TRUE__/__FALSE__) for Azure-compatible output. */
@@ -2743,7 +2708,7 @@ class AzurePipelineParser {
             }
 
             if (this.isNonArrayObject(item)) {
-                const handled = this._handleSingleKeyObjectInArray(item, node, i, context, result);
+                const handled = this._handleSingleKeyObject(item, node, i, context, result);
                 if (handled && handled.handled) {
                     i = handled.nextIndex !== undefined ? handled.nextIndex + 1 : i + 1;
                     continue;
