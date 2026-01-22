@@ -286,11 +286,6 @@ class AzurePipelineParser {
      */
     setQuoteStyle(path, keyNode, valueNode, quoteStyles) {
         const quoteType = valueNode.type;
-        if (keyNode?.value == 'PATTERNS') {
-            console.log(
-                `Capturing quote style for PATTERNS at path: ${path.join('.')}, value: '${valueNode.value}', type: ${quoteType}`
-            );
-        }
         if (quoteType !== 'QUOTE_SINGLE' && quoteType !== 'QUOTE_DOUBLE') return;
         if (typeof valueNode.value !== 'string') return;
 
@@ -343,12 +338,6 @@ class AzurePipelineParser {
                 if (!keyNode || !keyNode.value) continue;
 
                 path.push(keyNode.value);
-                //console.log(`Visiting path: ${path.join('.')}`);
-                if (`${path.join('.')}`.includes('stages.4.jobs.0.steps.4.env.PATTERNS')) {
-                    console.log(
-                        `Restoring quote style for PATTERNS at path: ${path.join('.')}, value: '${pair.value?.value}'`
-                    );
-                }
 
                 try {
                     handler(pair, path, quoteStyles);
@@ -423,10 +412,10 @@ class AzurePipelineParser {
 
                 let content = value.value;
 
-                // If Azure mode and trailing spaces exist, or value is already explicitly double-quoted,
-                // preserve the double-quoted type and recurse for normalization without changing further logic.
-                if ((context.azureCompatible && this.hasTrailingSpaces(content)) || value.type === 'QUOTE_DOUBLE') {
-                    if (context.azureCompatible && this.hasTrailingSpaces(content)) {
+                // Preserve double-quoted type for trailing spaces in Azure mode
+                const preserveDoubleQuote = context.azureCompatible && this.hasTrailingSpaces(content);
+                if (preserveDoubleQuote || value.type === 'QUOTE_DOUBLE') {
+                    if (preserveDoubleQuote) {
                         value.type = 'QUOTE_DOUBLE';
                     }
                     this.applyBlockScalarStyles(value, context);
@@ -1151,8 +1140,6 @@ class AzurePipelineParser {
             }
             const newPath = expandedPath.join('.');
             const newKey = `${newPath}:${valuePart}`;
-            console.log(`Remapping quote style for template value '${valuePart}' from key '${key}' to '${newKey}'`);
-            // Set the remapped quote style
             quoteStyles.set(newKey, style);
         }
     }
@@ -1325,10 +1312,6 @@ class AzurePipelineParser {
         let quoteStyle = null;
         // Handle full expressions that expanded
         if (isSingleLineFullExpression) {
-            if (originalValue == '${{ parameters.patterns }}') {
-                console.log(`Looking up quote style for empty expansion at key '${originalValue}'`);
-            }
-
             // First, try to look up quote style using the original expression (for all cases)
             const originalKey = this.getQuoteStyleUniqueKey(fullPath, originalValue);
             quoteStyle = quoteStyles.get(originalKey);
