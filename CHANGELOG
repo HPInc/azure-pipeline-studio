@@ -1,9 +1,34 @@
 # Changelog
 
-All notable changes to Azure Pipeline Studio will be documented in this file.
+All notable changes to Azure Pipeline Studio will be documented in this file.   
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
+.html).
+
+## [1.0.7] - 2026-01-23
+
+### Added
+- Extracted Azure DevOps expression functions into dedicated `ado-functions.js` module
+- Enhanced quote style handling for template parameters with context-aware tracking
+- Consolidation of quote-preservation test fixtures for improved test maintainability
+- Comprehensive test coverage for quote preservation across different scenarios (glob patterns, colons, empty strings, mixed expressions)
+
+### Changed
+- Refactored parser.js to remove context parameter from non-recursive functions for cleaner code
+- Improved quote handling for full parameter expressions with better Azure compatibility
+- Reorganized test suite with consolidated test fixtures in inputs/ directory
+- Simplified test structure with unified quote-preservation test framework
+
+### Fixed
+- Fixed quote handling for full parameter expressions to better match Azure DevOps behavior
+- Improved empty string quote prioritization (always uses single quotes)
+- Enhanced glob pattern quote fallback (default to single quotes)
+- Fixed full expression quote preservation with proper source parameter extraction
+- Improved colon detection for URLs and MSBuild properties
+
+[1.0.7]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.0.7
+
 
 ## [1.0.6] - 2025-12-24
 
