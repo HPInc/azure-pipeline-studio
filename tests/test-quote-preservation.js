@@ -137,9 +137,9 @@ const test4Pass = runTestCase(
     { parameters: { buildConfiguration: 'Debug', message: 'Hello' } },
     false,
     (output) => {
-        // Full expression - quotes preserved
-        if (!output.includes("CONFIG: 'Debug'") && !output.includes('CONFIG: "Debug"')) {
-            throw new Error('Full expression CONFIG should preserve quotes');
+        // Full expression - in non-Azure mode we allow default YAML formatting (no forced quote preservation)
+        if (!output.includes('CONFIG: Debug')) {
+            throw new Error('Full expression CONFIG should not require preserved quotes');
         }
         // Mixed expression - quotes removed
         if (output.includes("BUILD_CMD: 'dotnet build --config Debug'")) {

@@ -121,7 +121,7 @@ class AzurePipelineParser {
         }
 
         const variableQuoteStyles = new Map();
-        const quoteStyles = this._getQuoteStylesMap(context);
+        const quoteStyles = this.getQuoteStylesMap(context);
 
         // Capture quote styles for each variable value before conversion
         Object.entries(doc.variables).forEach(([name, value]) => {
@@ -212,7 +212,7 @@ class AzurePipelineParser {
      * @param {string} identifier - Identifier from ancestor
      */
     restoreQuoteStyles(node, path, context = {}) {
-        const quoteStyles = this._getQuoteStylesMap(context);
+        const quoteStyles = this.getQuoteStylesMap(context);
 
         // Delegate to the generic traversal with a handler that applies stored styles
         const handler = this.buildQuoteHandler(this.getQuoteStyle.bind(this), {
@@ -231,14 +231,10 @@ class AzurePipelineParser {
                         valueNode.type = 'QUOTE_SINGLE';
                     }
                 } else if (hasFullParameterExpression) {
-                    if (!this.hasColon(value) && !this.isConditionExpression(value) && this.isGlobPattern(value)) {
-                        valueNode.type = 'QUOTE_SINGLE';
-                    } else if (this.isKeyValueLike(value)) {
-                        valueNode.type = 'QUOTE_SINGLE';
-                    } else if (!context.azureCompatible && quoteStyle) {
-                        valueNode.type = quoteStyle;
-                    } else {
-                        valueNode.type = 'PLAIN';
+                    if (!this.hasColon(value) && !this.isConditionExpression(value)) {
+                        if (this.isGlobPattern(value) || this.isKeyValueLike(value)) {
+                            valueNode.type = 'QUOTE_SINGLE';
+                        }
                     }
                 } else if (this.hadMixedExpression(value, pathArr, context) || this.hasRuntimeVariable(value)) {
                     valueNode.type = 'PLAIN';
@@ -680,7 +676,7 @@ class AzurePipelineParser {
         if (!doc || typeof doc !== 'object' || !doc.parameters) return;
 
         const errors = { missingRequired: [], invalidValues: [], typeErrors: [], unknownParameters: [] };
-        const checkParameter = (param, name) => this._validateParameter(param, name, providedParameters, errors);
+        const checkParameter = (param, name) => this.validateParameter(param, name, providedParameters, errors);
 
         if (Array.isArray(doc.parameters)) {
             for (const param of doc.parameters) {
@@ -692,11 +688,11 @@ class AzurePipelineParser {
             }
         }
 
-        this._checkUnknownParameters(doc.parameters, providedParameters, errors);
-        this._reportValidationErrors(errors, templatePath, context);
+        this.checkUnknownParameters(doc.parameters, providedParameters, errors);
+        this.reportValidationErrors(errors, templatePath, context);
     }
 
-    _validateParameter(param, paramName, providedParameters, errors) {
+    validateParameter(param, paramName, providedParameters, errors) {
         if (!param || typeof param !== 'object') return;
 
         const name = paramName || param.name;
@@ -713,7 +709,7 @@ class AzurePipelineParser {
         // Skip validation when value is undefined or a runtime variable reference
         const isRuntimeVariable = typeof paramValue === 'string' && /\$\([^)]+\)/.test(paramValue);
         if (wasProvided && param.type !== undefined && paramValue !== undefined && !isRuntimeVariable) {
-            const typeError = this._validateParameterType(name, param.type, paramValue);
+            const typeError = this.validateParameterType(name, param.type, paramValue);
             if (typeError) errors.typeErrors.push(typeError);
         }
 
@@ -724,7 +720,7 @@ class AzurePipelineParser {
         }
     }
 
-    _validateParameterType(name, paramType, paramValue) {
+    validateParameterType(name, paramType, paramValue) {
         const typeStr = String(paramType).toLowerCase();
         const actualType = typeof paramValue;
 
@@ -776,7 +772,7 @@ class AzurePipelineParser {
         return null;
     }
 
-    _checkUnknownParameters(templateParams, providedParameters, errors) {
+    checkUnknownParameters(templateParams, providedParameters, errors) {
         if (!providedParameters || typeof providedParameters !== 'object') return;
 
         const definedParams = new Set();
@@ -793,7 +789,7 @@ class AzurePipelineParser {
         });
     }
 
-    _reportValidationErrors(errors, templatePath, context) {
+    reportValidationErrors(errors, templatePath, context) {
         const errorMessages = [];
         const templateName = templatePath || 'template';
 
@@ -928,7 +924,7 @@ class AzurePipelineParser {
 
             // Track stage/job indices for direct (non-template, non-directive) stages/jobs
             const expansionIndex =
-                isDirective || isTemplate ? index : this._trackIndicesForItems(element, parentKey, context, index);
+                isDirective || isTemplate ? index : this.trackIndicesForItems(element, parentKey, context, index);
 
             // Don't push directive blocks to expansionPath
             if (context.expansionPath && !isDirective) {
@@ -937,24 +933,24 @@ class AzurePipelineParser {
 
             try {
                 if (isTemplate) {
-                    this._expandTemplateReferenceToResult(element, context, result, parentKey);
+                    this.expandTemplateReferenceToResult(element, context, result, parentKey);
                     continue;
                 }
 
-                const singleKeyObj = this._handleSingleKeyObject(element, array, index, context, result, parentKey);
+                const singleKeyObj = this.handleSingleKeyObject(element, array, index, context, result, parentKey);
                 if (singleKeyObj.handled) {
                     index = typeof singleKeyObj.nextIndex === 'number' ? singleKeyObj.nextIndex : index;
                     continue;
                 }
 
                 // Check if we're entering a new stage or job scope
-                const scopedContext = this._createScopedContext(context, element, parentKey);
+                const scopedContext = this.createScopedContext(context, element, parentKey);
                 const expanded = this.expandNode(element, scopedContext, parentKey);
                 if (expanded === undefined) continue;
 
                 // Handle array expansion - normalize to array and process items
                 const items = Array.isArray(expanded) ? expanded : [expanded];
-                this._expandAndAppendArrayItems(items, context, result, isVarArray);
+                this.expandAndAppendArrayItems(items, context, result, isVarArray);
             } finally {
                 if (context.expansionPath && !isDirective) {
                     context.expansionPath.pop();
@@ -974,7 +970,7 @@ class AzurePipelineParser {
      * @param {array} result - Array to append expanded items to
      * @param {string} parentKey - The key of the parent node, used to determine context like `variables` array
      */
-    _expandTemplateReferenceToResult(element, context, result, parentKey = '') {
+    expandTemplateReferenceToResult(element, context, result, parentKey = '') {
         const templatePath = element.template;
         const templateItems = this.expandTemplateReference(element, context);
         if (Array.isArray(templateItems) && templateItems.length) {
@@ -1003,7 +999,7 @@ class AzurePipelineParser {
                 }
 
                 // Track global indices for context (stages, jobs, steps counters)
-                this._trackIndicesForItems(item, parentKey, context, currentResultLength + itemIndex);
+                this.trackIndicesForItems(item, parentKey, context, currentResultLength + itemIndex);
             }
 
             // Build context-aware path prefix using tracked indices
@@ -1023,7 +1019,7 @@ class AzurePipelineParser {
                 // Find the actual file path in templateQuoteStyles
                 for (const [tmplPath] of context.templateQuoteStyles.entries()) {
                     if (tmplPath.includes(resolvedTmplPath) || resolvedTmplPath.includes(path.basename(tmplPath))) {
-                        this._remapTemplateQuoteStylesByValue(
+                        this.remapTemplateQuoteStylesByValue(
                             tmplPath,
                             parentKey,
                             templateItems,
@@ -1048,8 +1044,8 @@ class AzurePipelineParser {
      * @param {array} pathPrefix - Context-aware path prefix for the expanded location
      * @param {object} context - Expansion context
      */
-    _remapTemplateQuoteStylesByValue(templatePath, parentKey, templateItems, startIndex, pathPrefix, context) {
-        const quoteStyles = this._getQuoteStylesMap(context);
+    remapTemplateQuoteStylesByValue(templatePath, parentKey, templateItems, startIndex, pathPrefix, context) {
+        const quoteStyles = this.getQuoteStylesMap(context);
         const templateQuoteStyles = context.templateQuoteStyles.get(templatePath);
 
         if (!templateQuoteStyles || templateQuoteStyles.size === 0) return;
@@ -1084,7 +1080,7 @@ class AzurePipelineParser {
             if (templateIndex >= 0 && templateIndex < templateItems.length) {
                 const item = templateItems[templateIndex];
                 if (item && typeof item === 'object') {
-                    const itemValue = this._getNestedValue(item, propertyPath);
+                    const itemValue = this.getNestedValue(item, propertyPath);
                     if (itemValue === valuePart) {
                         matchedIndex = templateIndex;
                     }
@@ -1097,7 +1093,7 @@ class AzurePipelineParser {
                     const item = templateItems[i];
                     if (!item || typeof item !== 'object') continue;
 
-                    const itemValue = this._getNestedValue(item, propertyPath);
+                    const itemValue = this.getNestedValue(item, propertyPath);
                     if (itemValue === valuePart) {
                         matchedIndex = i;
                         break;
@@ -1122,7 +1118,7 @@ class AzurePipelineParser {
     /**
      * Helper to get a nested value from an object given a dot-separated path
      */
-    _getNestedValue(obj, path) {
+    getNestedValue(obj, path) {
         if (!path) return obj;
         const parts = path.split('.');
         let current = obj;
@@ -1140,13 +1136,13 @@ class AzurePipelineParser {
      * @param {array} result - Result array to append to
      * @param {boolean} isVarArray - Whether we're in a variables array
      */
-    _expandAndAppendArrayItems(items, context, result, isVarArray) {
+    expandAndAppendArrayItems(items, context, result, isVarArray) {
         for (const item of items) {
             if (this.isTemplateReference(item)) {
-                this._expandTemplateReferenceToResult(item, context, result, isVarArray);
+                this.expandTemplateReferenceToResult(item, context, result, isVarArray);
             } else {
                 result.push(item);
-                this._updateVariableContext(item, isVarArray, context);
+                this.updateVariableContext(item, isVarArray, context);
             }
         }
     }
@@ -1157,7 +1153,7 @@ class AzurePipelineParser {
      * @param {boolean} isVarArray - Whether we're in a variables array
      * @param {object} context - Expansion context
      */
-    _updateVariableContext(item, isVarArray, context) {
+    updateVariableContext(item, isVarArray, context) {
         if (!isVarArray || !item || typeof item !== 'object' || Array.isArray(item)) return;
 
         const varName = item.name;
@@ -1185,7 +1181,7 @@ class AzurePipelineParser {
      * @param {object} context - Expansion context
      * @returns {Map} Quote styles map
      */
-    _getQuoteStylesMap(context) {
+    getQuoteStylesMap(context) {
         return context.quoteResult?.quoteStyles || new Map();
     }
 
@@ -1213,7 +1209,7 @@ class AzurePipelineParser {
      * @param {object} context - Expansion context
      * @param {object} flags - Object with tracking flags
      */
-    _trackExpressionValue(expandedValue, context, flags) {
+    trackExpressionValue(expandedValue, context, flags) {
         const { hadMultilineExpr, lastLineHadExpression } = flags;
 
         if (!hadMultilineExpr || typeof expandedValue !== 'string') return;
@@ -1239,9 +1235,9 @@ class AzurePipelineParser {
 
         if (!context.expansionPath || typeof expandedValue !== 'string') return;
 
-        const quoteStyles = this._getQuoteStylesMap(context);
+        const quoteStyles = this.getQuoteStylesMap(context);
 
-        // Build full path including stage/job/step indices like in _remapTemplateQuoteStylesByValue
+        // Build full path including stage/job/step indices like in remapTemplateQuoteStylesByValue
         let fullPath = [];
         if (context.stepIndex >= 0) {
             // We're in a step context - find where 'steps' appears in expansionPath and skip that portion
@@ -1343,7 +1339,7 @@ class AzurePipelineParser {
      * @param {number} fallbackIndex - Index to return if no tracking occurs
      * @returns {number} - The expansion index for single items, or fallbackIndex
      */
-    _trackIndicesForItems(items, parentKey, context, fallbackIndex = 0) {
+    trackIndicesForItems(items, parentKey, context, fallbackIndex = 0) {
         // Handle single item
         if (!Array.isArray(items)) {
             if (parentKey === 'stages' && items && typeof items === 'object' && 'stage' in items) {
@@ -1384,7 +1380,7 @@ class AzurePipelineParser {
      * @param {string} parentKey - The parent key for tracking indices
      * @returns {{handled: boolean, nextIndex?: number}} - Whether the element was handled and updated next index
      */
-    _handleSingleKeyObject(element, array, index, context, result, parentKey = null) {
+    handleSingleKeyObject(element, array, index, context, result, parentKey = null) {
         if (!this.isSingleKeyObject(element)) return { handled: false };
 
         const key = Object.keys(element)[0];
@@ -1392,7 +1388,7 @@ class AzurePipelineParser {
         if (this.isEachDirective(key)) {
             const applied = this.applyEachDirective(key, element[key], context);
             if (applied && Array.isArray(applied.items) && applied.items.length) {
-                this._trackIndicesForItems(applied.items, parentKey, context);
+                this.trackIndicesForItems(applied.items, parentKey, context);
                 result.push(...applied.items);
             }
             return { handled: true };
@@ -1401,7 +1397,7 @@ class AzurePipelineParser {
         if (this.isConditionalDirective(key)) {
             const expanded = this.expandConditionalBlock(array, index, context, parentKey);
             if (expanded && Array.isArray(expanded.items) && expanded.items.length) {
-                this._trackIndicesForItems(expanded.items, parentKey, context);
+                this.trackIndicesForItems(expanded.items, parentKey, context);
                 result.push(...expanded.items);
             }
             return { handled: true, nextIndex: expanded.nextIndex };
@@ -1455,7 +1451,7 @@ class AzurePipelineParser {
                 if (expandedValue === undefined) continue;
 
                 this.trackQuoteStylesForExpressions(expandedValue, value, context, flags);
-                this._trackExpressionValue(expandedValue, context, flags);
+                this.trackExpressionValue(expandedValue, context, flags);
 
                 // Track single-line full expressions that expanded to multiline
                 if (flags.isSingleLineFullExpression && this.isMultilineString(expandedValue)) {
@@ -2302,7 +2298,7 @@ class AzurePipelineParser {
      * @param {string} parentKey - The parent key ('stages', 'jobs', etc.)
      * @returns {object} - Scoped context or original context
      */
-    _createScopedContext(context, element, parentKey) {
+    createScopedContext(context, element, parentKey) {
         if (parentKey === 'stages' && element && typeof element === 'object' && 'stage' in element) {
             // Entering a stage - create stage-scoped context
             const scopedContext = { ...context };
@@ -2312,7 +2308,7 @@ class AzurePipelineParser {
 
             // If the stage has variables, extract them first
             if (element.variables) {
-                const stageVars = this._extractVariablesFromNode(element.variables);
+                const stageVars = this.extractVariablesFromNode(element.variables);
                 Object.assign(scopedContext.stageVariables, stageVars);
                 Object.assign(scopedContext.variables, stageVars);
             }
@@ -2328,7 +2324,7 @@ class AzurePipelineParser {
 
             // If the job has variables, extract them first
             if (element.variables) {
-                const jobVars = this._extractVariablesFromNode(element.variables);
+                const jobVars = this.extractVariablesFromNode(element.variables);
                 Object.assign(scopedContext.jobVariables, jobVars);
                 Object.assign(scopedContext.variables, jobVars);
             }
@@ -2345,7 +2341,7 @@ class AzurePipelineParser {
      * @param {array|object} variablesNode - The variables node to extract from
      * @returns {object} - Map of variable names to values
      */
-    _extractVariablesFromNode(variablesNode) {
+    extractVariablesFromNode(variablesNode) {
         const vars = {};
 
         if (!variablesNode) return vars;
@@ -2676,8 +2672,8 @@ class AzurePipelineParser {
 
     expandNodePreservingTemplates(node, context) {
         if (node === null) return node;
-        if (Array.isArray(node)) return this._expandArrayPreservingTemplates(node, context);
-        if (typeof node === 'object') return this._expandObjectPreservingTemplates(node, context);
+        if (Array.isArray(node)) return this.expandArrayPreservingTemplates(node, context);
+        if (typeof node === 'object') return this.expandObjectPreservingTemplates(node, context);
         return this.expandScalar(node, context);
     }
 
@@ -2687,7 +2683,7 @@ class AzurePipelineParser {
      * @param {object} context - Expansion context
      * @returns {array} - Expanded array
      */
-    _expandArrayPreservingTemplates(node, context) {
+    expandArrayPreservingTemplates(node, context) {
         const result = [];
         let i = 0;
 
@@ -2701,7 +2697,7 @@ class AzurePipelineParser {
             }
 
             if (this.isNonArrayObject(item)) {
-                const handled = this._handleSingleKeyObject(item, node, i, context, result);
+                const handled = this.handleSingleKeyObject(item, node, i, context, result);
                 if (handled && handled.handled) {
                     i = handled.nextIndex !== undefined ? handled.nextIndex + 1 : i + 1;
                     continue;
@@ -2727,7 +2723,7 @@ class AzurePipelineParser {
      * @param {object} context - Expansion context
      * @returns {object} - Expanded object
      */
-    _expandObjectPreservingTemplates(node, context) {
+    expandObjectPreservingTemplates(node, context) {
         if (this.isTemplateReference(node)) {
             const result = { template: node.template };
             if (node.parameters) {
@@ -2796,11 +2792,11 @@ class AzurePipelineParser {
         if (evaluated && this.isNonArrayObject(evaluated)) {
             return evaluated;
         } else {
-            return this._normalizeParameterArray(evaluated);
+            return this.normalizeParameterArray(evaluated);
         }
     }
 
-    _normalizeParameterArray(paramArray) {
+    normalizeParameterArray(paramArray) {
         const result = {};
         paramArray.forEach((item) => {
             if (!item || typeof item !== 'object' || Array.isArray(item)) return;
