@@ -219,12 +219,10 @@ class AzurePipelineParser {
             post: (quoteStyle, valueNode, pathArr) => {
                 if (!this.isStringNodeValue(valueNode)) return;
 
-                const hasFullParameterExpression = this.hasFullParameterExpression(valueNode.value, pathArr, context);
-                // Parameters/variables definition sections should keep their original quote styles
-                const isDefinitionSection =
-                    pathArr.length >= 1 && (pathArr[0] === 'parameters' || pathArr[0] === 'variables');
+                const value = valueNode.value;
+                const hasFullParameterExpression = this.hasFullParameterExpression(value, pathArr, context);
 
-                if (valueNode.value === '') {
+                if (value === '') {
                     // Azure normalizes empty strings to single quotes
                     // Exception: inline empty double quotes (not from parameter expansion) stay double quoted
                     if (quoteStyle === 'QUOTE_DOUBLE' && !hasFullParameterExpression) {
@@ -232,23 +230,19 @@ class AzurePipelineParser {
                     } else {
                         valueNode.type = 'QUOTE_SINGLE';
                     }
-                } else if (!isDefinitionSection && hasFullParameterExpression) {
-                    const hasColon = this.hasColon(valueNode.value);
-                    const isExpressionLike = this.isConditionExpression(valueNode.value);
-                    if (!hasColon && !isExpressionLike && this.globQuotePattern.test(valueNode.value)) {
+                } else if (hasFullParameterExpression) {
+                    if (!this.hasColon(value) && !this.isConditionExpression(value) && this.isGlobPattern(value)) {
                         valueNode.type = 'QUOTE_SINGLE';
-                    } else if (this.isKeyValueLike(valueNode.value)) {
+                    } else if (this.isKeyValueLike(value)) {
                         valueNode.type = 'QUOTE_SINGLE';
                     } else if (!context.azureCompatible && quoteStyle) {
                         valueNode.type = quoteStyle;
                     } else {
                         valueNode.type = 'PLAIN';
                     }
-                } else if (this.hadMixedExpression(valueNode.value, pathArr, context)) {
+                } else if (this.hadMixedExpression(value, pathArr, context) || this.hasRuntimeVariable(value)) {
                     valueNode.type = 'PLAIN';
-                } else if (this.hasRuntimeVariable(valueNode.value)) {
-                    valueNode.type = 'PLAIN';
-                } else if (this.isKeyValueLike(valueNode.value)) {
+                } else if (this.isKeyValueLike(value)) {
                     valueNode.type = 'QUOTE_SINGLE';
                 } else if (quoteStyle) {
                     valueNode.type = quoteStyle;
@@ -1285,10 +1279,7 @@ class AzurePipelineParser {
             quoteStyle = quoteStyles.get(originalKey);
 
             // If not found and value is empty or glob pattern, try parameter lookup
-            if (
-                !quoteStyle &&
-                (expandedValue === '' || (this.globQuotePattern.test(expandedValue) && !isExpressionLike))
-            ) {
+            if (!quoteStyle && (expandedValue === '' || (this.isGlobPattern(expandedValue) && !isExpressionLike))) {
                 const param = this.stripExpressionDelimiters(originalValue);
                 let sourceParam = null;
 
@@ -1312,7 +1303,7 @@ class AzurePipelineParser {
                 }
 
                 // If still not found and it's a glob pattern, default to single quotes (Azure convention)
-                if (!quoteStyle && this.globQuotePattern.test(expandedValue) && !isExpressionLike) {
+                if (!quoteStyle && this.isGlobPattern(expandedValue) && !isExpressionLike) {
                     quoteStyle = 'QUOTE_SINGLE';
                 }
             }
@@ -2990,6 +2981,10 @@ class AzurePipelineParser {
 
     hasColon(value) {
         return typeof value === 'string' && value.includes(':');
+    }
+
+    isGlobPattern(value) {
+        return typeof value === 'string' && this.globQuotePattern.test(value);
     }
 
     isConditionExpression(value) {
