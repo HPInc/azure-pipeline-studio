@@ -20,6 +20,7 @@ const verbose = argv.v || argv.verbose;
 const tests = [
     'test-heredoc.js',
     'test-quote-preservation.js',
+    'test-full-parameter-quote-tracking.js',
     'test-microsoft-boolean-compatibility.js',
     'test-non-azure-compatible.js',
     'test-expressions.js',

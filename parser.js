@@ -50,7 +50,6 @@ class AzurePipelineParser {
         }
         const context = this.buildExecutionContext(document, overrides);
         context.quoteResult = this.captureQuoteStyles(yamlDoc.contents, []);
-        // Initialize tracking sets in quoteResult so they persist through expansion
         context.quoteResult.stringsWithExpressions = new Set();
         context.quoteResult.fullParameterExpressions = new Set();
         context.azureCompatible = overrides.azureCompatible || false;
@@ -218,40 +217,41 @@ class AzurePipelineParser {
         // Delegate to the generic traversal with a handler that applies stored styles
         const handler = this.buildQuoteHandler(this.getQuoteStyle.bind(this), {
             post: (quoteStyle, valueNode, pathArr) => {
-                if (this.isStringNodeValue(valueNode)) {
-                    if (valueNode.value === '') {
-                        // Azure always normalizes empty strings to single quotes
-                        // Exception: empty strings defined inline (not from parameters) preserve original quote style
-                        if (
-                            quoteStyle === 'QUOTE_DOUBLE' &&
-                            !this.hadFullParameterExpression(valueNode.value, pathArr, context)
-                        ) {
-                            valueNode.type = 'QUOTE_DOUBLE';
-                        } else {
-                            valueNode.type = 'QUOTE_SINGLE';
-                        }
-                    } else if (
-                        (val &&
-                            (val.includes('Release') || val.includes('test-value')) &&
-                            console.log(`[DEBUG] About to check hadFullParam for "${val}"`)) ||
-                        this.hadFullParameterExpression(valueNode.value, pathArr, context)
+                if (!this.isStringNodeValue(valueNode)) return;
+
+                // Parameters/variables definition sections should keep their original quote styles
+                const isDefinitionSection =
+                    pathArr.length >= 1 && (pathArr[0] === 'parameters' || pathArr[0] === 'variables');
+
+                if (valueNode.value === '') {
+                    // Azure normalizes empty strings to single quotes
+                    // Exception: inline empty double quotes (not from parameter expansion) stay double quoted
+                    if (
+                        quoteStyle === 'QUOTE_DOUBLE' &&
+                        !this.hadFullParameterExpression(valueNode.value, pathArr, context)
                     ) {
-                        // Full parameter expression: Azure removes template quotes and outputs PLAIN
-                        // Exception: values with colons get single quotes
-                        if (this.hasColon(valueNode.value)) {
-                            valueNode.type = 'QUOTE_SINGLE';
-                        } else {
-                            valueNode.type = 'PLAIN';
-                        }
-                    } else if (this.hadMixedExpression(valueNode.value, pathArr, context)) {
-                        valueNode.type = 'PLAIN';
-                    } else if (this.hasRuntimeVariable(valueNode.value)) {
-                        valueNode.type = 'PLAIN';
-                    } else if (this.hasColon(valueNode.value)) {
+                        valueNode.type = 'QUOTE_DOUBLE';
+                    } else {
                         valueNode.type = 'QUOTE_SINGLE';
-                    } else if (quoteStyle) {
-                        valueNode.type = quoteStyle;
                     }
+                } else if (!isDefinitionSection && this.hadFullParameterExpression(valueNode.value, pathArr, context)) {
+                    // Full parameter expression: colon/glob patterns → single quotes,
+                    // non-Azure mode with quoteStyle → preserve style, otherwise plain
+                    if (this.hasColon(valueNode.value) || this.globQuotePattern.test(valueNode.value)) {
+                        valueNode.type = 'QUOTE_SINGLE';
+                    } else if (!context.azureCompatible && quoteStyle) {
+                        valueNode.type = quoteStyle;
+                    } else {
+                        valueNode.type = 'PLAIN';
+                    }
+                } else if (this.hadMixedExpression(valueNode.value, pathArr, context)) {
+                    valueNode.type = 'PLAIN';
+                } else if (this.hasRuntimeVariable(valueNode.value)) {
+                    valueNode.type = 'PLAIN';
+                } else if (this.hasColon(valueNode.value)) {
+                    valueNode.type = 'QUOTE_SINGLE';
+                } else if (quoteStyle) {
+                    valueNode.type = quoteStyle;
                 }
             },
         });
@@ -3086,14 +3086,12 @@ class AzurePipelineParser {
     }
 
     hadFullParameterExpression(value, path, context) {
-        const fullParameterExpressions =
-            context.quoteResult?.fullParameterExpressions || context.fullParameterExpressions;
+        const fullParameterExpressions = context.quoteResult?.fullParameterExpressions;
         if (typeof value !== 'string' || !fullParameterExpressions) {
             return false;
         }
         const uniqueKey = this.getQuoteStyleUniqueKey(path, value);
-        const result = fullParameterExpressions.has(uniqueKey);
-        return result;
+        return fullParameterExpressions.has(uniqueKey);
     }
 
     normalizeTrailingNewlines(content, azureCompatible) {

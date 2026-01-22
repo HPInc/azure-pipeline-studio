@@ -40,6 +40,40 @@ parameters:
 - name: message
   type: string
   default: 'Build completed successfully.'
+# Additional parameters for consolidated quote-preservation scenarios
+- name: patternsGlob
+  type: string
+  default: '**/test.dll'
+- name: urlWithColon
+  type: string
+  default: 'http://example.com'
+- name: plainVersion
+  type: string
+  default: '1.2.3'
+- name: emptyParam
+  type: string
+  default: ''
+- name: patternMixed
+  type: string
+  default: '*.dll'
+- name: patternDef1
+  type: string
+  default: '**/test.dll'
+- name: patternDef2
+  type: string
+  default: "*.exe"
+- name: glob1
+  type: string
+  default: '**/Logging.dll'
+- name: glob2
+  type: string
+  default: '**/*.dll'
+- name: glob3
+  type: string
+  default: '**/src/**/*.ts'
+- name: trimPattern
+  type: string
+  default: '**/test.dll'
 # Test variables with quotes in object format
 
 
@@ -48,6 +82,8 @@ variables:
   myNumber: 42
   myPattern: "*.txt"
   env: 'production'
+  var1: 'single-quoted'
+  var2: "double-quoted"
 
 
 stages:
@@ -61,6 +97,31 @@ stages:
       displayName: PATTERN Test
       env:
         PATTERN: '${{ parameters.pattern }}'
+
+    - bash: echo
+      displayName: Glob Pattern from Parameter
+      env:
+        PATTERNS: ${{ parameters.patternsGlob }}
+
+    - bash: echo
+      displayName: URL with Colon
+      env:
+        URL: ${{ parameters.urlWithColon }}
+
+    - bash: echo
+      displayName: Plain Version Value
+      env:
+        VERSION_SIMPLE: ${{ parameters.plainVersion }}
+
+    - bash: echo
+      displayName: Empty Param Value
+      env:
+        EMPTY_PARAM: ${{ parameters.emptyParam }}
+
+    - bash: echo
+      displayName: Mixed Expression Value
+      env:
+        MIXED: prefix-${{ parameters.patternMixed }}-suffix
 
     - bash: echo
       displayName: EMPTY Test
@@ -123,6 +184,12 @@ stages:
       displayName: Beta
       inputs:
         targetType: inline
+
+    - bash: echo
+      displayName: Definition Section Patterns
+      env:
+        PAT_DEF1: ${{ parameters.patternDef1 }}
+        PAT_DEF2: ${{ parameters.patternDef2 }}
     # Quote behavior scenarios
 
     - bash: 'echo When : present in value, quotes will be preserved'
@@ -152,6 +219,23 @@ stages:
       env:
         CONFIG: '${{ parameters.buildConfiguration }}'
         MESSAGE: "${{ parameters.message }}"
+
+    - bash: echo PATTERNS
+      displayName: Glob Pattern Set
+      env:
+        PAT1: ${{ parameters.glob1 }}
+        PAT2: ${{ parameters.glob2 }}
+        PAT3: ${{ parameters.glob3 }}
+
+    - bash: echo TRIMMED
+      displayName: Trimmed Pattern Function
+      env:
+        TRIMMED: ${{ trim(parameters.trimPattern) }}
+
+    - bash: echo LITERAL
+      displayName: Literal Glob Pattern
+      env:
+        LITERAL: '**/test.dll'
     # Mixed expression scenarios - quotes removed
 
     - bash: echo "test"
