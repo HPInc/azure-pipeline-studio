@@ -19,7 +19,6 @@ class AzurePipelineParser {
     constructor(options = {}) {
         this.expressionCache = new Map();
         this.globQuotePattern = /\*\*|[*/]\/|\/[*/]/;
-        this.context = null;
     }
 
     expandPipelineFromFile(filePath, overrides = {}) {
@@ -49,23 +48,23 @@ class AzurePipelineParser {
         } catch (error) {
             throw new Error(`Failed to parse YAML: ${error.message}`);
         }
-        this.context = this.buildExecutionContext(document, overrides);
-        this.context.quoteResult = this.captureQuoteStyles(yamlDoc.contents, []);
-        this.context.quoteResult.stringsWithExpressions = new Set();
-        this.context.quoteResult.fullParameterExpressions = new Set();
-        this.context.azureCompatible = overrides.azureCompatible || false;
-        this.context.templateQuoteStyles = new Map();
+        const context = this.buildExecutionContext(document, overrides);
+        context.quoteResult = this.captureQuoteStyles(yamlDoc.contents, []);
+        context.quoteResult.stringsWithExpressions = new Set();
+        context.quoteResult.fullParameterExpressions = new Set();
+        context.azureCompatible = overrides.azureCompatible || false;
+        context.templateQuoteStyles = new Map();
 
-        const expandedDocument = this.expandNode(document, this.context);
+        const expandedDocument = this.expandNode(document, context);
 
         // Convert variables from object format to array format while preserving quotes
-        this.convertVariablesToArrayFormat(expandedDocument);
+        this.convertVariablesToArrayFormat(expandedDocument, context);
 
         const finalYamlDoc = YAML.parseDocument(YAML.stringify(expandedDocument));
-        this.restoreQuoteStyles(finalYamlDoc.contents, []);
+        this.restoreQuoteStyles(finalYamlDoc.contents, [], context);
 
-        console.log(`Azure Compatibility mode: ${this.context.azureCompatible}`);
-        this.applyBlockScalarStyles(finalYamlDoc.contents);
+        console.log(`Azure Compatibility mode: ${context.azureCompatible}`);
+        this.applyBlockScalarStyles(finalYamlDoc.contents, context);
 
         let output = finalYamlDoc.toString({
             lineWidth: 0,
@@ -94,7 +93,7 @@ class AzurePipelineParser {
         });
 
         // Handle trailing newlines and blank line removal based on mode
-        if (this.context.azureCompatible) {
+        if (context.azureCompatible) {
             // Remove extra blank lines between sections
             output = output.replace(/^(\S.+)\n\n(\s*-\s)/gm, '$1\n$2');
             output = output.replace(/^(\S.+)\n\n(\s*\w+:)/gm, '$1\n$2');
@@ -106,7 +105,7 @@ class AzurePipelineParser {
             output = output.replace(/\n*$/, '\n');
         }
         // Return both the expanded JS document and the final YAML string
-        return { document: expandedDocument, yaml: output, context: this.context };
+        return { document: expandedDocument, yaml: output, context };
     }
 
     /**
@@ -115,14 +114,14 @@ class AzurePipelineParser {
      * @param {object} doc - The expanded document to modify
      * @param {object} context - Expansion context containing quote styles
      */
-    convertVariablesToArrayFormat(doc) {
+    convertVariablesToArrayFormat(doc, context) {
         // Check if variables need conversion (object format → array format)
         if (!doc.variables || typeof doc.variables !== 'object' || Array.isArray(doc.variables)) {
             return;
         }
 
         const variableQuoteStyles = new Map();
-        const quoteStyles = this._getQuoteStylesMap();
+        const quoteStyles = this._getQuoteStylesMap(context);
 
         // Capture quote styles for each variable value before conversion
         Object.entries(doc.variables).forEach(([name, value]) => {
@@ -212,8 +211,8 @@ class AzurePipelineParser {
      * @param {Map} quoteStyles - Map of stored quote styles
      * @param {string} identifier - Identifier from ancestor
      */
-    restoreQuoteStyles(node, path = []) {
-        const quoteStyles = this._getQuoteStylesMap();
+    restoreQuoteStyles(node, path, context = {}) {
+        const quoteStyles = this._getQuoteStylesMap(context);
 
         // Delegate to the generic traversal with a handler that applies stored styles
         const handler = this.buildQuoteHandler(this.getQuoteStyle.bind(this), {
@@ -227,22 +226,25 @@ class AzurePipelineParser {
                 if (valueNode.value === '') {
                     // Azure normalizes empty strings to single quotes
                     // Exception: inline empty double quotes (not from parameter expansion) stay double quoted
-                    if (quoteStyle === 'QUOTE_DOUBLE' && !this.hadFullParameterExpression(valueNode.value, pathArr)) {
+                    if (
+                        quoteStyle === 'QUOTE_DOUBLE' &&
+                        !this.hadFullParameterExpression(valueNode.value, pathArr, context)
+                    ) {
                         valueNode.type = 'QUOTE_DOUBLE';
                     } else {
                         valueNode.type = 'QUOTE_SINGLE';
                     }
-                } else if (!isDefinitionSection && this.hadFullParameterExpression(valueNode.value, pathArr)) {
+                } else if (!isDefinitionSection && this.hadFullParameterExpression(valueNode.value, pathArr, context)) {
                     // Full parameter expression: colon/glob patterns → single quotes,
                     // non-Azure mode with quoteStyle → preserve style, otherwise plain
                     if (this.hasColon(valueNode.value) || this.globQuotePattern.test(valueNode.value)) {
                         valueNode.type = 'QUOTE_SINGLE';
-                    } else if (!this.context.azureCompatible && quoteStyle) {
+                    } else if (!context.azureCompatible && quoteStyle) {
                         valueNode.type = quoteStyle;
                     } else {
                         valueNode.type = 'PLAIN';
                     }
-                } else if (this.hadMixedExpression(valueNode.value, pathArr)) {
+                } else if (this.hadMixedExpression(valueNode.value, pathArr, context)) {
                     valueNode.type = 'PLAIN';
                 } else if (this.hasRuntimeVariable(valueNode.value)) {
                     valueNode.type = 'PLAIN';
@@ -405,7 +407,7 @@ class AzurePipelineParser {
      * @param {object} node - YAML AST node
      * @param {object} context - Expansion context
      */
-    applyBlockScalarStyles(node) {
+    applyBlockScalarStyles(node, context = {}) {
         if (!node) return;
         if (node.items && node.constructor.name === 'YAMLMap') {
             for (const pair of node.items) {
@@ -415,7 +417,7 @@ class AzurePipelineParser {
 
                 // Recurse for non-multiline or non-string values
                 if (!this.isMultilineString(value.value)) {
-                    this.applyBlockScalarStyles(value);
+                    this.applyBlockScalarStyles(value, context);
                     continue;
                 }
 
@@ -423,25 +425,22 @@ class AzurePipelineParser {
 
                 // If Azure mode and trailing spaces exist, or value is already explicitly double-quoted,
                 // preserve the double-quoted type and recurse for normalization without changing further logic.
-                if (
-                    (this.context.azureCompatible && this.hasTrailingSpaces(content)) ||
-                    value.type === 'QUOTE_DOUBLE'
-                ) {
-                    if (this.context.azureCompatible && this.hasTrailingSpaces(content)) {
+                if ((context.azureCompatible && this.hasTrailingSpaces(content)) || value.type === 'QUOTE_DOUBLE') {
+                    if (context.azureCompatible && this.hasTrailingSpaces(content)) {
                         value.type = 'QUOTE_DOUBLE';
                     }
-                    this.applyBlockScalarStyles(value);
+                    this.applyBlockScalarStyles(value, context);
                     continue;
                 }
 
                 const trimmedKey = content.replace(/\s+$/, '');
-                const hadExpression = this.context.scriptsWithExpressions?.has(trimmedKey);
-                value.type = hadExpression && this.context.azureCompatible ? 'BLOCK_FOLDED' : 'BLOCK_LITERAL';
-                value.value = this.normalizeTrailingNewlines(content, this.context.azureCompatible);
-                this.applyBlockScalarStyles(value);
+                const hadExpression = context.scriptsWithExpressions?.has(trimmedKey);
+                value.type = hadExpression && context.azureCompatible ? 'BLOCK_FOLDED' : 'BLOCK_LITERAL';
+                value.value = this.normalizeTrailingNewlines(content, context.azureCompatible);
+                this.applyBlockScalarStyles(value, context);
             }
         } else if (node.items && node.constructor.name === 'YAMLSeq') {
-            for (const item of node.items) this.applyBlockScalarStyles(item);
+            for (const item of node.items) this.applyBlockScalarStyles(item, context);
         }
     }
 
@@ -1224,8 +1223,8 @@ class AzurePipelineParser {
      * @param {object} context - Expansion context
      * @returns {Map} Quote styles map
      */
-    _getQuoteStylesMap() {
-        return this.context.quoteResult?.quoteStyles || new Map();
+    _getQuoteStylesMap(context) {
+        return context.quoteResult?.quoteStyles || new Map();
     }
 
     ensureContextSet(container, key) {
@@ -3078,16 +3077,16 @@ class AzurePipelineParser {
     }
 
     // Check if a string had mixed expressions (compile-time + literal text) during expansion.
-    hadMixedExpression(value, path) {
-        if (typeof value !== 'string' || !this.context.quoteResult?.stringsWithExpressions) {
+    hadMixedExpression(value, path, context) {
+        if (typeof value !== 'string' || !context.stringsWithExpressions) {
             return false;
         }
         const uniqueKey = this.getQuoteStyleUniqueKey(path, value);
-        return this.context.quoteResult.stringsWithExpressions.has(uniqueKey);
+        return context.stringsWithExpressions.has(uniqueKey);
     }
 
-    hadFullParameterExpression(value, path) {
-        const fullParameterExpressions = this.context.quoteResult?.fullParameterExpressions;
+    hadFullParameterExpression(value, path, context) {
+        const fullParameterExpressions = context.quoteResult?.fullParameterExpressions;
         if (typeof value !== 'string' || !fullParameterExpressions) {
             return false;
         }
