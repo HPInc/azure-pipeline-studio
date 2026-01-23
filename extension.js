@@ -25,6 +25,7 @@ function activate(context) {
 
     const parser = new AzurePipelineParser();
     let lastRenderedDocument;
+    let debounceTimer;
     const renderedScheme = 'ado-pipeline-expanded';
     const renderedContent = new Map();
     const renderedEmitter = new vscode.EventEmitter();
@@ -530,7 +531,14 @@ function activate(context) {
                 return;
             }
 
-            void renderYamlDocument(document, { silent: true });
+            // Debounce: wait for typing to end before rendering
+            if (debounceTimer) {
+                clearTimeout(debounceTimer);
+            }
+
+            debounceTimer = setTimeout(() => {
+                void renderYamlDocument(document, { silent: true });
+            }, 500); // 500ms delay after last keystroke
         })
     );
 
