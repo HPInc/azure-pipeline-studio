@@ -4,6 +4,7 @@ const path = require('path');
 const YAML = require('yaml');
 const jsep = require('jsep');
 const adoFunctions = require('./ado-functions');
+const { analyzeTemplateHints } = require('./formatter');
 
 const CHECKOUT_TASK = '6d15af64-176c-496d-b583-fd2ae21d4df4@1';
 // Mapping of shorthand keys to Azure task identifiers
@@ -39,23 +40,17 @@ class AzurePipelineParser {
     }
 
     expandPipeline(sourceText, overrides = {}) {
-        let yamlDoc = null;
-        let document = {};
+        const { yamlDoc, jsonDoc } = this.parseYamlDocument(sourceText);
 
-        try {
-            yamlDoc = YAML.parseDocument(sourceText);
-            document = yamlDoc.toJSON() || {};
-        } catch (error) {
-            throw new Error(`Failed to parse YAML: ${error.message}`);
-        }
-        const context = this.buildExecutionContext(document, overrides);
-        context.quoteResult = this.captureQuoteStyles(yamlDoc.contents, []);
+        const context = this.buildExecutionContext(jsonDoc, overrides);
+        const { quoteStyles, save } = this.captureQuoteStyles(yamlDoc.contents, []);
+        context.quoteResult = { quoteStyles, save };
         context.quoteResult.stringsWithExpressions = new Set();
         context.quoteResult.fullParameterExpressions = new Set();
         context.azureCompatible = overrides.azureCompatible || false;
         context.templateQuoteStyles = new Map();
 
-        const expandedDocument = this.expandNode(document, context);
+        const expandedDocument = this.expandNode(jsonDoc, context);
 
         // Convert variables from object format to array format while preserving quotes
         this.convertVariablesToArrayFormat(expandedDocument, context);
@@ -104,6 +99,11 @@ class AzurePipelineParser {
         } else {
             output = output.replace(/\n*$/, '\n');
         }
+
+        if (context.azureCompatible) {
+            output = this.addHeredocListSpacing(output);
+        }
+
         // Return both the expanded JS document and the final YAML string
         return { document: expandedDocument, yaml: output, context };
     }
@@ -202,6 +202,46 @@ class AzurePipelineParser {
         };
 
         return { quoteStyles, save };
+    }
+
+    /**
+     * Validate YAML content for syntax hints and throw if issues found.
+     * @param {string} content - YAML content to validate
+     * @param {string} [identifier] - Optional identifier for error message (e.g., template name)
+     * @throws {Error} If syntax hints are detected
+     */
+    validateYamlSyntaxHints(content, identifier) {
+        const hints = analyzeTemplateHints(content);
+        if (hints.length) {
+            const formatted = `\n  ${hints.join('\n  ')}`;
+            const message = identifier
+                ? `Template '${identifier}' potential issues:${formatted}`
+                : `Potential template issues:${formatted}`;
+            throw new Error(message);
+        }
+    }
+
+    /**
+     * Parse YAML content and handle errors with optional identifier context.
+     * Includes preflight syntax validation before parsing.
+     * @param {string} source - YAML source to parse
+     * @param {string} [identifier] - Optional identifier for error message (e.g., template name)
+     * @returns {{yamlDoc: object, jsonDoc: object}} - Parsed YAML doc and JSON document
+     * @throws {Error} If YAML parsing fails or syntax hints are detected
+     */
+    parseYamlDocument(source, identifier) {
+        this.validateYamlSyntaxHints(source, identifier);
+
+        try {
+            const yamlDoc = YAML.parseDocument(source);
+            const jsonDoc = yamlDoc.toJSON() || {};
+            return { yamlDoc, jsonDoc };
+        } catch (error) {
+            const errorMsg = identifier
+                ? `Failed to parse template '${identifier}': ${error.message}`
+                : `Failed to parse YAML: ${error.message}`;
+            throw new Error(errorMsg);
+        }
     }
 
     /**
@@ -436,6 +476,8 @@ class AzurePipelineParser {
         const locals = overrides.locals || {};
         const baseDir = overrides.baseDir || (overrides.fileName ? path.dirname(overrides.fileName) : process.cwd());
         const repositoryBaseDir = overrides.repositoryBaseDir !== undefined ? overrides.repositoryBaseDir : baseDir;
+        const rootRepositoryBaseDir =
+            overrides.rootRepositoryBaseDir !== undefined ? overrides.rootRepositoryBaseDir : repositoryBaseDir;
 
         const mergedResources = this.mergeResourcesConfig(resources, overrideResources);
         const resourceLocations = overrides.resourceLocations || {};
@@ -451,6 +493,7 @@ class AzurePipelineParser {
             locals: { ...locals },
             baseDir,
             repositoryBaseDir,
+            rootRepositoryBaseDir,
             resourceLocations,
             templateStack: overrides.templateStack || [],
             expansionPath: [], // Track current path during expansion for path-based tracking
@@ -1556,7 +1599,9 @@ class AzurePipelineParser {
             return result;
         }
 
-        return this.replaceExpressionsInString(value, context);
+        return this.replaceExpressionsInString(value, context, {
+            preserveEmptyLines: this.isMultilineString(value),
+        });
     }
 
     /**
@@ -1799,10 +1844,15 @@ class AzurePipelineParser {
         return { items };
     }
 
-    replaceExpressionsInString(input, context) {
+    replaceExpressionsInString(input, context, options = {}) {
         if (typeof input !== 'string') {
             return input;
         }
+
+        const preserveEmptyLines =
+            options.preserveEmptyLines !== undefined
+                ? options.preserveEmptyLines
+                : this.isMultilineString(input) && context?.azureCompatible === true;
 
         let result = input.replace(/\$\{\{\s*(.+?)\s*\}\}/g, (match, expr) => {
             const value = this.evaluateExpression(expr, context);
@@ -1830,11 +1880,64 @@ class AzurePipelineParser {
             return String(value);
         });
 
-        // Clean up whitespace-only lines (from expressions expanding to empty)
-        // Removes spaces/tabs but preserves the newline character for >+ chomping
-        result = result.replace(/^[ \t]+$/gm, '');
+        if (!preserveEmptyLines) {
+            // Clean up whitespace-only lines (from expressions expanding to empty)
+            // Removes spaces/tabs but preserves the newline character for >+ chomping
+            result = result.replace(/^[ \t]+$/gm, '');
+        }
+
+        if (context?.azureCompatible) {
+            result = this.addHeredocListSpacing(result);
+        }
 
         return result;
+    }
+
+    addHeredocListSpacing(content) {
+        if (!content || typeof content !== 'string') {
+            return content;
+        }
+
+        const lines = content.split('\n');
+        const output = [];
+        let inHeredoc = false;
+        let terminator = '';
+
+        const isBullet = (line) => /^\s*-\s*\[/.test(line.trim());
+
+        for (let i = 0; i < lines.length; i += 1) {
+            const line = lines[i];
+
+            if (!inHeredoc) {
+                const match = line.match(/<<\s*([A-Za-z0-9_]+)/);
+                if (match) {
+                    inHeredoc = true;
+                    terminator = match[1];
+                }
+                output.push(line);
+                continue;
+            }
+
+            const trimmed = line.trim();
+            if (terminator && trimmed === terminator) {
+                inHeredoc = false;
+                terminator = '';
+                output.push(line);
+                continue;
+            }
+
+            output.push(line);
+
+            const next = lines[i + 1];
+            if (next === undefined) continue;
+
+            // Insert a blank spacer line between consecutive markdown bullets inside heredocs
+            if (isBullet(line) && isBullet(next) && next.trim().length > 0) {
+                output.push('');
+            }
+        }
+
+        return output.join('\n');
     }
 
     evaluateExpression(expression, context) {
@@ -2243,6 +2346,7 @@ class AzurePipelineParser {
             locals: { ...parent.locals, ...locals },
             baseDir: parent.baseDir,
             repositoryBaseDir: parent.repositoryBaseDir,
+            rootRepositoryBaseDir: parent.rootRepositoryBaseDir,
             resourceLocations: parent.resourceLocations || {},
             scriptsWithExpressions: parent.scriptsWithExpressions, // Preserve scripts tracking
             scriptsWithLastLineExpressions: parent.scriptsWithLastLineExpressions, // Preserve last line tracking
@@ -2267,6 +2371,7 @@ class AzurePipelineParser {
             baseDir: baseDir || parent.baseDir,
             repositoryBaseDir:
                 options.repositoryBaseDir !== undefined ? options.repositoryBaseDir : parent.repositoryBaseDir,
+            rootRepositoryBaseDir: parent.rootRepositoryBaseDir,
             resourceLocations: parent.resourceLocations || {},
             templateStack: parent.templateStack || [],
             templateQuoteStyles: parent.templateQuoteStyles, // Preserve template quote styles map
@@ -2401,12 +2506,26 @@ class AzurePipelineParser {
         }
 
         const repoRef = this.parseRepositoryTemplateReference(templatePath);
+        const isSelfRepo = repoRef && this.isSelfRepositoryAlias(repoRef.repository);
 
         let resolvedPath;
         let templateBaseDir;
         let repoBaseDirForContext = context.repositoryBaseDir || undefined;
 
-        if (repoRef) {
+        if (isSelfRepo) {
+            const selfBaseDir = context.rootRepositoryBaseDir || context.repositoryBaseDir;
+            const repoBaseDir = this.resolveRepositoryBaseDirectory(selfBaseDir, context);
+            repoBaseDirForContext = repoBaseDir;
+            const currentDir = context.baseDir || repoBaseDir;
+            resolvedPath = this.resolveRepoTemplate(repoRef.templatePath, currentDir, repoBaseDir);
+            if (!resolvedPath) {
+                throw new Error(
+                    `Template file not found for repository '${repoRef.repository}': ${repoRef.templatePath}`
+                );
+            }
+
+            templateBaseDir = path.dirname(resolvedPath);
+        } else if (repoRef) {
             const repoEntry = this.resolveRepositoryEntry(repoRef.repository, context);
             if (!repoEntry) {
                 throw new Error(
@@ -2454,10 +2573,13 @@ class AzurePipelineParser {
 
         const templateSource = fs.readFileSync(resolvedPath, 'utf8');
 
-        let templateDocument;
+        const identifier = repoRef ? `${repoRef.templatePath}@${repoRef.repository}` : templatePath;
+
+        let templateJson;
         try {
-            // Parse as document to extract quote styles
-            const yamlDoc = YAML.parseDocument(templateSource);
+            const { yamlDoc, jsonDoc } = this.parseYamlDocument(templateSource, identifier);
+            templateJson = jsonDoc;
+
             const templateQuoteStyles = new Map();
             this.extractQuoteStyles(yamlDoc.contents, [], templateQuoteStyles);
 
@@ -2475,13 +2597,17 @@ class AzurePipelineParser {
                     }
                 }
             }
-
-            templateDocument = yamlDoc.toJSON() || {};
         } catch (error) {
-            throw new Error(`Failed to parse template '${templatePath}': ${error.message}`);
+            const baseMsg = typeof error?.message === 'string' ? error.message : String(error);
+            // Avoid repeating the template identifier if the inner message already includes it
+            const identifier = repoRef ? `${repoRef.templatePath}@${repoRef.repository}` : templatePath;
+            if (baseMsg.includes(identifier)) {
+                throw new Error(baseMsg);
+            }
+            throw new Error(`Failed to parse template '${templatePath}': ${baseMsg}`);
         }
 
-        const parameterInfo = this.extractParameters(templateDocument);
+        const parameterInfo = this.extractParameters(templateJson);
         const providedParameters = this.normalizeTemplateParameters(node.parameters, context);
         const mergedParameters = { ...parameterInfo.parameters, ...providedParameters };
         const templateDisplayPath = repoRef ? `${repoRef.templatePath}@${repoRef.repository}` : templatePath;
@@ -2491,11 +2617,11 @@ class AzurePipelineParser {
             parameterMap: { ...parameterInfo.parameterMap }, // Use only template's parameterMap, don't inherit parent's
         };
 
-        this.validateTemplateParameters(templateDocument, providedParameters, templatePath, updatedContext);
+        this.validateTemplateParameters(templateJson, providedParameters, templatePath, updatedContext);
         const templateContext = this.createTemplateContext(updatedContext, mergedParameters, templateBaseDir, {
             repositoryBaseDir: repoBaseDirForContext,
         });
-        const expandedTemplate = this.expandNode(templateDocument, templateContext) || {};
+        const expandedTemplate = this.expandNode(templateJson, templateContext) || {};
 
         // Convert template variables to array format before extracting body
         this.convertVariablesToArrayFormat(expandedTemplate, templateContext);
@@ -2524,6 +2650,10 @@ class AzurePipelineParser {
             templatePath,
             repository,
         };
+    }
+
+    isSelfRepositoryAlias(alias) {
+        return typeof alias === 'string' && alias.trim().toLowerCase() === 'self';
     }
 
     resolveRepositoryEntry(alias, context) {

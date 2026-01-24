@@ -305,7 +305,99 @@ function parseDirectiveOptions(optionsStr) {
  * @param {Error} error - The error object
  * @returns {string|undefined} A formatted error message or undefined
  */
-function describeYamlSyntaxError(error) {
+function analyzeTemplateHints(content) {
+    if (typeof content !== 'string' || !content.length) {
+        return [];
+    }
+
+    const hints = [];
+    const lines = content.split(/\r?\n/);
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const trimmed = line.trim();
+
+        // Missing colon after an Azure expression used as a conditional/directive
+        // Only warn if it looks like a directive (if/else/elseif/each) that needs a colon
+        if (/^-?\s*\$\{\{[^}]+\}\}\s*$/.test(trimmed) && !trimmed.endsWith(':')) {
+            // Check if the expression contains a conditional/directive keyword
+            const isConditional = /\$\{\{\s*(if|else|elseif|each)\s/.test(trimmed);
+            if (isConditional) {
+                const exprExample = '- ${{ if ... }}:';
+                hints.push(`line ${i + 1}: Add ':' after the expression (e.g., '${exprExample}').`);
+            }
+        }
+
+        // else if vs elseif typo
+        if (/\belse\s+if\b/i.test(trimmed)) {
+            hints.push(`line ${i + 1}: Use 'elseif' instead of 'else if' in Azure expressions.`);
+        }
+
+        // Missing comma inside common functions (eq/ne/contains/startsWith/endsWith)
+        const fnMatch = trimmed.match(/\b(eq|ne|contains|startsWith|endsWith)\s*\(([^)]*)\)/i);
+        if (fnMatch) {
+            const args = fnMatch[2];
+            const hasComma = args.includes(',');
+            const spacedArgs = args.trim().split(/\s+/);
+            if (!hasComma && spacedArgs.length >= 2) {
+                hints.push(`line ${i + 1}: Add a comma between arguments (e.g., ${fnMatch[1]}(a, b)).`);
+            }
+        }
+
+        // Leading dash missing for list entries with expressions
+        // Only warn if this is actually a list item context:
+        // Leading dash missing for list entries with expressions
+        // Warn if:
+        // - Current line is an expression (e.g., ${{ if ... }}:) without a leading dash
+        // - Previous non-blank line is a list item OR next non-blank line is a list item at same indent
+        // - Current line is NOT more indented than the previous list item (which would make it nested content)
+        if (/^\$\{\{[^}]+\}\}\s*:/.test(trimmed) && !line.startsWith('-')) {
+            let isListContext = false;
+            const currentIndent = line.length - line.trimStart().length;
+
+            // Check previous non-blank line
+            for (let j = i - 1; j >= 0; j--) {
+                const prevLine = lines[j];
+                if (prevLine.trim() !== '') {
+                    if (/^\s*-\s/.test(prevLine)) {
+                        const prevIndent = prevLine.length - prevLine.trimStart().length;
+                        // Warn if current indent <= previous indent (sibling or same level)
+                        if (currentIndent <= prevIndent) {
+                            isListContext = true;
+                        }
+                    }
+                    break;
+                }
+            }
+
+            // If not found in previous, check next non-blank line
+            if (!isListContext) {
+                for (let j = i + 1; j < lines.length; j++) {
+                    const nextLine = lines[j];
+                    if (nextLine.trim() !== '') {
+                        if (/^\s*-\s/.test(nextLine)) {
+                            const nextIndent = nextLine.length - nextLine.trimStart().length;
+                            // Warn if next line is a list item at same indent (sibling)
+                            if (currentIndent === nextIndent) {
+                                isListContext = true;
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+
+            if (isListContext) {
+                const exprExample = '- ${{ if ... }}:';
+                hints.push(`line ${i + 1}: Prepend '-' for list items using expressions (e.g., '${exprExample}').`);
+            }
+        }
+    }
+
+    return hints;
+}
+
+function describeYamlSyntaxError(error, content) {
     if (!error || typeof error !== 'object') {
         return undefined;
     }
@@ -333,23 +425,36 @@ function describeYamlSyntaxError(error) {
     const hasLine = mark && Number.isInteger(mark.line);
     const hasColumn = mark && Number.isInteger(mark.column);
 
-    if (!baseMessage && !hasLine) {
-        return undefined;
-    }
-
     const lineText = hasLine ? `line ${mark.line + 1}` : undefined;
     const columnText = hasColumn ? `column ${mark.column + 1}` : undefined;
     const location = lineText && columnText ? `${lineText}, ${columnText}` : lineText || columnText;
 
-    if (location && baseMessage) {
-        return `YAML syntax error at ${location}: ${baseMessage}`;
-    }
+    const hints = analyzeTemplateHints(content);
 
+    // Specific friendly rewrites for common Azure expression mistakes
+    const lowerReason = (baseMessage || '').toLowerCase();
     if (baseMessage) {
-        return `YAML syntax error: ${baseMessage}`;
+        if (lowerReason.includes('implicit map key') || lowerReason.includes('mapping values are not allowed')) {
+            hints.unshift("Likely missing a ':' after an Azure expression used as a key (e.g., '- ${{ if ... }}:').");
+        } else if (lowerReason.includes('bad indentation') || lowerReason.includes('incomplete explicit mapping')) {
+            hints.unshift("Check indentation for list items and make sure expression lines start with '-'.");
+        }
     }
 
-    return location ? `YAML syntax error at ${location}.` : undefined;
+    let message;
+    if (location && baseMessage) {
+        message = `YAML syntax error at ${location}: ${baseMessage}`;
+    } else if (baseMessage) {
+        message = `YAML syntax error: ${baseMessage}`;
+    } else if (location) {
+        message = `YAML syntax error at ${location}.`;
+    }
+
+    if (message && hints.length) {
+        message += `\n  ${hints.join('\n')}`;
+    }
+
+    return message;
 }
 
 /**
@@ -904,12 +1009,17 @@ function formatYaml(content, options = {}) {
         return baseResult;
     }
 
+    const preflightHints = analyzeTemplateHints(content);
+    const hintsBlock = preflightHints.length ? `\n  ${preflightHints.join('\n  ')}` : '';
+
     // Check for file-level formatting directives
     const directives = parseFormatDirectives(content);
 
     // If formatting is disabled via file directive, return original content
-    // unless the caller explicitly passed options (caller intent should override file directive).
-    if (directives.disabled && (!options || Object.keys(options).length === 0)) {
+    // unless the caller explicitly passed formatting options (not metadata like fileName).
+    const metadataKeys = new Set(['fileName', 'baseDir']);
+    const formattingOptionKeys = options ? Object.keys(options).filter((k) => !metadataKeys.has(k)) : [];
+    if (directives.disabled && formattingOptionKeys.length === 0) {
         return baseResult;
     }
 
@@ -976,10 +1086,14 @@ function formatYaml(content, options = {}) {
                 const errorMessages = genuineErrors.map((e) => e.message).join(', ');
                 const filePrefix = effective.fileName ? `[${effective.fileName}] ` : '';
                 console.error(`${filePrefix}YAML parsing error:`, errorMessages);
+                const hintSuffix = hintsBlock;
                 return {
                     text: content,
-                    warning: undefined,
-                    error: errorMessages.length > 100 ? errorMessages.substring(0, 100) + '...' : errorMessages,
+                    warning: hintsBlock || undefined,
+                    error:
+                        errorMessages.length > 100
+                            ? errorMessages.substring(0, 100) + '...' + hintSuffix
+                            : `${errorMessages}${hintSuffix}`,
                 };
             }
         }
@@ -1024,18 +1138,18 @@ function formatYaml(content, options = {}) {
 
         return {
             text: normalized,
-            warning: undefined,
+            warning: hintsBlock || undefined,
             error: undefined,
         };
     } catch (error) {
-        const syntaxMessage = describeYamlSyntaxError(error);
+        const syntaxMessage = describeYamlSyntaxError(error, content);
         const filePrefix = effective.fileName ? `[${effective.fileName}] ` : '';
 
         if (syntaxMessage) {
             console.error(`${filePrefix}${syntaxMessage}`);
             return {
                 text: content,
-                warning: undefined,
+                warning: hintsBlock || undefined,
                 error: syntaxMessage,
             };
         }
@@ -1043,7 +1157,7 @@ function formatYaml(content, options = {}) {
         console.error(`${filePrefix}YAML formatting failed:`, error.message);
         return {
             text: content,
-            warning: undefined,
+            warning: hintsBlock || undefined,
             error: `YAML formatting failed: ${error.message}`,
         };
     }
@@ -1054,4 +1168,6 @@ module.exports = {
     escapeRegExp,
     replaceTemplateExpressionsWithPlaceholders,
     restoreTemplateExpressions,
+    analyzeTemplateHints,
+    parseFormatDirectives,
 };

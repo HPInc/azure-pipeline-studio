@@ -323,6 +323,137 @@ const test13Pass = runTestCase('Test 13: Template Expression Spacing Normalizati
     }
 });
 
+// Test 14: No false positive for nested conditional mapping (more indented)
+function runTest(name, fn) {
+    console.log(`=== ${name} ===`);
+    try {
+        fn();
+        console.log('✅ PASS\n');
+        return true;
+    } catch (error) {
+        console.log(`❌ FAIL: ${error.message}\n`);
+        return false;
+    }
+}
+
+const test14Pass = runTest('Test 14: No false positive for nested conditional mapping', () => {
+    // Conditional mapping nested under a list item should NOT trigger dash warning
+    const yaml = [
+        'variables:',
+        '  - name: pool',
+        "    value: 'x'",
+        "  ${{ if eq(variables.pool, 'windows') }}:",
+        '    name: winpool',
+        "    value: 'y'",
+    ].join('\n');
+
+    const result = formatYaml(yaml);
+    const output = [result.error || '', result.warning || ''].join(' ');
+
+    if (output.includes("Prepend '-' for list items")) {
+        throw new Error('Should not warn about dash for nested conditional mapping');
+    }
+});
+
+// Test 15: Warn about missing dash for sibling list items (same indentation)
+const test15Pass = runTest('Test 15: Warn about missing dash for sibling list items', () => {
+    // Expression at same indentation as previous list item should trigger warning
+    const yaml = ['steps:', '  - script: echo 1', "  ${{ if eq(variables.x, 'a') }}:", '    script: echo 2'].join('\n');
+
+    const result = formatYaml(yaml);
+    const output = [result.error || '', result.warning || ''].join(' ');
+
+    if (!output.includes("Prepend '-' for list items")) {
+        throw new Error('Should warn about dash for sibling expression');
+    }
+});
+
+// Test 16: No false positive for regular parameter expression without colon
+const test16Pass = runTest('Test 16: No false positive for parameter expression without colon', () => {
+    // Regular parameter expressions don't need colons
+    const yaml = ['steps:', '  - ${{ parameters.preSteps }}', '  - script: echo hi'].join('\n');
+
+    const result = formatYaml(yaml);
+    const output = [result.error || '', result.warning || ''].join(' ');
+
+    if (output.includes("Add ':' after the expression")) {
+        throw new Error('Should not warn about colon for parameter expression');
+    }
+});
+
+// Test 17: Warn about missing colon for conditional expression
+const test17Pass = runTest('Test 17: Warn about missing colon for conditional expression', () => {
+    // Conditional expressions need colons
+    const yaml = ['steps:', "- ${{ if eq(parameters.a, 'x') }}", '  - script: echo hi'].join('\n');
+
+    const result = formatYaml(yaml);
+    const output = [result.error || '', result.warning || ''].join(' ');
+
+    if (!output.includes("Add ':' after the expression")) {
+        throw new Error('Should warn about colon for conditional expression');
+    }
+});
+
+// Test 18: Colon hint only for if/else/elseif/each directives
+const test18Pass = runTest('Test 18: Colon hint only for directives', () => {
+    // Test various expression types
+    const testCases = [
+        { name: 'if expression', yaml: '- ${{ if true }}', shouldWarn: true },
+        { name: 'else expression', yaml: '- ${{ else }}', shouldWarn: true },
+        { name: 'elseif expression', yaml: '- ${{ elseif true }}', shouldWarn: true },
+        { name: 'each expression', yaml: '- ${{ each item in items }}', shouldWarn: true },
+        { name: 'eq function', yaml: '- ${{ eq(a, b) }}', shouldWarn: false },
+        { name: 'contains function', yaml: '- ${{ contains(a, b) }}', shouldWarn: false },
+    ];
+
+    testCases.forEach(({ name, yaml, shouldWarn }) => {
+        const result = formatYaml(yaml);
+        const output = [result.error || '', result.warning || ''].join(' ');
+        const hasWarning = output.includes("Add ':' after the expression");
+
+        if (hasWarning !== shouldWarn) {
+            throw new Error(`${name}: expected colon warning=${shouldWarn}, got=${hasWarning}`);
+        }
+    });
+});
+
+// Test 19: Respect aps-format=false even with metadata options
+const test19Pass = runTest('Test 19: Respect aps-format=false with metadata options', () => {
+    const yaml = ['# aps-format=false', 'steps:', '  - script: echo not formatted'].join('\n');
+
+    // Call with metadata options (like fileName) to simulate real usage
+    const result = formatYaml(yaml, { fileName: 'test.yaml' });
+
+    if (result.text !== yaml) {
+        throw new Error('Should return original content when aps-format=false, ignoring metadata options');
+    }
+});
+
+// Test 20: Allow formatting override with explicit format options
+const test20Pass = runTest('Test 20: Allow formatting override with explicit options', () => {
+    const yaml = ['# aps-format=false', 'steps:', '  - script: echo formatted'].join('\n');
+
+    // Call with actual formatting option to override the directive
+    const result = formatYaml(yaml, {
+        fileName: 'test.yaml',
+        stepSpacing: true, // explicit formatting option
+    });
+
+    if (result.text === yaml) {
+        throw new Error('Should format when explicit format options override aps-format=false');
+    }
+});
+
+// Test 21: Disabled directive blocks formatting
+const test21Pass = runTest('Test 21: aps-format=false blocks formatting', () => {
+    const yaml = '# aps-format=false\nsteps: []';
+    const result = formatYaml(yaml);
+
+    if (result.text !== yaml) {
+        throw new Error('aps-format=false should return original content unchanged');
+    }
+});
+
 // Summary
 const allTests = [
     test1Pass,
@@ -338,6 +469,14 @@ const allTests = [
     test11Pass,
     test12Pass,
     test13Pass,
+    test14Pass,
+    test15Pass,
+    test16Pass,
+    test17Pass,
+    test18Pass,
+    test19Pass,
+    test20Pass,
+    test21Pass,
 ];
 const passed = allTests.filter((t) => t).length;
 const failed = allTests.length - passed;

@@ -26,6 +26,10 @@ function activate(context) {
     const parser = new AzurePipelineParser();
     let lastRenderedDocument;
     let debounceTimer;
+    let isRendering = false;
+    let pendingRenderRequest = null;
+    let scheduledVersion = 0;
+    let renderingVersion = 0;
     const renderedScheme = 'ado-pipeline-expanded';
     const renderedContent = new Map();
     const renderedEmitter = new vscode.EventEmitter();
@@ -161,6 +165,9 @@ function activate(context) {
         lastRenderedDocument = document;
         const sourceText = document.getText();
 
+        console.log(`Debounce: [Azure Pipeline Studio] Expanding pipeline: ${document.fileName}`);
+        isRendering = true;
+        renderingVersion = options.renderVersion ?? renderingVersion;
         try {
             const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
             const compileTimeVariables = config.get('expansion.variables', {});
@@ -211,7 +218,49 @@ function activate(context) {
             }
 
             vscode.window.showErrorMessage(`Failed to expand Azure Pipeline: ${error.message}`);
+        } finally {
+            isRendering = false;
+            schedulePendingRenderIfNeeded(0);
         }
+    };
+
+    const schedulePendingRenderIfNeeded = (delayMs) => {
+        if (!pendingRenderRequest) {
+            return;
+        }
+
+        if (debounceTimer) {
+            clearTimeout(debounceTimer);
+        }
+
+        debounceTimer = setTimeout(() => {
+            if (isRendering) {
+                // Try again after current render completes.
+                schedulePendingRenderIfNeeded(50);
+                return;
+            }
+
+            const nextRequest = pendingRenderRequest;
+            pendingRenderRequest = null;
+            renderingVersion = nextRequest.options.renderVersion ?? renderingVersion;
+            void renderYamlDocument(nextRequest.document, nextRequest.options);
+        }, delayMs);
+    };
+
+    const queueRender = (document, options = {}) => {
+        if (!shouldRenderDocument(document)) {
+            return;
+        }
+
+        scheduledVersion += 1;
+        pendingRenderRequest = { document, options: { ...options, renderVersion: scheduledVersion } };
+
+        // If a render is in progress, let the pending request be picked up once it finishes.
+        if (isRendering) {
+            return;
+        }
+
+        schedulePendingRenderIfNeeded(500);
     };
 
     function buildResourceOverridesForDocument(document) {
@@ -531,14 +580,8 @@ function activate(context) {
                 return;
             }
 
-            // Debounce: wait for typing to end before rendering
-            if (debounceTimer) {
-                clearTimeout(debounceTimer);
-            }
-
-            debounceTimer = setTimeout(() => {
-                void renderYamlDocument(document, { silent: true });
-            }, 500); // 500ms delay after last keystroke
+            console.log('Debounce: Document changed, scheduling re-render');
+            queueRender(document, { silent: true });
         })
     );
 
@@ -556,7 +599,7 @@ function activate(context) {
             const refreshOnSave = config.get('refreshOnSave', true);
 
             if (refreshOnSave) {
-                void renderYamlDocument(document, { silent: true });
+                queueRender(document, { silent: true });
             }
         })
     );
@@ -967,7 +1010,17 @@ function runCli(args) {
                     expandedYaml = cliParser.expandPipelineFromString(sourceText, parserOptions);
                     yamlToFormat = expandedYaml;
                 } catch (expandError) {
-                    console.error(`[${filePath}] Template expansion failed: ${expandError.message}`);
+                    // Refine template hint errors to desired phrasing
+                    const msg = typeof expandError?.message === 'string' ? expandError.message : String(expandError);
+                    const potentialIssuesMatch = msg.match(/Template\s+'([^']+)'\s+potential issues:([\s\S]*)/);
+                    if (potentialIssuesMatch) {
+                        const tmpl = potentialIssuesMatch[1];
+                        const tail = (potentialIssuesMatch[2] || '').trimEnd();
+                        const refined = `[${filePath}] Template(${tmpl}) expansion failed. Potential issues:${tail ? `${tail}` : ''}`;
+                        console.error(refined);
+                    } else {
+                        console.error(`[${filePath}] Template expansion failed: ${msg}`);
+                    }
                     if (argv.debug) {
                         console.error('[DEBUG] Full error:', expandError);
                     }
@@ -994,7 +1047,12 @@ function runCli(args) {
             if (formatted.warning) {
                 console.warn(`[${filePath}] ${formatted.warning}`);
             }
-            const outputText = formatted.text;
+            let outputText = formatted.text;
+
+            if (argv['expand-templates'] && argv['azure-compatible']) {
+                // Preserve intentional blank spacing inside heredoc blocks after formatting
+                outputText = cliParser.addHeredocListSpacing(outputText);
+            }
 
             if (argv.output) {
                 const absoluteOutput = path.resolve(process.cwd(), argv.output);
