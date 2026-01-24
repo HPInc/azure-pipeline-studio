@@ -36,6 +36,11 @@
     ],
     "configuration": {
       "properties": {
+        "azurePipelineStudio.expansion.skipSyntaxCheck": {
+          "default": false,
+          "description": "Skip syntax checking during pipeline expansion. Use this to expand pipelines with intentional template syntax variations.",
+          "type": "boolean"
+        },
         "azurePipelineStudio.expansion.variables": {
           "additionalProperties": {
             "type": "string"

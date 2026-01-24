@@ -179,12 +179,14 @@ function activate(context) {
         try {
             const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
             const compileTimeVariables = config.get('expansion.variables', {});
+            const skipSyntaxCheck = config.get('expansion.skipSyntaxCheck', false);
             const resourceOverrides = buildResourceOverridesForDocument(document);
             const azureCompatible = options.azureCompatible ?? false;
 
             const parserOverrides = {
                 fileName: document.fileName,
                 azureCompatible,
+                skipSyntaxCheck,
                 ...(resourceOverrides && { resources: resourceOverrides }),
                 ...(Object.keys(compileTimeVariables).length && { variables: compileTimeVariables }),
             };
@@ -802,11 +804,12 @@ function runCli(args) {
         '  -e, --extension <ext>        File extensions to format (default: .yml, .yaml)\n' +
         '  -x, --expand-templates       Expand Azure Pipeline template expressions (${{}},$[],$())\n' +
         '  -a, --azure-compatible       Use Azure-compatible expansion mode (adds blank lines, etc.)\n' +
+        '  -s, --skip-syntax-check      Skip syntax checking during expansion\n' +
         '  -d, --debug                  Print files being formatted';
 
     const argv = minimist(args, {
         string: ['output', 'repo', 'format-option', 'format-recursive', 'extension', 'variables'],
-        boolean: ['help', 'expand-templates', 'azure-compatible', 'debug'],
+        boolean: ['help', 'expand-templates', 'azure-compatible', 'skip-syntax-check', 'debug'],
         alias: {
             h: 'help',
             o: 'output',
@@ -817,12 +820,14 @@ function runCli(args) {
             v: 'variables',
             x: 'expand-templates',
             a: 'azure-compatible',
+            s: 'skip-syntax-check',
             d: 'debug',
         },
         default: {
             extension: [],
             'expand-templates': false,
             'azure-compatible': false,
+            'skip-syntax-check': false,
             debug: false,
         },
     });
@@ -943,6 +948,7 @@ function runCli(args) {
                 const parserOptions = {
                     fileName: absolutePath,
                     azureCompatible: argv['azure-compatible'] || false,
+                    skipSyntaxCheck: argv['skip-syntax-check'] || false,
                 };
                 if (repositories) {
                     // Convert repository mappings to resourceLocations format

@@ -20,6 +20,7 @@ class AzurePipelineParser {
     constructor(options = {}) {
         this.expressionCache = new Map();
         this.globQuotePattern = /[\*\?\[\]]|\/[\*\?\[]|[*/]\/|\/[*/]/;
+        this.skipSyntaxCheck = options.skipSyntaxCheck || false;
     }
 
     expandPipelineFromFile(filePath, overrides = {}) {
@@ -40,7 +41,9 @@ class AzurePipelineParser {
     }
 
     expandPipeline(sourceText, overrides = {}) {
-        const { yamlDoc, jsonDoc } = this.parseYamlDocument(sourceText);
+        const skipSyntaxCheck =
+            overrides.skipSyntaxCheck !== undefined ? overrides.skipSyntaxCheck : this.skipSyntaxCheck;
+        const { yamlDoc, jsonDoc } = this.parseYamlDocument(sourceText, undefined, skipSyntaxCheck);
 
         const context = this.buildExecutionContext(jsonDoc, overrides);
         const { quoteStyles, save } = this.captureQuoteStyles(yamlDoc.contents, []);
@@ -226,11 +229,14 @@ class AzurePipelineParser {
      * Includes preflight syntax validation before parsing.
      * @param {string} source - YAML source to parse
      * @param {string} [identifier] - Optional identifier for error message (e.g., template name)
+     * @param {boolean} [skipSyntaxCheck] - Skip syntax validation before parsing
      * @returns {{yamlDoc: object, jsonDoc: object}} - Parsed YAML doc and JSON document
      * @throws {Error} If YAML parsing fails or syntax hints are detected
      */
-    parseYamlDocument(source, identifier) {
-        this.validateYamlSyntaxHints(source, identifier);
+    parseYamlDocument(source, identifier, skipSyntaxCheck = false) {
+        if (!skipSyntaxCheck) {
+            this.validateYamlSyntaxHints(source, identifier);
+        }
 
         try {
             const yamlDoc = YAML.parseDocument(source);
@@ -481,6 +487,8 @@ class AzurePipelineParser {
 
         const mergedResources = this.mergeResourcesConfig(resources, overrideResources);
         const resourceLocations = overrides.resourceLocations || {};
+        const skipSyntaxCheck =
+            overrides.skipSyntaxCheck !== undefined ? overrides.skipSyntaxCheck : this.skipSyntaxCheck;
 
         return {
             parameters: { ...parameters, ...overrideParameters },
@@ -503,6 +511,7 @@ class AzurePipelineParser {
             stageIndex: -1, // Track current stage index during expansion
             jobIndex: -1, // Track current job index during expansion
             stepIndex: -1, // Track current step index during expansion
+            skipSyntaxCheck, // Skip syntax validation when parsing templates
         };
     }
 
@@ -2577,7 +2586,8 @@ class AzurePipelineParser {
 
         let templateJson;
         try {
-            const { yamlDoc, jsonDoc } = this.parseYamlDocument(templateSource, identifier);
+            const skipSyntaxCheck = context.skipSyntaxCheck !== undefined ? context.skipSyntaxCheck : false;
+            const { yamlDoc, jsonDoc } = this.parseYamlDocument(templateSource, identifier, skipSyntaxCheck);
             templateJson = jsonDoc;
 
             const templateQuoteStyles = new Map();
