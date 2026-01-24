@@ -351,7 +351,9 @@ function analyzeTemplateHints(content) {
         // - Current line is an expression (e.g., ${{ if ... }}:) without a leading dash
         // - Previous non-blank line is a list item OR next non-blank line is a list item at same indent
         // - Current line is NOT more indented than the previous list item (which would make it nested content)
-        if (/^\$\{\{[^}]+\}\}\s*:/.test(trimmed) && !line.startsWith('-')) {
+        // - BUT: Exclude conditional directives (if/elseif/else) which don't require a leading dash
+        const isConditionalDirective = /^\$\{\{\s*(if\s+|elseif\s+|else\s*)\}/i.test(trimmed);
+        if (/^\$\{\{[^}]+\}\}\s*:/.test(trimmed) && !trimmed.startsWith('-') && !isConditionalDirective) {
             let isListContext = false;
             const currentIndent = line.length - line.trimStart().length;
 

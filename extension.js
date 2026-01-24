@@ -27,9 +27,7 @@ function activate(context) {
     let lastRenderedDocument;
     let debounceTimer;
     let isRendering = false;
-    let pendingRenderRequest = null;
-    let scheduledVersion = 0;
-    let renderingVersion = 0;
+    let pendingDocument = null;
     const renderedScheme = 'ado-pipeline-expanded';
     const renderedContent = new Map();
     const renderedEmitter = new vscode.EventEmitter();
@@ -159,15 +157,25 @@ function activate(context) {
         }
     };
 
+    const scheduleRender = (document, delayMs = 500) => {
+        if (!shouldRenderDocument(document)) return;
+        pendingDocument = document;
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+            if (isRendering) return;
+            const doc = pendingDocument;
+            pendingDocument = null;
+            void renderYamlDocument(doc, { silent: true });
+        }, delayMs);
+    };
+
     const renderYamlDocument = async (document, options = {}) => {
         if (!document) return;
 
         lastRenderedDocument = document;
         const sourceText = document.getText();
 
-        console.log(`Debounce: [Azure Pipeline Studio] Expanding pipeline: ${document.fileName}`);
         isRendering = true;
-        renderingVersion = options.renderVersion ?? renderingVersion;
         try {
             const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
             const compileTimeVariables = config.get('expansion.variables', {});
@@ -220,47 +228,8 @@ function activate(context) {
             vscode.window.showErrorMessage(`Failed to expand Azure Pipeline: ${error.message}`);
         } finally {
             isRendering = false;
-            schedulePendingRenderIfNeeded(0);
+            pendingDocument && scheduleRender(pendingDocument, 0);
         }
-    };
-
-    const schedulePendingRenderIfNeeded = (delayMs) => {
-        if (!pendingRenderRequest) {
-            return;
-        }
-
-        if (debounceTimer) {
-            clearTimeout(debounceTimer);
-        }
-
-        debounceTimer = setTimeout(() => {
-            if (isRendering) {
-                // Try again after current render completes.
-                schedulePendingRenderIfNeeded(50);
-                return;
-            }
-
-            const nextRequest = pendingRenderRequest;
-            pendingRenderRequest = null;
-            renderingVersion = nextRequest.options.renderVersion ?? renderingVersion;
-            void renderYamlDocument(nextRequest.document, nextRequest.options);
-        }, delayMs);
-    };
-
-    const queueRender = (document, options = {}) => {
-        if (!shouldRenderDocument(document)) {
-            return;
-        }
-
-        scheduledVersion += 1;
-        pendingRenderRequest = { document, options: { ...options, renderVersion: scheduledVersion } };
-
-        // If a render is in progress, let the pending request be picked up once it finishes.
-        if (isRendering) {
-            return;
-        }
-
-        schedulePendingRenderIfNeeded(500);
     };
 
     function buildResourceOverridesForDocument(document) {
@@ -313,6 +282,9 @@ function activate(context) {
         const lower = document.fileName.toLowerCase();
         return lower.endsWith('.yaml') || lower.endsWith('.yml');
     };
+
+    const isRelevantDocument = (document) =>
+        shouldRenderDocument(document) && lastRenderedDocument?.fileName === document.fileName;
 
     const commandDisposable = vscode.commands.registerCommand('azurePipelineStudio.showRenderedYaml', async () => {
         const editor = vscode.window.activeTextEditor;
@@ -570,36 +542,19 @@ function activate(context) {
     }
 
     context.subscriptions.push(
-        vscode.workspace.onDidChangeTextDocument((event) => {
-            const { document } = event;
-            if (!shouldRenderDocument(document)) {
-                return;
+        vscode.workspace.onDidChangeTextDocument(({ document }) => {
+            if (isRelevantDocument(document)) {
+                scheduleRender(document);
             }
-
-            if (!lastRenderedDocument || lastRenderedDocument.fileName !== document.fileName) {
-                return;
-            }
-
-            console.log('Debounce: Document changed, scheduling re-render');
-            queueRender(document, { silent: true });
         })
     );
 
     context.subscriptions.push(
         vscode.workspace.onDidSaveTextDocument((document) => {
-            if (!shouldRenderDocument(document)) {
-                return;
-            }
-
-            if (!lastRenderedDocument || lastRenderedDocument.fileName !== document.fileName) {
-                return;
-            }
-
+            if (!isRelevantDocument(document)) return;
             const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
-            const refreshOnSave = config.get('refreshOnSave', true);
-
-            if (refreshOnSave) {
-                queueRender(document, { silent: true });
+            if (config.get('refreshOnSave', true)) {
+                scheduleRender(document, 0);
             }
         })
     );
