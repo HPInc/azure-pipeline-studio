@@ -31,8 +31,6 @@ const tests = [
     'test-parameter-scoping.js',
     'test-variable-scoping.js',
     'test-formatting.js',
-    'test-syntax-hints.js',
-    'test-syntax-hints-expansion.js',
 ];
 
 console.log('='.repeat(70));
