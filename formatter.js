@@ -830,7 +830,59 @@ function applyPipelineFormatting(text, newline, options) {
         }
     }
 
-    let finalResult = pass1.join(newline);
+    // Compact blank lines between list items that share the same indent when the parent section is
+    // not steps/jobs/stages. This prevents the formatter from inserting extra spacing inside lists
+    // like dependsOn while leaving deliberate step/job spacing intact.
+    const compacted = [];
+    const sectionStack = [];
+    const mainListSections = new Set(['steps', 'jobs', 'stages']);
+
+    const findPreviousNonBlankLine = (arr, startIndex) => {
+        for (let idx = startIndex; idx >= 0; idx--) {
+            if (arr[idx].trim() !== '') {
+                return idx;
+            }
+        }
+        return null;
+    };
+
+    for (let i = 0; i < pass1.length; i++) {
+        const line = pass1[i];
+        const trimmed = line.trim();
+        const indent = line.length - line.trimStart().length;
+
+        // Maintain a simple section stack keyed by indent for the nearest mapping header
+        while (sectionStack.length && sectionStack[sectionStack.length - 1].indent >= indent) {
+            sectionStack.pop();
+        }
+        if (trimmed && !trimmed.startsWith('-') && trimmed.endsWith(':')) {
+            sectionStack.push({ name: trimmed.slice(0, -1), indent });
+        }
+
+        if (trimmed === '') {
+            const prevIdx = findPreviousNonBlankLine(pass1, i - 1);
+            const nextIdx = findNextNonBlankLine(pass1, i + 1);
+
+            if (prevIdx !== null && nextIdx !== null) {
+                const prevLine = pass1[prevIdx];
+                const nextLine = pass1[nextIdx];
+                const prevIsList = /^-\s+/.test(prevLine.trimStart());
+                const nextIsList = /^-\s+/.test(nextLine.trimStart());
+                const currentSection = sectionStack.length ? sectionStack[sectionStack.length - 1].name : null;
+                const insideMainListSection = currentSection && mainListSections.has(currentSection);
+
+                // Drop blank lines between list items unless we're in steps/jobs/stages
+                // (indent may differ when transitioning between nested lists, which we still want compacted)
+                if (prevIsList && nextIsList && !insideMainListSection) {
+                    continue;
+                }
+            }
+        }
+
+        compacted.push(line);
+    }
+
+    let finalResult = compacted.join(newline);
 
     return finalResult;
 }
