@@ -9,15 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.8] - 2026-01-25
 
 ### Added
-- Conditional step execution test suite (`tests/test-conditional-steps.js`) covering parameter-driven conditions, runtime functions like `succeeded()`/`failed()`, complex expressions, and formatting preservation
-- `# aps-format=false` applied to all formatter fixtures to keep raw inputs stable for formatting validation
+- Conditional step execution test suite (`tests/test-conditional-steps.js`) covering parameter-driven conditions, runtime functions (`succeeded()`, `failed()`), complex expressions, and formatting preservation
+- `# aps-format=false` applied across all formatter fixtures to keep raw YAML inputs stable for formatting validation
+- New formatting/fixture alignment to ensure test inputs remain intentionally unformatted for spacing/blank-line correction scenarios
 
 ### Changed
-- Formatter fixtures (stage/parameter/variable templates) intentionally left unformatted to validate spacing/blank-line corrections during formatting tests
+- Formatter fixtures (stage/parameter/variable templates) left intentionally unformatted to validate spacing and blank-line corrections during formatting tests
 - Test runner updated to include the new conditional steps suite
+- Added explicit coverage for block-scalar chomping inputs to validate clip/keep behavior during formatting
 
 ### Fixed
-- Prevented auto-formatting of test input YAMLs during test runs by ensuring directives are present across all fixtures
+- Prevented auto-formatting of all test input YAMLs during test runs by ensuring directives are present across every fixture
+- Ensured formatting tests exercise unformatted fixtures rather than pre-formatted YAML
 
 [1.0.8]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.0.8
 
