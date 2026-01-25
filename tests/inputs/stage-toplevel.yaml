@@ -18,3 +18,4 @@ stages:
     steps:
     - bash: |
         echo "Stage.2.Job.2"
+      displayName: "Echo Stage 2 Job 2"

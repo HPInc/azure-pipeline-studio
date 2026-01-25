@@ -547,6 +547,10 @@ function activate(context) {
         vscode.workspace.onDidChangeTextDocument(({ document }) => {
             if (isRelevantDocument(document)) {
                 scheduleRender(document);
+
+                if (lastRenderedDocument && lastRenderedDocument.fileName === document.fileName) {
+                    void renderYamlDocument(document, { silent: true });
+                }
             }
         })
     );

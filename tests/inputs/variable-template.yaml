@@ -1,5 +1,16 @@
 # aps-format=false
 parameters:
+  type: string
+  default: production
+variables:
+  ${{ if eq(parameters.env, 'production') }}:
+    value: 'production.db.test.com'
+  ${{ elseif eq(parameters.env, 'staging') }}:
+    value: 'staging.db.test.com'
+  ${{ else }}:
+    value: 'dev.db.test.com'
+# aps-format=false
+parameters:
 - name: env
   type: string
   default: production
