@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 .html).
 
+## [1.0.8] - 2026-01-25
+
+### Added
+- Conditional step execution test suite (`tests/test-conditional-steps.js`) covering parameter-driven conditions, runtime functions like `succeeded()`/`failed()`, complex expressions, and formatting preservation
+- `# aps-format=false` applied to all formatter fixtures to keep raw inputs stable for formatting validation
+
+### Changed
+- Formatter fixtures (stage/parameter/variable templates) intentionally left unformatted to validate spacing/blank-line corrections during formatting tests
+- Test runner updated to include the new conditional steps suite
+
+### Fixed
+- Prevented auto-formatting of test input YAMLs during test runs by ensuring directives are present across all fixtures
+
+[1.0.8]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.0.8
+
 ## [1.0.7] - 2026-01-23
 
 ### Added
