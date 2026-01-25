@@ -1,7 +1,6 @@
+# aps-format=false
 parameters:
   param1: value1
   param2: value2
-
-
 stages:
 - template: stage-toplevel.yaml

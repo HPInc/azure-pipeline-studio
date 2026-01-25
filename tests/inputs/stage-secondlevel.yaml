@@ -1,14 +1,11 @@
+# aps-format=false
 parameters:
   paramA: valueA
   paramB: valueB
-
-
 stages:
 - stage: Stage1
-
   jobs:
   - job: Job1
-
     steps:
     - bash: |
         echo "Stage.1.Job.1"

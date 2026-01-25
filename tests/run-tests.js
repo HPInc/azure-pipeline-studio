@@ -25,6 +25,7 @@ const tests = [
     'test-non-azure-compatible.js',
     'test-expressions.js',
     'test-block-scalar-chomping.js',
+    'test-conditional-steps.js',
     'test-trailing-newlines.js',
     'test-runtime-variables.js',
     'test-multilevel-templates.js',

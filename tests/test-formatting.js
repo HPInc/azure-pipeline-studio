@@ -454,6 +454,29 @@ const test21Pass = runTest('Test 21: aps-format=false blocks formatting', () => 
     }
 });
 
+// Test 22: Remove blank lines immediately after mapping keys
+const test22Pass = runTest('Test 22: Remove blank lines after mapping keys', () => {
+    const yaml = [
+        'stages:',
+        '  - stage: Build',
+        '    dependsOn:',
+        ' ',
+        '    - Init',
+        '    jobs:',
+        ' ',
+        '    - job: build',
+    ].join('\n');
+
+    const result = formatYaml(yaml);
+
+    if (result.text.includes('dependsOn:\n\n')) {
+        throw new Error('Blank line retained after dependsOn key');
+    }
+    if (result.text.includes('jobs:\n\n')) {
+        throw new Error('Blank line retained after jobs key');
+    }
+});
+
 // Summary
 const allTests = [
     test1Pass,
@@ -477,6 +500,7 @@ const allTests = [
     test19Pass,
     test20Pass,
     test21Pass,
+    test22Pass,
 ];
 const passed = allTests.filter((t) => t).length;
 const failed = allTests.length - passed;

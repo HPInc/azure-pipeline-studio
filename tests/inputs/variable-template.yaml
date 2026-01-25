@@ -1,9 +1,8 @@
+# aps-format=false
 parameters:
 - name: env
   type: string
   default: production
-
-
 variables:
 - name: server
   ${{ if eq(parameters.env, 'production') }}:

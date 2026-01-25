@@ -1,15 +1,13 @@
+# aps-format=false
 parameters:
   #- name: env
   #  type: string
   #  default: production
   env: production
-
-
 steps:
 - bash: |
     echo "Environment: ${{ parameters.env }}"
   displayName: 'Display environment variable'
-
 - bash: |
     echo "Environment: ${{ parameters.env }}"
   displayName: "Display environment variable"
