@@ -74,6 +74,9 @@ parameters:
 - name: trimPattern
   type: string
   default: '**/test.dll'
+- name: testVal
+  type: string
+  default: 'test-value'
 # Test variables with quotes in object format
 
 
@@ -326,3 +329,8 @@ stages:
       env:
         STARTS_WITH_COLON: ':leadingColon'
         NORMAL_VALUE: 'normalValue'
+
+    - bash: echo
+      displayName: Parameter Interpolation Test
+      env:
+        INTERPOLATED: "Testing ${{ parameters.testVal }} for quotes"

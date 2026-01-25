@@ -98,9 +98,9 @@ function protectEmptyValues(content) {
         while (nextIndex < lines.length) {
             const nextLine = lines[nextIndex];
             const nextTrimmed = nextLine.trim();
-            const nextIndent = nextLine.length - nextLine.trimStart().length;
+            const nextIndent = getIndent(nextLine);
 
-            if (nextTrimmed === '' || nextTrimmed.startsWith('#')) {
+            if (isBlankOrCommentLine(nextTrimmed)) {
                 nextIndex++;
                 continue;
             }
@@ -126,7 +126,7 @@ function protectEmptyValues(content) {
 
                 if (!commentTrimmed.startsWith('#')) break;
 
-                const commentIndent = commentLine.length - commentLine.trimStart().length;
+                const commentIndent = getIndent(commentLine);
                 if (commentIndent >= indent.length) {
                     allValueComments.push(commentLine);
                     commentIndex++;
@@ -305,7 +305,101 @@ function parseDirectiveOptions(optionsStr) {
  * @param {Error} error - The error object
  * @returns {string|undefined} A formatted error message or undefined
  */
-function describeYamlSyntaxError(error) {
+function analyzeTemplateHints(content) {
+    if (typeof content !== 'string' || !content.length) {
+        return [];
+    }
+
+    const hints = [];
+    const lines = content.split(/\r?\n/);
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const trimmed = line.trim();
+
+        // Missing colon after an Azure expression used as a conditional/directive
+        // Only warn if it looks like a directive (if/else/elseif/each) that needs a colon
+        if (/^-?\s*\$\{\{[^}]+\}\}\s*$/.test(trimmed) && !trimmed.endsWith(':')) {
+            // Check if the expression contains a conditional/directive keyword
+            const isConditional = /\$\{\{\s*(if|else|elseif|each)\s/.test(trimmed);
+            if (isConditional) {
+                const exprExample = '- ${{ if ... }}:';
+                hints.push(`line ${i + 1}: Add ':' after the expression (e.g., '${exprExample}').`);
+            }
+        }
+
+        // else if vs elseif typo
+        if (/\belse\s+if\b/i.test(trimmed)) {
+            hints.push(`line ${i + 1}: Use 'elseif' instead of 'else if' in Azure expressions.`);
+        }
+
+        // Missing comma inside common functions (eq/ne/contains/startsWith/endsWith)
+        const fnMatch = trimmed.match(/\b(eq|ne|contains|startsWith|endsWith)\s*\(([^)]*)\)/i);
+        if (fnMatch) {
+            const args = fnMatch[2];
+            const hasComma = args.includes(',');
+            const spacedArgs = args.trim().split(/\s+/);
+            if (!hasComma && spacedArgs.length >= 2) {
+                hints.push(`line ${i + 1}: Add a comma between arguments (e.g., ${fnMatch[1]}(a, b)).`);
+            }
+        }
+
+        // Leading dash missing for list entries with expressions
+        // Only warn if this is actually a list item context:
+        // Leading dash missing for list entries with expressions
+        // Warn if:
+        // - Current line is an expression (e.g., ${{ if ... }}:) without a leading dash
+        // - Previous non-blank line is a list item OR next non-blank line is a list item at same indent
+        // - Current line is NOT more indented than the previous list item (which would make it nested content)
+        // - BUT: Exclude conditional directives (if/elseif/else) which don't require a leading dash
+        const isConditionalDirective = /^\$\{\{\s*(if\s+|elseif\s+|else\s*)\}/i.test(trimmed);
+        if (/^\$\{\{[^}]+\}\}\s*:/.test(trimmed) && !trimmed.startsWith('-') && !isConditionalDirective) {
+            let isListContext = false;
+            const currentIndent = getIndent(line);
+
+            // Check previous non-blank line
+            for (let j = i - 1; j >= 0; j--) {
+                const prevLine = lines[j];
+                if (prevLine.trim() !== '') {
+                    if (/^\s*-\s/.test(prevLine)) {
+                        const prevIndent = getIndent(prevLine);
+                        // Warn if current indent <= previous indent (sibling or same level)
+                        if (currentIndent <= prevIndent) {
+                            isListContext = true;
+                        }
+                    }
+                    break;
+                }
+            }
+
+            // If not found in previous, check next non-blank line
+            if (!isListContext) {
+                for (let j = i + 1; j < lines.length; j++) {
+                    const nextLine = lines[j];
+                    if (nextLine.trim() !== '') {
+                        if (/^\s*-\s/.test(nextLine)) {
+                            const nextIndent = getIndent(nextLine);
+                            // Warn if next line is a list item at same indent (sibling)
+                            if (currentIndent === nextIndent) {
+                                isListContext = true;
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+
+            if (isListContext) {
+                const exprExample = '- ${{ if ... }}:';
+                hints.push(`line ${i + 1}: Prepend '-' for list items using expressions (e.g., '${exprExample}').`);
+            }
+        }
+    }
+
+    return hints;
+}
+
+function describeYamlSyntaxError(error, content) {
     if (!error || typeof error !== 'object') {
         return undefined;
     }
@@ -333,23 +427,36 @@ function describeYamlSyntaxError(error) {
     const hasLine = mark && Number.isInteger(mark.line);
     const hasColumn = mark && Number.isInteger(mark.column);
 
-    if (!baseMessage && !hasLine) {
-        return undefined;
-    }
-
     const lineText = hasLine ? `line ${mark.line + 1}` : undefined;
     const columnText = hasColumn ? `column ${mark.column + 1}` : undefined;
     const location = lineText && columnText ? `${lineText}, ${columnText}` : lineText || columnText;
 
-    if (location && baseMessage) {
-        return `YAML syntax error at ${location}: ${baseMessage}`;
-    }
+    const hints = analyzeTemplateHints(content);
 
+    // Specific friendly rewrites for common Azure expression mistakes
+    const lowerReason = (baseMessage || '').toLowerCase();
     if (baseMessage) {
-        return `YAML syntax error: ${baseMessage}`;
+        if (lowerReason.includes('implicit map key') || lowerReason.includes('mapping values are not allowed')) {
+            hints.unshift("Likely missing a ':' after an Azure expression used as a key (e.g., '- ${{ if ... }}:').");
+        } else if (lowerReason.includes('bad indentation') || lowerReason.includes('incomplete explicit mapping')) {
+            hints.unshift("Check indentation for list items and make sure expression lines start with '-'.");
+        }
     }
 
-    return location ? `YAML syntax error at ${location}.` : undefined;
+    let message;
+    if (location && baseMessage) {
+        message = `YAML syntax error at ${location}: ${baseMessage}`;
+    } else if (baseMessage) {
+        message = `YAML syntax error: ${baseMessage}`;
+    } else if (location) {
+        message = `YAML syntax error at ${location}.`;
+    }
+
+    if (message && hints.length) {
+        message += `\n  ${hints.join('\n')}`;
+    }
+
+    return message;
 }
 
 /**
@@ -367,6 +474,99 @@ function findNextNonBlankLine(lines, startIndex) {
     return null;
 }
 
+// Detects whether a trimmed line represents a mapping key (ends with ':')
+function isMappingKeyLine(trimmedLine) {
+    if (!trimmedLine) return false;
+    return /^[^:]*:\s*$/.test(trimmedLine);
+}
+
+// Detects whether a root-level key represents a main pipeline section
+function isMainSectionKey(keyWithColon) {
+    return keyWithColon === 'steps:' || keyWithColon === 'stages:' || keyWithColon === 'jobs:';
+}
+
+// Checks if a trimmed line has actual content (not blank and not a comment)
+function hasActualContent(line) {
+    const trimmed = line.trim();
+    return trimmed !== '' && !trimmed.startsWith('#');
+}
+
+// Checks if a trimmed line is blank or contains only a comment
+function isBlankOrCommentLine(line) {
+    const trimmed = line.trim();
+    return trimmed === '' || trimmed.startsWith('#');
+}
+
+/**
+ * Checks if a trimmed line is non-empty and not a comment (assumes input is already trimmed)
+ * @param {string} trimmedLine - The trimmed line to check
+ * @returns {boolean} True if the line has content, false otherwise
+ */
+function isNonCommentContent(trimmedLine) {
+    return trimmedLine && !trimmedLine.startsWith('#');
+}
+
+// Checks if a line is a list item that starts with an Azure expression (for e.g - ${{ parameters.preSteps }})
+function isExpressionListItem(line) {
+    return /^\s*-\s+\$\{\{.*\}\}:?/.test(line);
+}
+
+// Checks if a line contains an Azure template expression marker
+function containsTemplateExpression(text) {
+    return typeof text === 'string' && text.includes('${{');
+}
+
+function getIndent(text) {
+    return text.length - text.trimStart().length;
+}
+
+function getBooleanOption(options, key, defaultValue) {
+    return options && typeof options[key] === 'boolean' ? options[key] : defaultValue;
+}
+
+function getClampedIntegerOption(options, key, max, defaultValue) {
+    if (!options || !Number.isInteger(options[key]) || options[key] < 0) {
+        return defaultValue;
+    }
+    return Math.min(options[key], max);
+}
+
+function getBetweenSectionBlankLines(options) {
+    const primary = getClampedIntegerOption(options, 'betweenSectionBlankLines', 4, null);
+    if (primary !== null) {
+        return primary;
+    }
+
+    const alias = getClampedIntegerOption(options, 'blankLinesBetweenSections', 4, null);
+    return alias !== null ? alias : 1;
+}
+
+function getNewlineFormat(options) {
+    const value = options && typeof options.newlineFormat === 'string' ? options.newlineFormat : null;
+    return value === '\n' || value === '\r\n' ? value : '\n';
+}
+
+function getLineWidth(options) {
+    if (options && typeof options.lineWidth === 'number' && options.lineWidth >= 0) {
+        return options.lineWidth === 0 ? -1 : options.lineWidth;
+    }
+    return -1;
+}
+
+function getIndentOption(options) {
+    if (options && Number.isInteger(options.indent) && options.indent > 0 && options.indent <= 8) {
+        return options.indent;
+    }
+    return 2;
+}
+
+const stepPattern =
+    /^\s*-\s+(task|bash|powershell|pwsh|script|sh|checkout|download|downloadBuild|getPackage|publish|reviewApp|template):/;
+
+function isStepOrExpressionListItem(line) {
+    return stepPattern.test(line) || isExpressionListItem(line);
+}
+
 /**
  * Apply pipeline-specific formatting rules to the YAML output.
  * This handles step spacing, section spacing, and blank line management.
@@ -379,20 +579,8 @@ function applyPipelineFormatting(text, newline, options) {
     if (!text) return text;
 
     let lines = text.split(newline);
-    const result = [];
 
     // Define parent keys that should not have blank lines after them
-    const parentKeys = [
-        'steps:',
-        'jobs:',
-        'stages:',
-        'pool:',
-        'variables:',
-        'parameters:',
-        'resources:',
-        'trigger:',
-        'pr:',
-    ];
 
     // Define sections where step spacing should apply (blank lines between items are preserved/added)
     const stepSpacingSections = ['steps'];
@@ -400,16 +588,12 @@ function applyPipelineFormatting(text, newline, options) {
     // Define sections where list item spacing should apply (stages, jobs, etc.)
     const listItemSpacingSections = ['stages', 'jobs'];
 
-    // Define step types for step spacing
-    const stepPattern =
-        /^\s*-\s+(task|bash|powershell|pwsh|script|sh|checkout|download|downloadBuild|getPackage|publish|reviewApp|template):/;
-
     const topLevelSections = ['stages:', 'jobs:', 'steps:', 'trigger:', 'pr:', 'resources:', 'pool:', 'variables:'];
     let hasParametersAtStart = false;
     let firstNonEmptyLine = -1;
     for (let i = 0; i < lines.length; i++) {
         const trimmed = lines[i].trim();
-        if (trimmed && !trimmed.startsWith('#')) {
+        if (isNonCommentContent(trimmed)) {
             firstNonEmptyLine = i;
             hasParametersAtStart = trimmed === 'parameters:';
             break;
@@ -420,7 +604,7 @@ function applyPipelineFormatting(text, newline, options) {
     let currentSection = null;
     let prevWasComment = false;
     let lastStepInStepsSection = -1;
-    let currentVariablesIndent = -1;
+    let variablesIndent = -1;
     let inMultiLineBlock = false;
     let multiLineBlockIndent = -1;
     let foundFirstSection = false;
@@ -431,10 +615,10 @@ function applyPipelineFormatting(text, newline, options) {
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         const trimmed = line.trim();
-        const lineIndent = line.length - line.trimStart().length;
+        const lineIndent = getIndent(line);
 
         // Track the current root section
-        if (lineIndent === 0 && trimmed && !trimmed.startsWith('#') && trimmed.endsWith(':')) {
+        if (lineIndent === 0 && isNonCommentContent(trimmed) && trimmed.endsWith(':')) {
             currentSection = trimmed.slice(0, -1);
         }
 
@@ -442,7 +626,7 @@ function applyPipelineFormatting(text, newline, options) {
         if (trimmed === '') {
             const nextNonBlank = findNextNonBlankLine(lines, i + 1);
             if (nextNonBlank !== null) {
-                const nextLineIndent = lines[nextNonBlank].length - lines[nextNonBlank].trimStart().length;
+                const nextLineIndent = getIndent(lines[nextNonBlank]);
                 const nextTrimmed = lines[nextNonBlank].trim();
 
                 let keepBlank = false;
@@ -465,14 +649,11 @@ function applyPipelineFormatting(text, newline, options) {
                     }
 
                     if (prevLine) {
-                        const prevIndent = prevLine.length - prevLine.trimStart().length;
+                        const prevIndent = getIndent(prevLine);
                         const prevTrimmed = prevLine.trim();
 
                         // Keep blank if previous line was stages:, jobs:, or steps: at root level
-                        if (
-                            prevIndent === 0 &&
-                            (prevTrimmed === 'stages:' || prevTrimmed === 'jobs:' || prevTrimmed === 'steps:')
-                        ) {
+                        if (prevIndent === 0 && isMainSectionKey(prevTrimmed)) {
                             keepBlank = true;
                         }
                         // NOTE: We DON'T keep blank lines between root-level sections here
@@ -500,19 +681,18 @@ function applyPipelineFormatting(text, newline, options) {
                         let hasContentBefore = false;
                         let lastContentIndex = -1;
                         for (let j = pass1.length - 1; j >= 0; j--) {
-                            if (pass1[j].trim() !== '' && !pass1[j].trim().startsWith('#')) {
+                            if (hasActualContent(pass1[j])) {
                                 hasContentBefore = true;
                                 lastContentIndex = j;
                                 break;
                             }
-                            if (pass1[j].trim().startsWith('#')) break;
+                            if (isBlankOrCommentLine(pass1[j])) break;
                         }
 
                         if (hasContentBefore) {
                             let hasContentAfter = false;
                             for (let j = nextNonBlank; j < lines.length; j++) {
-                                const futureTrimmed = lines[j].trim();
-                                if (futureTrimmed !== '' && !futureTrimmed.startsWith('#')) {
+                                if (hasActualContent(lines[j])) {
                                     hasContentAfter = true;
                                     break;
                                 }
@@ -549,8 +729,6 @@ function applyPipelineFormatting(text, newline, options) {
             continue;
         }
 
-        // --- Handle Non-Blank Lines ---
-
         // Track if this line starts a multi-line block (before we set inMultiLineBlock)
         const startsMultiLineBlock = /:\s*[|>][-+]?\s*$/.test(line);
 
@@ -569,23 +747,15 @@ function applyPipelineFormatting(text, newline, options) {
         // Skip step spacing for expanded output to preserve original spacing
         if (options.stepSpacing && !options.wasExpanded) {
             // Track when we're in steps/jobs/stages sections
-            let inListSection = false;
             let listSectionIndent = -1;
 
-            if (trimmed === 'steps:' || trimmed === 'jobs:' || trimmed === 'stages:') {
-                if (!line.includes('${{')) {
-                    inListSection = true;
+            if (isMainSectionKey(trimmed)) {
+                if (!containsTemplateExpression(line)) {
                     listSectionIndent = lineIndent;
                 }
-            } else if (
-                listSectionIndent >= 0 &&
-                lineIndent <= listSectionIndent &&
-                trimmed &&
-                !trimmed.startsWith('#')
-            ) {
+            } else if (listSectionIndent >= 0 && lineIndent <= listSectionIndent && isNonCommentContent(trimmed)) {
                 // We've outdented past the section
-                if (trimmed !== 'steps:' && trimmed !== 'jobs:' && trimmed !== 'stages:') {
-                    inListSection = false;
+                if (!isMainSectionKey(trimmed)) {
                     listSectionIndent = -1;
                 }
             }
@@ -593,53 +763,32 @@ function applyPipelineFormatting(text, newline, options) {
             // Check if current line is a list item (starts with -)
             const isListItem = /^\s*-\s+/.test(line);
             const isConditional = /^\s*-\s+\$\{\{\s*(if|else|elseif|each)\s/.test(line);
-
             // Check if this is an actual pipeline item (not a parameter, not immediately after conditional)
-            const isPipelineItem =
-                isListItem && !isConditional && (stepPattern.test(line) || /^\s*-\s+\$\{\{.*\}\}:?/.test(line));
-
+            const isPipelineItem = isListItem && !isConditional && isStepOrExpressionListItem(line);
             // Conditionals at root level should also get blank lines (they're part of the step flow)
             const isRootLevelConditional = isConditional && lastStepInStepsSection >= 0;
 
             // Track variables section
-            if (trimmed === 'variables:' && !line.includes('${{')) {
-                currentVariablesIndent = lineIndent;
-            } else if (
-                currentVariablesIndent >= 0 &&
-                lineIndent < currentVariablesIndent &&
-                trimmed &&
-                !trimmed.startsWith('#')
-            ) {
-                // Exit variables section when we outdent below the variables: line
-                currentVariablesIndent = -1;
-            } else if (
-                currentVariablesIndent >= 0 &&
-                lineIndent === currentVariablesIndent &&
-                trimmed &&
-                !trimmed.startsWith('#') &&
-                !trimmed.startsWith('-')
-            ) {
-                // Also exit if we see another key at the same level (like pool:, steps:, etc.)
-                if (trimmed.endsWith(':') && trimmed !== 'variables:') {
-                    currentVariablesIndent = -1;
+            if (trimmed === 'variables:' && !containsTemplateExpression(line)) {
+                variablesIndent = lineIndent;
+            } else if (variablesIndent >= 0 && isNonCommentContent(trimmed)) {
+                if (lineIndent < variablesIndent) {
+                    // Exit variables section when we outdent below the variables: line
+                    variablesIndent = -1;
+                } else if (lineIndent === variablesIndent) {
+                    // Also exit if we see another key at the same level (like pool:, steps:, etc.)
+                    if (trimmed.endsWith(':') && trimmed !== 'variables:') {
+                        variablesIndent = -1;
+                    }
                 }
             }
             // Items in variables section are list items (starting with -) at the same indent as variables:
-            const inVariablesSection =
-                currentVariablesIndent >= 0 && lineIndent === currentVariablesIndent && isListItem;
+            const inVariablesSection = variablesIndent >= 0 && lineIndent === variablesIndent && isListItem;
 
             // Check if previous line was a conditional or section header
             const prevLine = pass1.length > 0 ? pass1[pass1.length - 1].trim() : '';
             const prevIsConditional = /^-\s+\$\{\{\s*(if|else|elseif|each)\s/.test(prevLine);
-            const prevIsSectionHeader = prevLine === 'steps:' || prevLine === 'jobs:' || prevLine === 'stages:';
-
-            // Check if we're transitioning from nested step back to lower indent
-            // This handles cases like a step at indent 6 (inside conditional) followed by step at indent 4 (root level)
-            const prevPipelineItemIndent =
-                lastStepInStepsSection >= 0
-                    ? lines[lastStepInStepsSection].length - lines[lastStepInStepsSection].trimStart().length
-                    : -1;
-            const isOutdentingToLowerLevel = isPipelineItem && prevPipelineItemIndent > lineIndent;
+            const prevIsSectionHeader = isMainSectionKey(prevLine);
 
             // Add blank line before pipeline items OR root-level conditionals if:
             // 1. We had a previous pipeline item
@@ -664,10 +813,7 @@ function applyPipelineFormatting(text, newline, options) {
             // Update tracker if this is a pipeline item (not conditionals)
             if (isPipelineItem) {
                 lastStepInStepsSection = i;
-            } else if (
-                (trimmed === 'steps:' || trimmed === 'jobs:' || trimmed === 'stages:') &&
-                !line.includes('${{')
-            ) {
+            } else if (isMainSectionKey(trimmed) && !containsTemplateExpression(line)) {
                 // Reset when entering a new section
                 lastStepInStepsSection = -1;
             }
@@ -693,8 +839,7 @@ function applyPipelineFormatting(text, newline, options) {
                 section2HandledThisLine = true;
                 // Track if first section was a main section (stages/jobs/steps)
                 const keyOnly = trimmed.includes(':') ? trimmed.substring(0, trimmed.indexOf(':') + 1).trim() : trimmed;
-                const isMainSec = keyOnly === 'steps:' || keyOnly === 'stages:' || keyOnly === 'jobs:';
-                if (isMainSec) {
+                if (isMainSectionKey(keyOnly)) {
                     foundFirstMainSection = true;
                 }
                 // Remove existing blanks
@@ -728,7 +873,7 @@ function applyPipelineFormatting(text, newline, options) {
             // Use firstBlockBlankLines for steps:, stages:, jobs: (but ONLY for the first occurrence AND only if there were parameters)
             // Use betweenSectionBlankLines for other sections (NOT for main sections after the first IF there were parameters)
             const keyOnly = trimmed.includes(':') ? trimmed.substring(0, trimmed.indexOf(':') + 1).trim() : trimmed;
-            const isMainSection = keyOnly === 'steps:' || keyOnly === 'stages:' || keyOnly === 'jobs:';
+            const isMainSection = isMainSectionKey(keyOnly);
 
             // Only apply firstBlockBlankLines to the FIRST main section encountered when there are parameters
             const isFirstMainSection =
@@ -787,8 +932,7 @@ function applyPipelineFormatting(text, newline, options) {
 
             // Look ahead to see if there's any non-comment content after this
             for (let j = i + 1; j < lines.length; j++) {
-                const futureLine = lines[j].trim();
-                if (futureLine !== '' && !futureLine.startsWith('#')) {
+                if (hasActualContent(lines[j])) {
                     isTrailingComment = false;
                     break;
                 }
@@ -798,8 +942,7 @@ function applyPipelineFormatting(text, newline, options) {
                 // Check if there's content before (not just other comments)
                 let hasContentBefore = false;
                 for (let j = pass1.length - 1; j >= 0; j--) {
-                    const prevLine = pass1[j].trim();
-                    if (prevLine !== '' && !prevLine.startsWith('#')) {
+                    if (hasActualContent(pass1[j])) {
                         hasContentBefore = true;
                         break;
                     }
@@ -821,8 +964,8 @@ function applyPipelineFormatting(text, newline, options) {
         pass1.push(line);
         prevWasComment = trimmed.startsWith('#');
 
-        // Remove blank lines immediately after parent keys
-        if (parentKeys.some((pk) => trimmed === pk || trimmed.startsWith(pk + ' '))) {
+        // Remove blank lines immediately after any key (line ending with ':')
+        if (isMappingKeyLine(trimmed)) {
             // Skip subsequent blank lines
             while (i + 1 < lines.length && lines[i + 1].trim() === '') {
                 i++;
@@ -830,7 +973,64 @@ function applyPipelineFormatting(text, newline, options) {
         }
     }
 
-    let finalResult = pass1.join(newline);
+    // Compact blank lines between list items that share the same indent when the parent section is
+    // not steps/jobs/stages. This prevents the formatter from inserting extra spacing inside lists
+    // like dependsOn while leaving deliberate step/job spacing intact.
+    const compacted = [];
+    const sectionStack = [];
+    const mainListSections = new Set(['steps', 'jobs', 'stages']);
+
+    const findPreviousNonBlankLine = (arr, startIndex) => {
+        for (let idx = startIndex; idx >= 0; idx--) {
+            if (arr[idx].trim() !== '') {
+                return idx;
+            }
+        }
+        return null;
+    };
+
+    for (let i = 0; i < pass1.length; i++) {
+        const line = pass1[i];
+        const trimmed = line.trim();
+        const indent = getIndent(line);
+
+        // Maintain a simple section stack keyed by indent for the nearest mapping header
+        while (sectionStack.length && sectionStack[sectionStack.length - 1].indent >= indent) {
+            sectionStack.pop();
+        }
+        if (trimmed && !trimmed.startsWith('-') && trimmed.endsWith(':')) {
+            sectionStack.push({ name: trimmed.slice(0, -1), indent });
+        }
+
+        if (trimmed === '') {
+            const prevIdx = findPreviousNonBlankLine(pass1, i - 1);
+            const nextIdx = findNextNonBlankLine(pass1, i + 1);
+
+            if (prevIdx !== null && nextIdx !== null) {
+                const prevLine = pass1[prevIdx];
+                const nextLine = pass1[nextIdx];
+                const prevTrimmed = prevLine.trim();
+                // Remove blank line immediately after any mapping key ending with ':'
+                if (isMappingKeyLine(prevTrimmed)) {
+                    continue;
+                }
+                const prevIsList = /^-\s+/.test(prevLine.trimStart());
+                const nextIsList = /^-\s+/.test(nextLine.trimStart());
+                const currentSection = sectionStack.length ? sectionStack[sectionStack.length - 1].name : null;
+                const insideMainListSection = currentSection && mainListSections.has(currentSection);
+
+                // Drop blank lines between list items unless we're in steps/jobs/stages
+                // (indent may differ when transitioning between nested lists, which we still want compacted)
+                if (prevIsList && nextIsList && !insideMainListSection) {
+                    continue;
+                }
+            }
+        }
+
+        compacted.push(line);
+    }
+
+    let finalResult = compacted.join(newline);
 
     return finalResult;
 }
@@ -852,12 +1052,17 @@ function formatYaml(content, options = {}) {
         return baseResult;
     }
 
+    const preflightHints = analyzeTemplateHints(content);
+    const hintsBlock = preflightHints.length ? `\n  ${preflightHints.join('\n  ')}` : '';
+
     // Check for file-level formatting directives
     const directives = parseFormatDirectives(content);
 
     // If formatting is disabled via file directive, return original content
-    // unless the caller explicitly passed options (caller intent should override file directive).
-    if (directives.disabled && (!options || Object.keys(options).length === 0)) {
+    // unless the caller explicitly passed formatting options (not metadata like fileName).
+    const metadataKeys = new Set(['fileName', 'baseDir']);
+    const formattingOptionKeys = options ? Object.keys(options).filter((k) => !metadataKeys.has(k)) : [];
+    if (directives.disabled && formattingOptionKeys.length === 0) {
         return baseResult;
     }
 
@@ -867,41 +1072,21 @@ function formatYaml(content, options = {}) {
     }
 
     const effective = {
-        noArrayIndent: options && typeof options.noArrayIndent === 'boolean' ? options.noArrayIndent : true,
-        indent: options && Number.isInteger(options.indent) && options.indent > 0 ? options.indent : 2,
-        lineWidth:
-            options && typeof options.lineWidth === 'number' && options.lineWidth >= 0
-                ? options.lineWidth === 0
-                    ? -1
-                    : options.lineWidth
-                : -1,
-        forceQuotes: options && typeof options.forceQuotes === 'boolean' ? options.forceQuotes : false,
-        sortKeys: options && typeof options.sortKeys === 'boolean' ? options.sortKeys : false,
-        expandTemplates: options && typeof options.expandTemplates === 'boolean' ? options.expandTemplates : false,
-        newlineFormat:
-            options &&
-            typeof options.newlineFormat === 'string' &&
-            (options.newlineFormat === '\n' || options.newlineFormat === '\r\n')
-                ? options.newlineFormat
-                : '\n',
+        noArrayIndent: getBooleanOption(options, 'noArrayIndent', true),
+        indent: getIndentOption(options),
+        lineWidth: getLineWidth(options),
+        forceQuotes: getBooleanOption(options, 'forceQuotes', false),
+        sortKeys: getBooleanOption(options, 'sortKeys', false),
+        expandTemplates: getBooleanOption(options, 'expandTemplates', false),
+        newlineFormat: getNewlineFormat(options),
         fileName: options && options.fileName ? options.fileName : undefined,
         // Pipeline-specific formatting options
-        stepSpacing: options && typeof options.stepSpacing === 'boolean' ? options.stepSpacing : true,
-        firstBlockBlankLines:
-            options && Number.isInteger(options.firstBlockBlankLines) && options.firstBlockBlankLines >= 0
-                ? Math.min(options.firstBlockBlankLines, 4)
-                : 2,
-        betweenSectionBlankLines:
-            options && Number.isInteger(options.betweenSectionBlankLines) && options.betweenSectionBlankLines >= 0
-                ? Math.min(options.betweenSectionBlankLines, 4)
-                : options &&
-                    Number.isInteger(options.blankLinesBetweenSections) &&
-                    options.blankLinesBetweenSections >= 0
-                  ? Math.min(options.blankLinesBetweenSections, 4)
-                  : 1,
-        sectionSpacing: options && typeof options.sectionSpacing === 'boolean' ? options.sectionSpacing : false,
-        wasExpanded: options && typeof options.wasExpanded === 'boolean' ? options.wasExpanded : false,
-        azureCompatible: options && typeof options.azureCompatible === 'boolean' ? options.azureCompatible : false,
+        stepSpacing: getBooleanOption(options, 'stepSpacing', true),
+        firstBlockBlankLines: getClampedIntegerOption(options, 'firstBlockBlankLines', 4, 2),
+        betweenSectionBlankLines: getBetweenSectionBlankLines(options),
+        sectionSpacing: getBooleanOption(options, 'sectionSpacing', false),
+        wasExpanded: getBooleanOption(options, 'wasExpanded', false),
+        azureCompatible: getBooleanOption(options, 'azureCompatible', false),
     };
 
     try {
@@ -924,10 +1109,14 @@ function formatYaml(content, options = {}) {
                 const errorMessages = genuineErrors.map((e) => e.message).join(', ');
                 const filePrefix = effective.fileName ? `[${effective.fileName}] ` : '';
                 console.error(`${filePrefix}YAML parsing error:`, errorMessages);
+                const hintSuffix = hintsBlock;
                 return {
                     text: content,
-                    warning: undefined,
-                    error: errorMessages.length > 100 ? errorMessages.substring(0, 100) + '...' : errorMessages,
+                    warning: hintsBlock || undefined,
+                    error:
+                        errorMessages.length > 100
+                            ? errorMessages.substring(0, 100) + '...' + hintSuffix
+                            : `${errorMessages}${hintSuffix}`,
                 };
             }
         }
@@ -972,18 +1161,18 @@ function formatYaml(content, options = {}) {
 
         return {
             text: normalized,
-            warning: undefined,
+            warning: hintsBlock || undefined,
             error: undefined,
         };
     } catch (error) {
-        const syntaxMessage = describeYamlSyntaxError(error);
+        const syntaxMessage = describeYamlSyntaxError(error, content);
         const filePrefix = effective.fileName ? `[${effective.fileName}] ` : '';
 
         if (syntaxMessage) {
             console.error(`${filePrefix}${syntaxMessage}`);
             return {
                 text: content,
-                warning: undefined,
+                warning: hintsBlock || undefined,
                 error: syntaxMessage,
             };
         }
@@ -991,7 +1180,7 @@ function formatYaml(content, options = {}) {
         console.error(`${filePrefix}YAML formatting failed:`, error.message);
         return {
             text: content,
-            warning: undefined,
+            warning: hintsBlock || undefined,
             error: `YAML formatting failed: ${error.message}`,
         };
     }
@@ -1002,4 +1191,6 @@ module.exports = {
     escapeRegExp,
     replaceTemplateExpressionsWithPlaceholders,
     restoreTemplateExpressions,
+    analyzeTemplateHints,
+    parseFormatDirectives,
 };

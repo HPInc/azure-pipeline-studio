@@ -36,6 +36,11 @@
     ],
     "configuration": {
       "properties": {
+        "azurePipelineStudio.expansion.skipSyntaxCheck": {
+          "default": false,
+          "description": "Skip syntax checking during pipeline expansion. Use this to expand pipelines with intentional template syntax variations.",
+          "type": "boolean"
+        },
         "azurePipelineStudio.expansion.variables": {
           "additionalProperties": {
             "type": "string"
@@ -215,5 +220,5 @@
     "test:module": "node tests/test-azure-expressions-module.js"
   },
   "type": "commonjs",
-  "version": "1.0.7"
+  "version": "1.0.8"
 }

@@ -1,9 +1,8 @@
+# aps-format=false
 stages:
 - stage: Build
-
   jobs:
   - job: BuildJob
-
     steps:
     - template: step-template.yaml
       parameters:

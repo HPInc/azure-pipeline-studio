@@ -1,13 +1,10 @@
+# aps-format=false
 parameters:
   name: Stage
-
-
 stages:
 - stage: ${{ parameters.name }}
-
   jobs:
   - job: Job2
-
     steps:
     - bash: |
         echo "Test"

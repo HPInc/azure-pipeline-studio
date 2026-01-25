@@ -138,6 +138,7 @@ Configure YAML formatting via VS Code settings (File → Preferences → Setting
 ### Resource Locations
 
 - `azurePipelineStudio.resourceLocations` - Array of repository mappings with `repository`, `location`, and optional match criteria (`name`, `endpoint`, `ref`, `type`)
+- Use `@self` to reference templates in the current repository (for example `templates/build.yml@self`), resolving paths relative to the pipeline file's repository.
 
 ## Command Line Interface
 

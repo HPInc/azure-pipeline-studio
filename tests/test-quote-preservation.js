@@ -173,8 +173,24 @@ const test5Pass = runTestCase(
     }
 );
 
+// Test 6: Parameter interpolation in quoted string
+const test6Pass = runTestCase(
+    'Test 6: Parameter interpolation in quoted string',
+    'quote-preservation.yaml',
+    { parameters: { testVal: 'test-value' } },
+    false,
+    (output) => {
+        // Mixed expression: quotes should be removed for the interpolated value
+        // Format: "Testing ${{ parameters.testVal }} for quotes"
+        // Expected output: INTERPOLATED: Testing test-value for quotes
+        if (!output.includes('INTERPOLATED: Testing test-value for quotes')) {
+            throw new Error('Mixed expression with interpolated parameter should remove quotes');
+        }
+    }
+);
+
 // Summary
-const allPassed = test1Pass && test2Pass && test3Pass && test4Pass && test5Pass;
+const allPassed = test1Pass && test2Pass && test3Pass && test4Pass && test5Pass && test6Pass;
 console.log('=== Summary ===');
 console.log(allPassed ? 'All quote preservation tests passed ✅' : 'Some tests failed ❌');
 process.exit(allPassed ? 0 : 1);

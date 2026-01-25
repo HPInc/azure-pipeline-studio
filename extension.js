@@ -25,6 +25,9 @@ function activate(context) {
 
     const parser = new AzurePipelineParser();
     let lastRenderedDocument;
+    let debounceTimer;
+    let isRendering = false;
+    let pendingDocument = null;
     const renderedScheme = 'ado-pipeline-expanded';
     const renderedContent = new Map();
     const renderedEmitter = new vscode.EventEmitter();
@@ -154,21 +157,36 @@ function activate(context) {
         }
     };
 
+    const scheduleRender = (document, delayMs = 500) => {
+        if (!shouldRenderDocument(document)) return;
+        pendingDocument = document;
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+            if (isRendering) return;
+            const doc = pendingDocument;
+            pendingDocument = null;
+            void renderYamlDocument(doc, { silent: true });
+        }, delayMs);
+    };
+
     const renderYamlDocument = async (document, options = {}) => {
         if (!document) return;
 
         lastRenderedDocument = document;
         const sourceText = document.getText();
 
+        isRendering = true;
         try {
             const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
             const compileTimeVariables = config.get('expansion.variables', {});
+            const skipSyntaxCheck = config.get('expansion.skipSyntaxCheck', false);
             const resourceOverrides = buildResourceOverridesForDocument(document);
             const azureCompatible = options.azureCompatible ?? false;
 
             const parserOverrides = {
                 fileName: document.fileName,
                 azureCompatible,
+                skipSyntaxCheck,
                 ...(resourceOverrides && { resources: resourceOverrides }),
                 ...(Object.keys(compileTimeVariables).length && { variables: compileTimeVariables }),
             };
@@ -210,6 +228,9 @@ function activate(context) {
             }
 
             vscode.window.showErrorMessage(`Failed to expand Azure Pipeline: ${error.message}`);
+        } finally {
+            isRendering = false;
+            pendingDocument && scheduleRender(pendingDocument, 0);
         }
     };
 
@@ -263,6 +284,9 @@ function activate(context) {
         const lower = document.fileName.toLowerCase();
         return lower.endsWith('.yaml') || lower.endsWith('.yml');
     };
+
+    const isRelevantDocument = (document) =>
+        shouldRenderDocument(document) && lastRenderedDocument?.fileName === document.fileName;
 
     const commandDisposable = vscode.commands.registerCommand('azurePipelineStudio.showRenderedYaml', async () => {
         const editor = vscode.window.activeTextEditor;
@@ -520,35 +544,23 @@ function activate(context) {
     }
 
     context.subscriptions.push(
-        vscode.workspace.onDidChangeTextDocument((event) => {
-            const { document } = event;
-            if (!shouldRenderDocument(document)) {
-                return;
-            }
+        vscode.workspace.onDidChangeTextDocument(({ document }) => {
+            if (isRelevantDocument(document)) {
+                scheduleRender(document);
 
-            if (!lastRenderedDocument || lastRenderedDocument.fileName !== document.fileName) {
-                return;
+                if (lastRenderedDocument && lastRenderedDocument.fileName === document.fileName) {
+                    void renderYamlDocument(document, { silent: true });
+                }
             }
-
-            void renderYamlDocument(document, { silent: true });
         })
     );
 
     context.subscriptions.push(
         vscode.workspace.onDidSaveTextDocument((document) => {
-            if (!shouldRenderDocument(document)) {
-                return;
-            }
-
-            if (!lastRenderedDocument || lastRenderedDocument.fileName !== document.fileName) {
-                return;
-            }
-
+            if (!isRelevantDocument(document)) return;
             const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
-            const refreshOnSave = config.get('refreshOnSave', true);
-
-            if (refreshOnSave) {
-                void renderYamlDocument(document, { silent: true });
+            if (config.get('refreshOnSave', true)) {
+                scheduleRender(document, 0);
             }
         })
     );
@@ -796,11 +808,12 @@ function runCli(args) {
         '  -e, --extension <ext>        File extensions to format (default: .yml, .yaml)\n' +
         '  -x, --expand-templates       Expand Azure Pipeline template expressions (${{}},$[],$())\n' +
         '  -a, --azure-compatible       Use Azure-compatible expansion mode (adds blank lines, etc.)\n' +
+        '  -s, --skip-syntax-check      Skip syntax checking during expansion\n' +
         '  -d, --debug                  Print files being formatted';
 
     const argv = minimist(args, {
         string: ['output', 'repo', 'format-option', 'format-recursive', 'extension', 'variables'],
-        boolean: ['help', 'expand-templates', 'azure-compatible', 'debug'],
+        boolean: ['help', 'expand-templates', 'azure-compatible', 'skip-syntax-check', 'debug'],
         alias: {
             h: 'help',
             o: 'output',
@@ -811,12 +824,14 @@ function runCli(args) {
             v: 'variables',
             x: 'expand-templates',
             a: 'azure-compatible',
+            s: 'skip-syntax-check',
             d: 'debug',
         },
         default: {
             extension: [],
             'expand-templates': false,
             'azure-compatible': false,
+            'skip-syntax-check': false,
             debug: false,
         },
     });
@@ -937,6 +952,7 @@ function runCli(args) {
                 const parserOptions = {
                     fileName: absolutePath,
                     azureCompatible: argv['azure-compatible'] || false,
+                    skipSyntaxCheck: argv['skip-syntax-check'] || false,
                 };
                 if (repositories) {
                     // Convert repository mappings to resourceLocations format
@@ -959,7 +975,17 @@ function runCli(args) {
                     expandedYaml = cliParser.expandPipelineFromString(sourceText, parserOptions);
                     yamlToFormat = expandedYaml;
                 } catch (expandError) {
-                    console.error(`[${filePath}] Template expansion failed: ${expandError.message}`);
+                    // Refine template hint errors to desired phrasing
+                    const msg = typeof expandError?.message === 'string' ? expandError.message : String(expandError);
+                    const potentialIssuesMatch = msg.match(/Template\s+'([^']+)'\s+potential issues:([\s\S]*)/);
+                    if (potentialIssuesMatch) {
+                        const tmpl = potentialIssuesMatch[1];
+                        const tail = (potentialIssuesMatch[2] || '').trimEnd();
+                        const refined = `[${filePath}] Template(${tmpl}) expansion failed. Potential issues:${tail ? `${tail}` : ''}`;
+                        console.error(refined);
+                    } else {
+                        console.error(`[${filePath}] Template expansion failed: ${msg}`);
+                    }
                     if (argv.debug) {
                         console.error('[DEBUG] Full error:', expandError);
                     }
@@ -986,7 +1012,12 @@ function runCli(args) {
             if (formatted.warning) {
                 console.warn(`[${filePath}] ${formatted.warning}`);
             }
-            const outputText = formatted.text;
+            let outputText = formatted.text;
+
+            if (argv['expand-templates'] && argv['azure-compatible']) {
+                // Preserve intentional blank spacing inside heredoc blocks after formatting
+                outputText = cliParser.addHeredocListSpacing(outputText);
+            }
 
             if (argv.output) {
                 const absoluteOutput = path.resolve(process.cwd(), argv.output);

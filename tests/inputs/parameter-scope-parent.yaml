@@ -1,7 +1,7 @@
+# aps-format=false
 variables:
 - name: parentVar
   value: 'parent-value'
-
 stages:
 - template: parameter-scope-template.yaml
   parameters:
