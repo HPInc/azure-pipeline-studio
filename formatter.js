@@ -1249,7 +1249,11 @@ function applyPipelineFormatting(text, newline, options) {
 
     // Post-processing: compact and insert spacing
     const compacted = compactBlankLines(state.pass1, newline);
-    const finalLines = options?.stepSpacing ? insertStepSpacing(compacted) : compacted;
+    // When the pipeline was produced by expansion, avoid inserting step spacing
+    // here because expansion-formatting follows a different path (handled elsewhere
+    // or intentionally preserved). Respect the wasExpanded flag to prevent adding
+    // extra blank lines for expanded output.
+    const finalLines = options?.stepSpacing && !options?.wasExpanded ? insertStepSpacing(compacted) : compacted;
 
     return finalLines.join(newline);
 }
