@@ -1,0 +1,10 @@
+steps:
+- bash: |
+    cat > info.txt <<EOF
+    - [(**Grade**) Bugs](link)
+    - [(**Grade**) Vulns](link)
+    - [Coverage](link)
+    EOF
+  displayName: Create Info
+
+- bash: echo done

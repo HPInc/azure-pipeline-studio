@@ -1,0 +1,147 @@
+# Test file for refactored formatter functions
+# This file exercises all major code paths in the refactored functions
+
+parameters:
+- name: environment
+  type: string
+  default: dev
+  displayName: Target Environment
+- name: runTests
+  type: boolean
+  default: true
+- name: buildConfig
+  type: string
+  default: Release
+
+
+variables:
+- name: vmImage
+  value: ubuntu-latest
+- name: buildPlatform
+  value: 'Any CPU'
+- name: solution
+  value: '**/*.sln'
+
+trigger:
+  branches:
+    include:
+    - main
+    - develop
+    - release/*
+  paths:
+    include:
+    - src/*
+    exclude:
+    - docs/*
+
+
+stages:
+- stage: Build
+  displayName: Build Stage
+
+  jobs:
+  - job: BuildJob
+    displayName: Build and Test
+    pool:
+      vmImage: $(vmImage)
+
+    steps:
+    # Checkout code
+    - checkout: self
+      displayName: Checkout Repository
+    # Install dependencies
+
+    - task: NuGetToolInstaller@1
+      displayName: Install NuGet
+
+    - task: NuGetCommand@2
+      displayName: Restore NuGet Packages
+      inputs:
+        command: restore
+        restoreSolution: $(solution)
+    # Build with multi-line script
+
+    - script: |
+        echo "Starting build process"
+        echo "Configuration: $(buildConfig)"
+
+        # Build the solution
+        dotnet build $(solution) --configuration $(buildConfig)
+
+        echo "Build completed successfully"
+      displayName: Build Solution
+
+    # Test with heredoc
+
+    - bash: |
+        cat <<EOF > test-config.json
+        {
+          "environment": "${{ parameters.environment }}",
+          "runTests": ${{ parameters.runTests }}
+        }
+        EOF
+
+        echo "Test configuration created"
+      displayName: Create Test Configuration
+
+    # Conditional test execution
+
+    - ${{ if eq(parameters.runTests, true) }}:
+      - task: VSTest@2
+        displayName: Run Unit Tests
+        inputs:
+          testSelector: testAssemblies
+          testAssemblyVer2: |
+            **\*Tests.dll
+            !**\obj\**
+          platform: $(buildPlatform)
+          configuration: $(buildConfig)
+    # Template expression list item
+
+    - ${{ parameters.customSteps }}
+    # Publish results
+
+    - task: PublishBuildArtifacts@1
+      displayName: Publish Build Artifacts
+      inputs:
+        PathtoPublish: $(Build.ArtifactStagingDirectory)
+        ArtifactName: drop
+
+- stage: Deploy
+  displayName: Deploy Stage
+  dependsOn: Build
+  condition: succeeded()
+
+  jobs:
+  - deployment: DeployToEnvironment
+    displayName: Deploy to ${{ parameters.environment }}
+    environment: ${{ parameters.environment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: drop
+
+          - script: |
+              echo "Deploying to ${{ parameters.environment }}"
+
+              # Deployment steps
+              echo "Extracting artifacts..."
+              echo "Configuring services..."
+              echo "Starting application..."
+            displayName: Deploy Application
+
+          - ${{ if eq(parameters.environment, 'production') }}:
+            - script: |
+                echo "Running production validation"
+                echo "Smoke tests..."
+              displayName: Production Validation
+
+# Trailing comment block with spacing test
+
+# This should have exactly one blank line before it
+
+# Multiple trailing comment lines
+
+# To verify trailing comment handling

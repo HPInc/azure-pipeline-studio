@@ -1,0 +1,20 @@
+stages:
+- stage: Build
+
+  jobs:
+  - job: BuildJob
+
+    steps:
+    - ${{ if ne(parameters.artifactsBuildId, '') }}:
+      - checkout: none
+      - template: /steps/windows/download-artifacts-v0.yaml
+        parameters:
+          artifactName: $(artifactName)
+
+    - checkout: self
+      clean: true
+
+    - ${{ parameters.preSteps }}
+    - template: /steps/windows/restore-and-build-v0.yaml
+      parameters:
+        solutionFile: solution.sln

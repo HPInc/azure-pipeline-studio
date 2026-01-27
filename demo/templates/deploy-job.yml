@@ -6,7 +6,6 @@ parameters:
   default:
     runOnce:
       deploy:
-
         steps:
         - script: echo Deploying...
 

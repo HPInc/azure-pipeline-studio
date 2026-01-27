@@ -1,0 +1,16 @@
+stages:
+- stage: Signing
+
+  jobs:
+  - job: SignJob
+
+    steps:
+    - checkout: none
+    - task: DownloadSecureFile@1
+      name: keytab
+      displayName: Download HPSS Keytab
+
+    - template: /steps/windows/hpss-setup-v0.yaml
+    - template: /steps/windows/hpss-run-v0.yaml
+      parameters:
+        filename: $(Build.ArtifactStagingDirectory)/FilesToSign.txt
