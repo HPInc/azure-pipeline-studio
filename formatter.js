@@ -9,18 +9,41 @@ function escapeRegExp(string) {
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// Checks if trimmed line is a conditional directive (if/elseif/else without leading dash)
+function isConditionalDirective(line, conditionalDirectives = null) {
+    const trimmed = line.trim();
+    // Match ${{ if ..., ${{ elseif ..., ${{ else }}, ${{ each ..., ${{ insert }}
+    // These are template directives that don't need a leading dash
+    const isRealDirective = /^\$\{\{\s*(if|elseif|else|each|insert)(\s|\})/i.test(trimmed);
+    
+    if (isRealDirective) {
+        return true;
+    }
+    
+    // Check if this is a placeholder that was originally a conditional directive
+    if (conditionalDirectives) {
+        const placeholderMatch = trimmed.match(/^(__EXPR_PLACEHOLDER_\d+__)/);
+        if (placeholderMatch && conditionalDirectives.has(placeholderMatch[1])) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
 /**
  * Replace Azure Pipeline template expressions with placeholders
  * @param {string} content - The YAML content
- * @returns {{ content: string, placeholderMap: Map }} The content with placeholders and the mapping
+ * @returns {{ content: string, placeholderMap: Map, conditionalDirectives: Set }} The content with placeholders and the mapping
  */
 function replaceTemplateExpressionsWithPlaceholders(content) {
     if (!content) {
-        return { content, placeholderMap: new Map() };
+        return { content, placeholderMap: new Map(), conditionalDirectives: new Set() };
     }
 
     const templateExpressionPattern = /(\$\{\{[^}]+\}\}|\$\[[^\]]+\])/g;
     const placeholderMap = new Map();
+    const conditionalDirectives = new Set();
     let counter = 0;
 
     const result = content.replace(templateExpressionPattern, (match) => {
@@ -35,11 +58,17 @@ function replaceTemplateExpressionsWithPlaceholders(content) {
         }
 
         placeholderMap.set(placeholder, normalized);
+        
+        // Track if this placeholder represents a conditional directive
+        if (isConditionalDirective(normalized)) {
+            conditionalDirectives.add(placeholder);
+        }
+        
         counter++;
         return placeholder;
     });
 
-    return { content: result, placeholderMap };
+    return { content: result, placeholderMap, conditionalDirectives };
 }
 
 /**
@@ -302,7 +331,7 @@ function parseDirectiveOptions(optionsStr) {
  * @param {Error} error - The error object
  * @returns {string|undefined} A formatted error message or undefined
  */
-function analyzeTemplateHints(content) {
+function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
     if (typeof content !== 'string' || !content.length) {
         return [];
     }
@@ -320,7 +349,7 @@ function analyzeTemplateHints(content) {
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         const trimmed = line.trim();
-
+        
         // Skip empty lines and comments for structure validation
         if (trimmed && !trimmed.startsWith('#')) {
             const indent = line.match(/^(\s*)/)[1].length;
@@ -346,14 +375,7 @@ function analyzeTemplateHints(content) {
                 const isTemplateExpr = trimmed.match(/^\$\{\{/) || trimmed.match(/^\$\[/);
 
                 // Check if we've exited the jobs block (but exclude "jobs:" itself)
-                if (
-                    !isTemplateExpr &&
-                    indent <= jobsIndent &&
-                    trimmed.includes(':') &&
-                    !trimmed.startsWith('-') &&
-                    !trimmed.startsWith('${{') &&
-                    !trimmed.startsWith('jobs:')
-                ) {
+                if (!isTemplateExpr && indent <= jobsIndent && trimmed.includes(':') && !trimmed.startsWith('-') && !trimmed.startsWith('${{') && !trimmed.startsWith('jobs:')) {
                     inJobsArray = false;
                     inJobObject = false;
                 }
@@ -361,9 +383,8 @@ function analyzeTemplateHints(content) {
                 // If we're in a job, track the indentation of job properties
                 if (inJobObject && !isTemplateExpr) {
                     // Common job properties to establish baseline indent
-                    const jobPropertyPattern =
-                        /^(displayName|dependsOn|condition|workspace|pool|strategy|timeoutInMinutes|cancelTimeoutInMinutes|variables|container|services):/;
-
+                    const jobPropertyPattern = /^(displayName|dependsOn|condition|workspace|pool|strategy|timeoutInMinutes|cancelTimeoutInMinutes|variables|container|services):/;
+                    
                     if (trimmed.match(jobPropertyPattern)) {
                         if (jobPropertiesIndent === -1) {
                             jobPropertiesIndent = indent;
@@ -376,8 +397,8 @@ function analyzeTemplateHints(content) {
                         if (jobPropertiesIndent !== -1 && indent < jobPropertiesIndent) {
                             hints.push(
                                 `line ${i + 1}: 'steps:' is not properly indented under the job.\n` +
-                                    `    Expected ${jobPropertiesIndent} spaces (same as other job properties like 'displayName' or 'pool'), but found ${indent} spaces.\n` +
-                                    `    The 'steps:' property must be at the same indentation level as other job properties (job starts at line ${jobLineNumber}).`
+                                `    Expected ${jobPropertiesIndent} spaces (same as other job properties like 'displayName' or 'pool'), but found ${indent} spaces.\n` +
+                                `    The 'steps:' property must be at the same indentation level as other job properties (job starts at line ${jobLineNumber}).`
                             );
                         }
                         // Reset job tracking as we've seen steps
@@ -386,16 +407,15 @@ function analyzeTemplateHints(content) {
 
                     // Check for implicit step items (without explicit steps: keyword)
                     // Common step types: - script:, - task:, - bash:, - pwsh:, - powershell:, - checkout:, - download:, - publish:, - template:
-                    const stepItemPattern =
-                        /^-\s+(script|task|bash|pwsh|powershell|checkout|download|publish|template):/;
+                    const stepItemPattern = /^-\s+(script|task|bash|pwsh|powershell|checkout|download|publish|template):/;
                     if (trimmed.match(stepItemPattern)) {
                         // If we have established job properties indent, step items should match it
                         if (jobPropertiesIndent !== -1 && indent < jobPropertiesIndent) {
                             const stepType = trimmed.match(stepItemPattern)[1];
                             hints.push(
                                 `line ${i + 1}: Step item '- ${stepType}:' is not properly indented under the job.\n` +
-                                    `    Expected ${jobPropertiesIndent} spaces (same as other job properties like 'displayName' or 'pool'), but found ${indent} spaces.\n` +
-                                    `    Step items must be at the same indentation level as other job properties (job starts at line ${jobLineNumber}).`
+                                `    Expected ${jobPropertiesIndent} spaces (same as other job properties like 'displayName' or 'pool'), but found ${indent} spaces.\n` +
+                                `    Step items must be at the same indentation level as other job properties (job starts at line ${jobLineNumber}).`
                             );
                         }
                         // Reset job tracking as we've seen step items (job is ending)
@@ -404,11 +424,7 @@ function analyzeTemplateHints(content) {
 
                     // Detect if we're starting a new job (end of current job tracking)
                     // Only reset if we're currently tracking a job and see another job start
-                    if (
-                        inJobObject &&
-                        (trimmed.match(/^-\s+job:/) ||
-                            (trimmed.startsWith('job:') && jobPropertiesIndent !== -1 && indent <= jobPropertiesIndent))
-                    ) {
+                    if (inJobObject && (trimmed.match(/^-\s+job:/) || (trimmed.startsWith('job:') && jobPropertiesIndent !== -1 && indent <= jobPropertiesIndent))) {
                         // Check if this is a NEW job (not the one we just detected on line 342-346)
                         // by checking if we already have jobPropertiesIndent set
                         if (jobPropertiesIndent !== -1) {
@@ -454,8 +470,8 @@ function analyzeTemplateHints(content) {
         // - Current line is an expression (e.g., ${{ if ... }}:) without a leading dash
         // - Previous non-blank line is a list item OR next non-blank line is a list item at same indent
         // - Current line is NOT more indented than the previous list item (which would make it nested content)
-        // - BUT: Exclude conditional directives (if/elseif/else) which don't require a leading dash
-        if (isExpressionWithColon(trimmed) && !trimmed.startsWith('-') && !isConditionalDirective(trimmed)) {
+        // - BUT: Exclude conditional directives (if/elseif/else/each/insert) which are object keys (not in list context)
+        if (isExpressionWithColon(trimmed) && !trimmed.startsWith('-')) {
             let isListContext = false;
             const currentIndent = getIndent(line);
 
@@ -465,8 +481,8 @@ function analyzeTemplateHints(content) {
                 if (!isBlank(prevLine)) {
                     if (isListItem(prevLine)) {
                         const prevIndent = getIndent(prevLine);
-                        // Warn if current indent <= previous indent (sibling or same level)
-                        if (currentIndent <= prevIndent) {
+                        // Only warn if at SAME indent (sibling), not less (parent level)
+                        if (currentIndent === prevIndent) {
                             isListContext = true;
                         }
                     }
@@ -491,9 +507,13 @@ function analyzeTemplateHints(content) {
                 }
             }
 
-            if (isListContext) {
-                const exprExample = '- ${{ if ... }}:';
-                hints.push(`line ${i + 1}: Prepend '-' for list items using expressions (e.g., '${exprExample}').`);
+            // Only warn if in list context, OR if not a conditional directive
+            // Conditional directives used as object keys (not in list context) don't need dashes
+            if (isListContext || !isConditionalDirective(trimmed, conditionalDirectives)) {
+                if (isListContext) {
+                    const exprExample = '- ${{ if ... }}:';
+                    hints.push(`line ${i + 1}: Prepend '-' for list items using expressions (e.g., '${exprExample}').`);
+                }
             }
         }
     }
@@ -663,12 +683,6 @@ function hasElseIfTypo(line) {
 function isStandaloneExpression(line) {
     const trimmed = line.trim();
     return /^-?\s*\$\{\{[^}]+\}\}\s*$/.test(trimmed);
-}
-
-// Checks if trimmed line is a conditional directive (if/elseif/else without leading dash)
-function isConditionalDirective(line) {
-    const trimmed = line.trim();
-    return /^\$\{\{\s*(if\s+|elseif\s+|else\s*)\}/i.test(trimmed);
 }
 
 // Checks if trimmed line is an expression with colon (without leading dash)
@@ -1422,13 +1436,13 @@ function formatYaml(content, options = {}) {
     try {
         let inputContent = content;
 
-        const { content: preprocessedContent, placeholderMap } = effective.expandTemplates
-            ? { content: inputContent, placeholderMap: new Map() }
+        const { content: preprocessedContent, placeholderMap, conditionalDirectives } = effective.expandTemplates
+            ? { content: inputContent, placeholderMap: new Map(), conditionalDirectives: new Set() }
             : replaceTemplateExpressionsWithPlaceholders(inputContent);
 
         const { content: protectedContent, commentMap } = protectEmptyValues(preprocessedContent);
 
-        const preprocessedHints = analyzeTemplateHints(protectedContent);
+        const preprocessedHints = analyzeTemplateHints(protectedContent, conditionalDirectives);
         if (preprocessedHints.length > 0) {
             const hintsBlock = `\n  ${preprocessedHints.join('\n  ')}`;
             const filePrefix = effective.fileName ? `[${effective.fileName}] ` : '';
