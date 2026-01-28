@@ -214,18 +214,41 @@ function activate(context) {
         } catch (error) {
             console.error('Error expanding pipeline:', error);
             const targetUri = getRenderTargetUri(document);
-            const errorMessage = `# Error Expanding Azure Pipeline\n\n${error.message}\n\n---\n\n${error.stack || ''}`;
+
+            // Clear any previous content and show error prominently
+            const errorMessage = [
+                '# ❌ Error Expanding Azure Pipeline',
+                '',
+                '## Error Details',
+                '',
+                '```',
+                error.message || String(error),
+                '```',
+                '',
+                '---',
+                '',
+                '**Tip**: Check the indentation in your YAML file. Common issues include:',
+                '- `steps:` not properly indented under `job:`',
+                '- Missing or extra spaces in YAML structure',
+                '- Template expressions that are malformed',
+                '',
+                '## Stack Trace',
+                '',
+                '```',
+                error.stack || 'No stack trace available',
+                '```',
+            ].join('\n');
+
             renderedContent.set(targetUri.toString(), errorMessage);
             renderedEmitter.fire(targetUri);
 
-            if (!options.silent) {
-                const targetDoc = await vscode.workspace.openTextDocument(targetUri);
-                await vscode.window.showTextDocument(targetDoc, {
-                    viewColumn: vscode.ViewColumn.Beside,
-                    preview: false,
-                    preserveFocus: true,
-                });
-            }
+            // Always show errors, even in silent mode
+            const targetDoc = await vscode.workspace.openTextDocument(targetUri);
+            await vscode.window.showTextDocument(targetDoc, {
+                viewColumn: vscode.ViewColumn.Beside,
+                preview: false,
+                preserveFocus: true,
+            });
 
             vscode.window.showErrorMessage(`Failed to expand Azure Pipeline: ${error.message}`);
         } finally {

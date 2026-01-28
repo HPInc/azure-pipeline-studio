@@ -310,8 +310,116 @@ function analyzeTemplateHints(content) {
     const hints = [];
     const lines = content.split(/\r?\n/);
 
+    // Track state for steps indentation validation
+    let inJobsArray = false;
+    let inJobObject = false;
+    let jobPropertiesIndent = -1;
+    let jobLineNumber = -1;
+    let jobsIndent = -1;
+
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
+        const trimmed = line.trim();
+
+        // Skip empty lines and comments for structure validation
+        if (trimmed && !trimmed.startsWith('#')) {
+            const indent = line.match(/^(\s*)/)[1].length;
+
+            // Detect jobs: block
+            if (trimmed.startsWith('jobs:')) {
+                inJobsArray = true;
+                jobsIndent = indent;
+                inJobObject = false;
+                jobPropertiesIndent = -1;
+            }
+
+            // If we're in a jobs array, check for job items
+            if (inJobsArray) {
+                // Detect start of a job object (- job: or job: indented under each/if)
+                if (trimmed.match(/^-\s+job:/) || trimmed.startsWith('job:')) {
+                    inJobObject = true;
+                    jobLineNumber = i + 1;
+                    jobPropertiesIndent = -1;
+                }
+
+                // Detect template expressions that might contain jobs - don't track indent strictly
+                const isTemplateExpr = trimmed.match(/^\$\{\{/) || trimmed.match(/^\$\[/);
+
+                // Check if we've exited the jobs block (but exclude "jobs:" itself)
+                if (
+                    !isTemplateExpr &&
+                    indent <= jobsIndent &&
+                    trimmed.includes(':') &&
+                    !trimmed.startsWith('-') &&
+                    !trimmed.startsWith('${{') &&
+                    !trimmed.startsWith('jobs:')
+                ) {
+                    inJobsArray = false;
+                    inJobObject = false;
+                }
+
+                // If we're in a job, track the indentation of job properties
+                if (inJobObject && !isTemplateExpr) {
+                    // Common job properties to establish baseline indent
+                    const jobPropertyPattern =
+                        /^(displayName|dependsOn|condition|workspace|pool|strategy|timeoutInMinutes|cancelTimeoutInMinutes|variables|container|services):/;
+
+                    if (trimmed.match(jobPropertyPattern)) {
+                        if (jobPropertiesIndent === -1) {
+                            jobPropertiesIndent = indent;
+                        }
+                    }
+
+                    // Check for steps: at wrong indentation
+                    if (trimmed.startsWith('steps:')) {
+                        // If we have established the job properties indent, steps should match it
+                        if (jobPropertiesIndent !== -1 && indent < jobPropertiesIndent) {
+                            hints.push(
+                                `line ${i + 1}: 'steps:' is not properly indented under the job.\n` +
+                                    `    Expected ${jobPropertiesIndent} spaces (same as other job properties like 'displayName' or 'pool'), but found ${indent} spaces.\n` +
+                                    `    The 'steps:' property must be at the same indentation level as other job properties (job starts at line ${jobLineNumber}).`
+                            );
+                        }
+                        // Reset job tracking as we've seen steps
+                        inJobObject = false;
+                    }
+
+                    // Check for implicit step items (without explicit steps: keyword)
+                    // Common step types: - script:, - task:, - bash:, - pwsh:, - powershell:, - checkout:, - download:, - publish:, - template:
+                    const stepItemPattern =
+                        /^-\s+(script|task|bash|pwsh|powershell|checkout|download|publish|template):/;
+                    if (trimmed.match(stepItemPattern)) {
+                        // If we have established job properties indent, step items should match it
+                        if (jobPropertiesIndent !== -1 && indent < jobPropertiesIndent) {
+                            const stepType = trimmed.match(stepItemPattern)[1];
+                            hints.push(
+                                `line ${i + 1}: Step item '- ${stepType}:' is not properly indented under the job.\n` +
+                                    `    Expected ${jobPropertiesIndent} spaces (same as other job properties like 'displayName' or 'pool'), but found ${indent} spaces.\n` +
+                                    `    Step items must be at the same indentation level as other job properties (job starts at line ${jobLineNumber}).`
+                            );
+                        }
+                        // Reset job tracking as we've seen step items (job is ending)
+                        inJobObject = false;
+                    }
+
+                    // Detect if we're starting a new job (end of current job tracking)
+                    // Only reset if we're currently tracking a job and see another job start
+                    if (
+                        inJobObject &&
+                        (trimmed.match(/^-\s+job:/) ||
+                            (trimmed.startsWith('job:') && jobPropertiesIndent !== -1 && indent <= jobPropertiesIndent))
+                    ) {
+                        // Check if this is a NEW job (not the one we just detected on line 342-346)
+                        // by checking if we already have jobPropertiesIndent set
+                        if (jobPropertiesIndent !== -1) {
+                            inJobObject = false;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Continue with existing template hint checks
 
         // Missing colon after an Azure expression used as a conditional/directive
         // Only warn if it looks like a directive (if/else/elseif/each) that needs a colon
@@ -347,8 +455,7 @@ function analyzeTemplateHints(content) {
         // - Previous non-blank line is a list item OR next non-blank line is a list item at same indent
         // - Current line is NOT more indented than the previous list item (which would make it nested content)
         // - BUT: Exclude conditional directives (if/elseif/else) which don't require a leading dash
-        const trimmed = line.trim();
-        if (isExpressionWithColon(trimmed) && !line.trim().startsWith('-') && !isConditionalDirective(trimmed)) {
+        if (isExpressionWithColon(trimmed) && !trimmed.startsWith('-') && !isConditionalDirective(trimmed)) {
             let isListContext = false;
             const currentIndent = getIndent(line);
 
