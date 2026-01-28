@@ -20,7 +20,7 @@ class AzurePipelineParser {
     constructor(options = {}) {
         this.expressionCache = new Map();
         this.globQuotePattern = /[\*\?\[\]]|\/[\*\?\[]|[*/]\/|\/[*/]/;
-        this.skipSyntaxCheck = options.skipSyntaxCheck || false;
+        this.skipSyntax = options.skipSyntax || false;
     }
 
     expandPipelineFromFile(filePath, overrides = {}) {
@@ -41,9 +41,8 @@ class AzurePipelineParser {
     }
 
     expandPipeline(sourceText, overrides = {}) {
-        const skipSyntaxCheck =
-            overrides.skipSyntaxCheck !== undefined ? overrides.skipSyntaxCheck : this.skipSyntaxCheck;
-        const { yamlDoc, jsonDoc } = this.parseYamlDocument(sourceText, undefined, skipSyntaxCheck);
+        const skipSyntax = overrides.skipSyntax !== undefined ? overrides.skipSyntax : this.skipSyntax;
+        const { yamlDoc, jsonDoc } = this.parseYamlDocument(sourceText, undefined, skipSyntax);
 
         const context = this.buildExecutionContext(jsonDoc, overrides);
         const { quoteStyles, save } = this.captureQuoteStyles(yamlDoc.contents, []);
@@ -229,12 +228,12 @@ class AzurePipelineParser {
      * Includes preflight syntax validation before parsing.
      * @param {string} source - YAML source to parse
      * @param {string} [identifier] - Optional identifier for error message (e.g., template name)
-     * @param {boolean} [skipSyntaxCheck] - Skip syntax validation before parsing
+     * @param {boolean} [skipSyntax] - Skip syntax validation before parsing
      * @returns {{yamlDoc: object, jsonDoc: object}} - Parsed YAML doc and JSON document
      * @throws {Error} If YAML parsing fails or syntax hints are detected
      */
-    parseYamlDocument(source, identifier, skipSyntaxCheck = false, context = undefined) {
-        if (!skipSyntaxCheck) {
+    parseYamlDocument(source, identifier, skipSyntax = false, context = undefined) {
+        if (!skipSyntax) {
             try {
                 this.validateYamlSyntaxHints(source, identifier);
             } catch (err) {
@@ -486,14 +485,12 @@ class AzurePipelineParser {
         const overrideResources = this.normalizeResourcesConfig(overrides.resources);
         const locals = overrides.locals || {};
         const baseDir = overrides.baseDir || (overrides.fileName ? path.dirname(overrides.fileName) : process.cwd());
-        const repositoryBaseDir = overrides.repositoryBaseDir !== undefined ? overrides.repositoryBaseDir : baseDir;
-        const rootRepositoryBaseDir =
-            overrides.rootRepositoryBaseDir !== undefined ? overrides.rootRepositoryBaseDir : repositoryBaseDir;
+        const repoBaseDir = overrides.repoBaseDir !== undefined ? overrides.repoBaseDir : baseDir;
+        const rootRepoBaseDir = overrides.rootRepoBaseDir !== undefined ? overrides.rootRepoBaseDir : repoBaseDir;
 
         const mergedResources = this.mergeResourcesConfig(resources, overrideResources);
         const resourceLocations = overrides.resourceLocations || {};
-        const skipSyntaxCheck =
-            overrides.skipSyntaxCheck !== undefined ? overrides.skipSyntaxCheck : this.skipSyntaxCheck;
+        const skipSyntax = overrides.skipSyntax !== undefined ? overrides.skipSyntax : this.skipSyntax;
 
         return {
             parameters: { ...parameters, ...overrideParameters },
@@ -505,8 +502,8 @@ class AzurePipelineParser {
             resources: mergedResources,
             locals: { ...locals },
             baseDir,
-            repositoryBaseDir,
-            rootRepositoryBaseDir,
+            repoBaseDir,
+            rootRepoBaseDir,
             resourceLocations,
             templateStack: overrides.templateStack || [],
             // Preserve the original root template/file for clearer error stacks
@@ -521,7 +518,7 @@ class AzurePipelineParser {
             stageIndex: -1, // Track current stage index during expansion
             jobIndex: -1, // Track current job index during expansion
             stepIndex: -1, // Track current step index during expansion
-            skipSyntaxCheck, // Skip syntax validation when parsing templates
+            skipSyntax, // Skip syntax validation when parsing templates
         };
     }
 
@@ -2386,8 +2383,8 @@ class AzurePipelineParser {
             resources: parent.resources,
             locals: { ...parent.locals, ...locals },
             baseDir: parent.baseDir,
-            repositoryBaseDir: parent.repositoryBaseDir,
-            rootRepositoryBaseDir: parent.rootRepositoryBaseDir,
+            repoBaseDir: parent.repoBaseDir,
+            rootRepoBaseDir: parent.rootRepoBaseDir,
             resourceLocations: parent.resourceLocations || {},
             scriptsWithExpressions: parent.scriptsWithExpressions, // Preserve scripts tracking
             scriptsWithLastLineExpressions: parent.scriptsWithLastLineExpressions, // Preserve last line tracking
@@ -2412,9 +2409,8 @@ class AzurePipelineParser {
             resources: parent.resources,
             locals: { ...parent.locals },
             baseDir: baseDir || parent.baseDir,
-            repositoryBaseDir:
-                options.repositoryBaseDir !== undefined ? options.repositoryBaseDir : parent.repositoryBaseDir,
-            rootRepositoryBaseDir: parent.rootRepositoryBaseDir,
+            repoBaseDir: options.repoBaseDir !== undefined ? options.repoBaseDir : parent.repoBaseDir,
+            rootRepoBaseDir: parent.rootRepoBaseDir,
             resourceLocations: parent.resourceLocations || {},
             templateStack: parent.templateStack || [],
             templateQuoteStyles: parent.templateQuoteStyles, // Preserve template quote styles map
@@ -2554,11 +2550,11 @@ class AzurePipelineParser {
 
         let resolvedPath;
         let templateBaseDir;
-        let repoBaseDirForContext = context.repositoryBaseDir || undefined;
+        let repoBaseDirForContext = context.repoBaseDir || undefined;
 
         if (isSelfRepo) {
-            const selfBaseDir = context.rootRepositoryBaseDir || context.repositoryBaseDir;
-            const repoBaseDir = this.resolveRepositoryBaseDirectory(selfBaseDir, context);
+            const selfBaseDir = context.rootRepoBaseDir || context.repoBaseDir;
+            const repoBaseDir = this.resolveRepoBaseDirectory(selfBaseDir, context);
             repoBaseDirForContext = repoBaseDir;
             const currentDir = context.baseDir || repoBaseDir;
             resolvedPath = this.resolveRepoTemplate(repoRef.templatePath, currentDir, repoBaseDir);
@@ -2593,7 +2589,7 @@ class AzurePipelineParser {
                 );
             }
 
-            const repoBaseDir = this.resolveRepositoryBaseDirectory(repositoryLocation, context);
+            const repoBaseDir = this.resolveRepoBaseDirectory(repositoryLocation, context);
             repoBaseDirForContext = repoBaseDir;
             const currentDir = context.baseDir || repoBaseDir;
             resolvedPath = this.resolveRepoTemplate(repoRef.templatePath, currentDir, repoBaseDir);
@@ -2608,7 +2604,7 @@ class AzurePipelineParser {
 
             templateBaseDir = path.dirname(resolvedPath);
         } else {
-            const repoBaseDir = context.repositoryBaseDir || undefined;
+            const repoBaseDir = context.repoBaseDir || undefined;
             const candidatePath = this.resolveRepoTemplate(templatePath, context.baseDir, repoBaseDir);
             if (candidatePath) {
                 resolvedPath = candidatePath;
@@ -2627,13 +2623,12 @@ class AzurePipelineParser {
         }
 
         const templateSource = fs.readFileSync(resolvedPath, 'utf8');
-
         const identifier = repoRef ? `${repoRef.templatePath}@${repoRef.repository}` : templatePath;
 
         let templateJson;
         try {
-            const skipSyntaxCheck = context.skipSyntaxCheck !== undefined ? context.skipSyntaxCheck : false;
-            const { yamlDoc, jsonDoc } = this.parseYamlDocument(templateSource, identifier, skipSyntaxCheck, context);
+            const skipSyntax = context.skipSyntax !== undefined ? context.skipSyntax : false;
+            const { yamlDoc, jsonDoc } = this.parseYamlDocument(templateSource, identifier, skipSyntax, context);
             templateJson = jsonDoc;
 
             const templateQuoteStyles = new Map();
@@ -2671,10 +2666,7 @@ class AzurePipelineParser {
         const templateDisplayPath = repoRef ? `${repoRef.templatePath}@${repoRef.repository}` : templatePath;
 
         // Build additional human-friendly stack entries: include the display path
-        // and a normalized path without a leading slash (common in templates). This
-        // ensures entries like 'templates/codeway-windows-client-v0.yaml' appear.
-        // Only add a single canonical entry for this template expansion. Use the
-        // repo-qualified display path when available, otherwise the provided
+        // Use the repo-qualified display path when available, otherwise the provided
         // templatePath. This avoids duplicate/misordered entries.
         const canonicalEntry = templateDisplayPath;
         const updatedContext = {
@@ -2685,7 +2677,7 @@ class AzurePipelineParser {
 
         this.validateTemplateParameters(templateJson, providedParameters, templatePath, updatedContext);
         const templateContext = this.createTemplateContext(updatedContext, mergedParameters, templateBaseDir, {
-            repositoryBaseDir: repoBaseDirForContext,
+            repoBaseDir: repoBaseDirForContext,
         });
         const expandedTemplate = this.expandNode(templateJson, templateContext) || {};
 
@@ -2707,7 +2699,6 @@ class AzurePipelineParser {
 
         const templatePath = templatePathValue.slice(0, atIndex).trim();
         const repository = templatePathValue.slice(atIndex + 1).trim();
-
         if (!templatePath || !repository) {
             return undefined;
         }
@@ -2811,7 +2802,7 @@ class AzurePipelineParser {
         return input;
     }
 
-    resolveRepositoryBaseDirectory(repoLocation, context) {
+    resolveRepoBaseDirectory(repoLocation, context) {
         const fallback = context.baseDir || process.cwd();
 
         if (!repoLocation) return fallback;
