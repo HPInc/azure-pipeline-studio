@@ -1,0 +1,4 @@
+stages:
+- template: final-template.yaml
+  parameters:
+    unknownParam: value

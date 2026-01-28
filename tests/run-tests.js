@@ -31,6 +31,7 @@ const tests = [
     'test-multilevel-templates.js',
     'test-parameter-scoping.js',
     'test-variable-scoping.js',
+    'test-template-call-stack.js',
     'test-formatting.js',
 ];
 

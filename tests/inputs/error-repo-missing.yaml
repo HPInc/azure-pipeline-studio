@@ -1,0 +1,2 @@
+stages:
+- template: some-template.yaml@unknownrepo

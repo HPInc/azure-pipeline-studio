@@ -1,0 +1,2 @@
+stages:
+- template: intermediate-template.yaml

@@ -1,0 +1,2 @@
+stages:
+- template: level1-template.yaml
