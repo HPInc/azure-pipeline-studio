@@ -1,0 +1,4 @@
+# aps-format=false
+
+key: &anchor value
+other: *undefined_anchor

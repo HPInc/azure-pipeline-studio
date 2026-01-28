@@ -1,0 +1,13 @@
+parameters:
+- name: knownParam
+  default: defaultValue
+
+
+stages:
+- stage: TestStage
+
+  jobs:
+  - job: TestJob
+
+    steps:
+    - script: echo "Test"

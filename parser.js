@@ -233,9 +233,14 @@ class AzurePipelineParser {
      * @returns {{yamlDoc: object, jsonDoc: object}} - Parsed YAML doc and JSON document
      * @throws {Error} If YAML parsing fails or syntax hints are detected
      */
-    parseYamlDocument(source, identifier, skipSyntaxCheck = false) {
+    parseYamlDocument(source, identifier, skipSyntaxCheck = false, context = undefined) {
         if (!skipSyntaxCheck) {
-            this.validateYamlSyntaxHints(source, identifier);
+            try {
+                this.validateYamlSyntaxHints(source, identifier);
+            } catch (err) {
+                const msg = err && err.message ? err.message : String(err);
+                throw new Error(this.formatErrorWithStack(msg, context));
+            }
         }
 
         try {
@@ -246,7 +251,7 @@ class AzurePipelineParser {
             const errorMsg = identifier
                 ? `Failed to parse template '${identifier}': ${error.message}`
                 : `Failed to parse YAML: ${error.message}`;
-            throw new Error(errorMsg);
+            throw new Error(this.formatErrorWithStack(errorMsg, context));
         }
     }
 
@@ -504,6 +509,11 @@ class AzurePipelineParser {
             rootRepositoryBaseDir,
             resourceLocations,
             templateStack: overrides.templateStack || [],
+            // Preserve the original root template/file for clearer error stacks
+            rootTemplate:
+                overrides.rootTemplate ||
+                overrides.fileName ||
+                (Array.isArray(overrides.templateStack) ? overrides.templateStack[0] : undefined),
             expansionPath: [], // Track current path during expansion for path-based tracking
             scriptsWithExpressions: new Set(), // Track scripts that had ${{}} before expansion
             scriptsWithLastLineExpressions: new Set(), // Track scripts that had ${{}} on last line before expansion
@@ -841,6 +851,32 @@ class AzurePipelineParser {
         });
     }
 
+    getTemplateCallStack(context) {
+        const rawStack = Array.isArray(context?.templateStack) ? [...context.templateStack] : [];
+        if (context?.rootTemplate) {
+            if (rawStack.length === 0 || rawStack[0] !== context.rootTemplate) {
+                rawStack.unshift(context.rootTemplate);
+            }
+        }
+        if (rawStack.length === 0) return '';
+
+        const lines = [];
+        lines.push('Template call stack:');
+        lines.push('    ' + rawStack[0]);
+        for (let i = 1; i < rawStack.length; i++) {
+            lines.push('    ' + '  '.repeat(i) + '└── ' + rawStack[i]);
+        }
+        return '\n' + lines.join('\n');
+    }
+
+    formatErrorWithStack(message, context) {
+        try {
+            const stack = this.getTemplateCallStack(context);
+            return stack ? `${message}${stack}` : message;
+        } catch (e) {
+            return message;
+        }
+    }
     reportValidationErrors(errors, templatePath, context) {
         const errorMessages = [];
         const templateName = templatePath || 'template';
@@ -874,22 +910,18 @@ class AzurePipelineParser {
         }
 
         if (errors.unknownParameters.length > 0) {
-            const paramList = errors.unknownParameters.map((p) => `'${p}'`).join(', ');
+            const paramList = errors.unknownParameters.map((p) => `* ${p}`).join('\n  ');
             errorMessages.push(
-                `Unknown parameter(s) for template '${templateName}': ${paramList}. ` +
-                    `These parameters are not defined in the template.`
+                `Unknown parameter(s) for template: '${templateName}'\n` +
+                    `Following parameters are not defined in the template\n` +
+                    `  ${paramList}`
             );
         }
 
         if (errorMessages.length > 0) {
             let errorMessage = errorMessages.join('\n\n');
-            if (context?.templateStack?.length > 0) {
-                errorMessage += '\n  Template call stack:';
-                errorMessage += '\n    ' + context.templateStack[0];
-                for (let i = 1; i < context.templateStack.length; i++) {
-                    errorMessage += '\n    ' + '  '.repeat(i) + '└── ' + context.templateStack[i];
-                }
-            }
+            const stackString = this.getTemplateCallStack(context);
+            if (stackString) errorMessage += stackString;
             throw new Error(errorMessage);
         }
     }
@@ -2364,6 +2396,8 @@ class AzurePipelineParser {
             stageIndex: parent.stageIndex,
             jobIndex: parent.jobIndex,
             stepIndex: parent.stepIndex,
+            templateStack: parent.templateStack || [],
+            rootTemplate: parent.rootTemplate,
         };
     }
 
@@ -2392,6 +2426,7 @@ class AzurePipelineParser {
             stageIndex: parent.stageIndex,
             jobIndex: parent.jobIndex,
             stepIndex: parent.stepIndex,
+            rootTemplate: parent.rootTemplate,
         };
     }
 
@@ -2529,7 +2564,10 @@ class AzurePipelineParser {
             resolvedPath = this.resolveRepoTemplate(repoRef.templatePath, currentDir, repoBaseDir);
             if (!resolvedPath) {
                 throw new Error(
-                    `Template file not found for repository '${repoRef.repository}': ${repoRef.templatePath}`
+                    this.formatErrorWithStack(
+                        `Template file not found for repository '${repoRef.repository}': ${repoRef.templatePath}`,
+                        context
+                    )
                 );
             }
 
@@ -2538,15 +2576,20 @@ class AzurePipelineParser {
             const repoEntry = this.resolveRepositoryEntry(repoRef.repository, context);
             if (!repoEntry) {
                 throw new Error(
-                    `Repository resource '${repoRef.repository}' is not defined for template '${templatePath}'.`
+                    this.formatErrorWithStack(
+                        `Repository resource '${repoRef.repository}' is not defined for template '${templatePath}'.`,
+                        context
+                    )
                 );
             }
-
             const repositoryLocation = this.resolveRepositoryLocation(repoEntry, context);
             if (!repositoryLocation) {
                 throw new Error(
-                    `Repository resource '${repoRef.repository}' does not define a local location. ` +
-                        `Set a 'location' for this resource (for example via the 'azurePipelineStudio.resourceLocations' setting).`
+                    this.formatErrorWithStack(
+                        `Repository resource '${repoRef.repository}' does not define a local location. ` +
+                            `Set a 'location' for this resource (for example via the 'azurePipelineStudio.resourceLocations' setting).`,
+                        context
+                    )
                 );
             }
 
@@ -2556,7 +2599,10 @@ class AzurePipelineParser {
             resolvedPath = this.resolveRepoTemplate(repoRef.templatePath, currentDir, repoBaseDir);
             if (!resolvedPath) {
                 throw new Error(
-                    `Template file not found for repository '${repoRef.repository}': ${repoRef.templatePath}`
+                    this.formatErrorWithStack(
+                        `Template file not found for repository '${repoRef.repository}': ${repoRef.templatePath}`,
+                        context
+                    )
                 );
             }
 
@@ -2577,7 +2623,7 @@ class AzurePipelineParser {
 
         if (!fs.existsSync(resolvedPath)) {
             const identifier = repoRef ? `${repoRef.templatePath}@${repoRef.repository}` : templatePath;
-            throw new Error(`Template file not found: ${identifier}`);
+            throw new Error(this.formatErrorWithStack(`Template file not found: ${identifier}`, context));
         }
 
         const templateSource = fs.readFileSync(resolvedPath, 'utf8');
@@ -2587,7 +2633,7 @@ class AzurePipelineParser {
         let templateJson;
         try {
             const skipSyntaxCheck = context.skipSyntaxCheck !== undefined ? context.skipSyntaxCheck : false;
-            const { yamlDoc, jsonDoc } = this.parseYamlDocument(templateSource, identifier, skipSyntaxCheck);
+            const { yamlDoc, jsonDoc } = this.parseYamlDocument(templateSource, identifier, skipSyntaxCheck, context);
             templateJson = jsonDoc;
 
             const templateQuoteStyles = new Map();
@@ -2612,18 +2658,28 @@ class AzurePipelineParser {
             // Avoid repeating the template identifier if the inner message already includes it
             const identifier = repoRef ? `${repoRef.templatePath}@${repoRef.repository}` : templatePath;
             if (baseMsg.includes(identifier)) {
-                throw new Error(baseMsg);
+                throw new Error(this.formatErrorWithStack(baseMsg, context));
             }
-            throw new Error(`Failed to parse template '${templatePath}': ${baseMsg}`);
+            throw new Error(
+                this.formatErrorWithStack(`Failed to parse template '${templatePath}': ${baseMsg}`, context)
+            );
         }
 
         const parameterInfo = this.extractParameters(templateJson);
         const providedParameters = this.normalizeTemplateParameters(node.parameters, context);
         const mergedParameters = { ...parameterInfo.parameters, ...providedParameters };
         const templateDisplayPath = repoRef ? `${repoRef.templatePath}@${repoRef.repository}` : templatePath;
+
+        // Build additional human-friendly stack entries: include the display path
+        // and a normalized path without a leading slash (common in templates). This
+        // ensures entries like 'templates/codeway-windows-client-v0.yaml' appear.
+        // Only add a single canonical entry for this template expansion. Use the
+        // repo-qualified display path when available, otherwise the provided
+        // templatePath. This avoids duplicate/misordered entries.
+        const canonicalEntry = templateDisplayPath;
         const updatedContext = {
             ...context,
-            templateStack: [...(context.templateStack || []), templateDisplayPath],
+            templateStack: [...(context.templateStack || []), canonicalEntry],
             parameterMap: { ...parameterInfo.parameterMap }, // Use only template's parameterMap, don't inherit parent's
         };
 
