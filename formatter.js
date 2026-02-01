@@ -15,11 +15,11 @@ function isConditionalDirective(line, conditionalDirectives = null) {
     // Match ${{ if ..., ${{ elseif ..., ${{ else }}, ${{ each ..., ${{ insert }}
     // These are template directives that don't need a leading dash
     const isRealDirective = /^\$\{\{\s*(if|elseif|else|each|insert)(\s|\})/i.test(trimmed);
-    
+
     if (isRealDirective) {
         return true;
     }
-    
+
     // Check if this is a placeholder that was originally a conditional directive
     if (conditionalDirectives) {
         const placeholderMatch = trimmed.match(/^(__EXPR_PLACEHOLDER_\d+__)/);
@@ -27,7 +27,7 @@ function isConditionalDirective(line, conditionalDirectives = null) {
             return true;
         }
     }
-    
+
     return false;
 }
 
@@ -58,12 +58,12 @@ function replaceTemplateExpressionsWithPlaceholders(content) {
         }
 
         placeholderMap.set(placeholder, normalized);
-        
+
         // Track if this placeholder represents a conditional directive
         if (isConditionalDirective(normalized)) {
             conditionalDirectives.add(placeholder);
         }
-        
+
         counter++;
         return placeholder;
     });
@@ -349,7 +349,7 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         const trimmed = line.trim();
-        
+
         // Skip empty lines and comments for structure validation
         if (trimmed && !trimmed.startsWith('#')) {
             const indent = line.match(/^(\s*)/)[1].length;
@@ -375,7 +375,14 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
                 const isTemplateExpr = trimmed.match(/^\$\{\{/) || trimmed.match(/^\$\[/);
 
                 // Check if we've exited the jobs block (but exclude "jobs:" itself)
-                if (!isTemplateExpr && indent <= jobsIndent && trimmed.includes(':') && !trimmed.startsWith('-') && !trimmed.startsWith('${{') && !trimmed.startsWith('jobs:')) {
+                if (
+                    !isTemplateExpr &&
+                    indent <= jobsIndent &&
+                    trimmed.includes(':') &&
+                    !trimmed.startsWith('-') &&
+                    !trimmed.startsWith('${{') &&
+                    !trimmed.startsWith('jobs:')
+                ) {
                     inJobsArray = false;
                     inJobObject = false;
                 }
@@ -383,8 +390,9 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
                 // If we're in a job, track the indentation of job properties
                 if (inJobObject && !isTemplateExpr) {
                     // Common job properties to establish baseline indent
-                    const jobPropertyPattern = /^(displayName|dependsOn|condition|workspace|pool|strategy|timeoutInMinutes|cancelTimeoutInMinutes|variables|container|services):/;
-                    
+                    const jobPropertyPattern =
+                        /^(displayName|dependsOn|condition|workspace|pool|strategy|timeoutInMinutes|cancelTimeoutInMinutes|variables|container|services):/;
+
                     if (trimmed.match(jobPropertyPattern)) {
                         if (jobPropertiesIndent === -1) {
                             jobPropertiesIndent = indent;
@@ -397,8 +405,8 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
                         if (jobPropertiesIndent !== -1 && indent < jobPropertiesIndent) {
                             hints.push(
                                 `line ${i + 1}: 'steps:' is not properly indented under the job.\n` +
-                                `    Expected ${jobPropertiesIndent} spaces (same as other job properties like 'displayName' or 'pool'), but found ${indent} spaces.\n` +
-                                `    The 'steps:' property must be at the same indentation level as other job properties (job starts at line ${jobLineNumber}).`
+                                    `    Expected ${jobPropertiesIndent} spaces (same as other job properties like 'displayName' or 'pool'), but found ${indent} spaces.\n` +
+                                    `    The 'steps:' property must be at the same indentation level as other job properties (job starts at line ${jobLineNumber}).`
                             );
                         }
                         // Reset job tracking as we've seen steps
@@ -407,15 +415,16 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
 
                     // Check for implicit step items (without explicit steps: keyword)
                     // Common step types: - script:, - task:, - bash:, - pwsh:, - powershell:, - checkout:, - download:, - publish:, - template:
-                    const stepItemPattern = /^-\s+(script|task|bash|pwsh|powershell|checkout|download|publish|template):/;
+                    const stepItemPattern =
+                        /^-\s+(script|task|bash|pwsh|powershell|checkout|download|publish|template):/;
                     if (trimmed.match(stepItemPattern)) {
                         // If we have established job properties indent, step items should match it
                         if (jobPropertiesIndent !== -1 && indent < jobPropertiesIndent) {
                             const stepType = trimmed.match(stepItemPattern)[1];
                             hints.push(
                                 `line ${i + 1}: Step item '- ${stepType}:' is not properly indented under the job.\n` +
-                                `    Expected ${jobPropertiesIndent} spaces (same as other job properties like 'displayName' or 'pool'), but found ${indent} spaces.\n` +
-                                `    Step items must be at the same indentation level as other job properties (job starts at line ${jobLineNumber}).`
+                                    `    Expected ${jobPropertiesIndent} spaces (same as other job properties like 'displayName' or 'pool'), but found ${indent} spaces.\n` +
+                                    `    Step items must be at the same indentation level as other job properties (job starts at line ${jobLineNumber}).`
                             );
                         }
                         // Reset job tracking as we've seen step items (job is ending)
@@ -424,7 +433,11 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
 
                     // Detect if we're starting a new job (end of current job tracking)
                     // Only reset if we're currently tracking a job and see another job start
-                    if (inJobObject && (trimmed.match(/^-\s+job:/) || (trimmed.startsWith('job:') && jobPropertiesIndent !== -1 && indent <= jobPropertiesIndent))) {
+                    if (
+                        inJobObject &&
+                        (trimmed.match(/^-\s+job:/) ||
+                            (trimmed.startsWith('job:') && jobPropertiesIndent !== -1 && indent <= jobPropertiesIndent))
+                    ) {
                         // Check if this is a NEW job (not the one we just detected on line 342-346)
                         // by checking if we already have jobPropertiesIndent set
                         if (jobPropertiesIndent !== -1) {
@@ -1436,7 +1449,11 @@ function formatYaml(content, options = {}) {
     try {
         let inputContent = content;
 
-        const { content: preprocessedContent, placeholderMap, conditionalDirectives } = effective.expandTemplates
+        const {
+            content: preprocessedContent,
+            placeholderMap,
+            conditionalDirectives,
+        } = effective.expandTemplates
             ? { content: inputContent, placeholderMap: new Map(), conditionalDirectives: new Set() }
             : replaceTemplateExpressionsWithPlaceholders(inputContent);
 
@@ -1446,7 +1463,9 @@ function formatYaml(content, options = {}) {
         if (preprocessedHints.length > 0) {
             const hintsBlock = `\n  ${preprocessedHints.join('\n  ')}`;
             const filePrefix = effective.fileName ? `[${effective.fileName}] ` : '';
-            console.error(`${filePrefix}YAML validation warnings:${hintsBlock}`);
+            const lines = `YAML validation warnings:${hintsBlock}`.split('\n');
+            const indented = lines.map((line, idx) => (idx === 0 ? line : '  ' + line)).join('\n');
+            console.error(`${filePrefix}${indented}`);
             return {
                 text: content,
                 warning: hintsBlock,
@@ -1464,7 +1483,9 @@ function formatYaml(content, options = {}) {
             if (genuineErrors.length > 0) {
                 const errorMessages = genuineErrors.map((e) => e.message).join(', ');
                 const filePrefix = effective.fileName ? `[${effective.fileName}] ` : '';
-                console.error(`${filePrefix}YAML parsing error:`, errorMessages);
+                const lines = `YAML parsing error: ${errorMessages}`.split('\n');
+                const indented = lines.map((line, idx) => (idx === 0 ? line : '  ' + line)).join('\n');
+                console.error(`${filePrefix}${indented}`);
                 const hintSuffix = hintsBlock;
                 return {
                     text: content,
@@ -1525,7 +1546,9 @@ function formatYaml(content, options = {}) {
         const filePrefix = effective.fileName ? `[${effective.fileName}] ` : '';
 
         if (syntaxMessage) {
-            console.error(`${filePrefix}${syntaxMessage}`);
+            const lines = syntaxMessage.split('\n');
+            const indented = lines.map((line, idx) => (idx === 0 ? line : '  ' + line)).join('\n');
+            console.error(`${filePrefix}${indented}`);
             return {
                 text: content,
                 warning: hintsBlock || undefined,
@@ -1533,7 +1556,10 @@ function formatYaml(content, options = {}) {
             };
         }
 
-        console.error(`${filePrefix}YAML formatting failed:`, error.message);
+        const formattingError = `YAML formatting failed: ${error.message}`;
+        const lines = formattingError.split('\n');
+        const indented = lines.map((line, idx) => (idx === 0 ? line : '  ' + line)).join('\n');
+        console.error(`${filePrefix}${indented}`);
         return {
             text: content,
             warning: hintsBlock || undefined,

@@ -6,7 +6,8 @@
     "onCommand:azurePipelineStudio.showRenderedYaml",
     "onCommand:azurePipelineStudio.showRenderedYamlAzureCompatible",
     "onCommand:azurePipelineStudio.configureResourceLocations",
-    "onCommand:azurePipelineStudio.formatOriginalYaml"
+    "onCommand:azurePipelineStudio.formatOriginalYaml",
+    "onCommand:azurePipelineStudio.showDependencies"
   ],
   "bin": {
     "azure-pipeline-formatter": "./extension-bundle.js"
@@ -32,6 +33,10 @@
       {
         "command": "azurePipelineStudio.formatOriginalYaml",
         "title": "Format YAML"
+      },
+      {
+        "command": "azurePipelineStudio.showDependencies",
+        "title": "Show Dependencies"
       }
     ],
     "configuration": {
@@ -161,6 +166,10 @@
           "group": "2_render@2"
         },
         {
+          "command": "azurePipelineStudio.showDependencies",
+          "group": "2_render@3"
+        },
+        {
           "command": "azurePipelineStudio.configureResourceLocations",
           "group": "3_config@1"
         }
@@ -220,5 +229,5 @@
     "test:module": "node tests/test-azure-expressions-module.js"
   },
   "type": "commonjs",
-  "version": "1.0.9"
+  "version": "1.0.10"
 }

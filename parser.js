@@ -879,10 +879,11 @@ class AzurePipelineParser {
         const templateName = templatePath || 'template';
 
         if (errors.missingRequired.length > 0) {
-            const paramList = errors.missingRequired.map((p) => `'${p}'`).join(', ');
+            const paramList = errors.missingRequired.map((p) => `  * ${p}`).join('\n');
             errorMessages.push(
-                `Missing required parameter(s) for template '${templateName}': ${paramList}. ` +
-                    `These parameters do not have default values and must be provided when calling the template.`
+                `Missing required parameter(s) for template '${templateName}'\n` +
+                    `Following parameters do not have default values and must be provided when calling the template.\n` +
+                    `${paramList}`
             );
         }
 

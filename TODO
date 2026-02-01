@@ -1,0 +1,10 @@
+- Line between two job/stage array item
+- Comments in steps should be assinged to the next step
+-  \\wsl.localhost\Ubuntu-22.04\root\workspace\templates\stages\windows\release-and-report-v0.yaml
+    - template: /steps/windows/release-packages-v0.yaml
+      parameters:
+        releaseBuild: ${{ parameters.releaseBuild }} => parameters.releaseBuild is not defined, but no error
+        ${{ insert }}: ${{ parameters.publishParams }} 
+- /steps/windows/release-packages-v0.yaml@templates (Line: 81, Col: 5): Unexpected symbol: ')'. Located at position 47 within expression: ne(parameters.universalServiceConnections, '')). For more help, refer to https://go.microsoft.com/fwlink/?
+    - ${{ if ne(parameters.universalServiceConnections, '')) }}:
+- Show digaram of stage dependency
