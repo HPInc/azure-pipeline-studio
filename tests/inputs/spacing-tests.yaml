@@ -1,0 +1,109 @@
+# aps-format=false
+# Test 1: Blank lines between stage items
+stages:
+- stage: Build
+  jobs:
+  - job: BuildJob
+    steps:
+    - script: echo Build
+- stage: Test
+  jobs:
+  - job: TestJob
+    steps:
+    - script: echo Test
+
+---
+# Test 2: Blank lines between job items
+jobs:
+- job: BuildJob
+  steps:
+  - script: echo Build
+- job: TestJob
+  steps:
+  - script: echo Test
+
+---
+# Test 3: No duplicate blank lines when one already exists
+stages:
+- stage: Build
+  jobs:
+  - job: BuildJob
+    steps:
+    - script: echo Build
+
+- stage: Test
+  jobs:
+  - job: TestJob
+    steps:
+    - script: echo Test
+
+---
+# Test 4: Blank lines with conditional stage items
+stages:
+- ${{ if eq(parameters.build, true) }}:
+  - stage: Build
+    jobs:
+    - job: BuildJob
+      steps:
+      - script: echo Build
+- ${{ if eq(parameters.test, true) }}:
+  - stage: Test
+    jobs:
+    - job: TestJob
+      steps:
+      - script: echo Test
+
+---
+# Test 5: Blank lines between job items with templates
+jobs:
+- template: build-template.yml
+- job: TestJob
+  steps:
+  - script: echo Test
+- template: deploy-template.yml
+
+---
+# Test 6: Steps have spacing but are under stepSpacing control
+jobs:
+- job: BuildJob
+  steps:
+  - script: echo Step 1
+  - script: echo Step 2
+  - script: echo Step 3
+
+---
+# Test 7: Blank lines added correctly despite internal blanks
+stages:
+- stage: Build
+  displayName: Build Stage
+  jobs:
+  - job: BuildJob
+    steps:
+    - script: echo Build
+- stage: Test
+  displayName: Test Stage
+  jobs:
+  - job: TestJob
+    steps:
+    - script: echo Test
+
+---
+# Test 8: Multiple stages with conditionals
+stages:
+- ${{ if eq(parameters.build, true) }}:
+  - stage: Build
+    jobs:
+    - job: BuildJob
+      steps:
+      - script: echo Build
+- ${{ if eq(parameters.test, true) }}:
+  - stage: Test
+    jobs:
+    - job: TestJob
+      steps:
+      - script: echo Test
+- stage: Deploy
+  jobs:
+  - job: DeployJob
+    steps:
+    - script: echo Deploy

@@ -590,6 +590,13 @@ function activate(context) {
             transform: translateY(-2px);
         }
 
+        .stage-divider {
+            grid-column: 1 / -1;
+            height: 1px;
+            background: linear-gradient(to right, transparent, #3e3e42, transparent);
+            margin: 10px 0;
+        }
+
         .stage-card h3 {
             color: #ffffff;
             margin-bottom: 10px;
@@ -945,6 +952,11 @@ ${mermaidDiagram
                 html += '</p>';
                 html += '</div>';
                 html += '</div>';
+                
+                // Add divider between stages
+                if (i < stagesData.length - 1) {
+                    html += '<div class="stage-divider"></div>';
+                }
             }
             
             stageList.innerHTML = html;

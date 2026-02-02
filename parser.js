@@ -243,7 +243,17 @@ class AzurePipelineParser {
         }
 
         try {
-            const yamlDoc = YAML.parseDocument(source);
+            let yamlDoc;
+            try {
+                const docs = YAML.parseAllDocuments(source);
+                yamlDoc = docs.find((doc) => doc.contents !== null && doc.contents !== undefined);
+                if (!yamlDoc) {
+                    throw new Error('Empty YAML document');
+                }
+            } catch (parseError) {
+                yamlDoc = YAML.parseDocument(source);
+            }
+
             const jsonDoc = yamlDoc.toJSON() || {};
             return { yamlDoc, jsonDoc };
         } catch (error) {

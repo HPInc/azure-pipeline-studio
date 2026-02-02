@@ -1174,10 +1174,24 @@ function insertStepSpacing(lines) {
             }
         }
 
-        // Check for list items; only add spacing within steps section
+        // Check for list items; add spacing within steps, jobs, and stages sections
         if (!inMultiLineBlock && isListItem(line)) {
-            const currentSection = sectionStack.length ? sectionStack[sectionStack.length - 1].name : null;
-            if (currentSection === 'steps') {
+            // Find which section this list item belongs to
+            // The list item should belong to the most recent section on the stack
+            // where the list item is indented at or beyond the section's indent
+            const listItemIndent = indent;
+            let applicableSection = null;
+
+            // Look through the stack from most recent to find the applicable section
+            for (let s = sectionStack.length - 1; s >= 0; s--) {
+                const section = sectionStack[s];
+                if (section.indent <= listItemIndent && mainListSections.has(section.name)) {
+                    applicableSection = section.name;
+                    break;
+                }
+            }
+
+            if (applicableSection) {
                 // Find next sibling list item at same indent
                 let nextItemIdx = null;
                 for (let j = i + 1; j < lines.length; j++) {
@@ -1195,8 +1209,18 @@ function insertStepSpacing(lines) {
                 }
 
                 if (nextItemIdx !== null) {
-                    const hasBlank = lines.slice(i + 1, nextItemIdx).some((l) => isBlank(l));
-                    if (!hasBlank) {
+                    // Check if there's a blank line immediately before the next sibling
+                    let hasBlankBefore = false;
+                    for (let k = nextItemIdx - 1; k >= 0; k--) {
+                        if (isBlank(lines[k])) {
+                            hasBlankBefore = true;
+                            break;
+                        }
+                        if (!isBlank(lines[k])) {
+                            break;
+                        }
+                    }
+                    if (!hasBlankBefore) {
                         insertPositions.push(nextItemIdx);
                     }
                 }
@@ -1407,6 +1431,44 @@ function formatYaml(content, options = {}) {
 
     if (!content) {
         return baseResult;
+    }
+
+    // Handle multi-document YAML files (documents separated by ---)
+    const isMultiDocument = /\n---\n/.test(content);
+    if (isMultiDocument) {
+        const documents = content.split(/\n---\n/);
+        const formattedDocs = [];
+        const warnings = [];
+        const errors = [];
+
+        for (let docIndex = 0; docIndex < documents.length; docIndex++) {
+            const doc = documents[docIndex];
+            if (!doc.trim()) continue;
+
+            const result = formatYaml(doc, options);
+            if (result.error) {
+                errors.push(`Document ${docIndex + 1}: ${result.error}`);
+                continue;
+            }
+            if (result.warning) {
+                warnings.push(`Document ${docIndex + 1}: ${result.warning}`);
+            }
+            formattedDocs.push(result.text.trim());
+        }
+
+        if (formattedDocs.length === 0) {
+            return {
+                text: content,
+                warning: warnings.length > 0 ? warnings.join('\n') : undefined,
+                error: errors.length > 0 ? errors.join('\n') : 'All documents failed to format',
+            };
+        }
+
+        return {
+            text: formattedDocs.join('\n\n---\n'),
+            warning: warnings.length > 0 ? warnings.join('\n') : undefined,
+            error: errors.length > 0 ? errors.join('\n') : undefined,
+        };
     }
 
     const preflightHints = analyzeTemplateHints(content);
