@@ -5,6 +5,7 @@ const minimist = require('minimist');
 // Import utility functions and formatter
 const { pickFirstString, resolveConfiguredPath, normalizeExtension } = require('./utils');
 const { formatYaml } = require('./formatter');
+const { DependencyAnalyzer } = require('./dependency-analyzer');
 
 let vscode;
 try {
@@ -24,6 +25,7 @@ function activate(context) {
     console.log('Azure Pipeline YAML Parser extension is now active!');
 
     const parser = new AzurePipelineParser();
+    const dependencyAnalyzer = new DependencyAnalyzer(parser);
     let lastRenderedDocument;
     let debounceTimer;
     let isRendering = false;
@@ -364,6 +366,658 @@ function activate(context) {
     );
     context.subscriptions.push(configureCommandDisposable);
 
+    const showDependenciesCommandDisposable = vscode.commands.registerCommand(
+        'azurePipelineStudio.showDependencies',
+        async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor || !shouldRenderDocument(editor.document)) {
+                vscode.window.showInformationMessage('Open an Azure Pipeline YAML file to view dependencies.');
+                return;
+            }
+
+            try {
+                const sourceText = editor.document.getText();
+                const document = editor.document;
+
+                // Expand the template first (similar to showRenderedYaml)
+                const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
+                const compileTimeVariables = config.get('expansion.variables', {});
+                const skipSyntaxCheck = config.get('expansion.skipSyntaxCheck', false);
+                const resourceOverrides = buildResourceOverridesForDocument(document);
+
+                const parserOverrides = {
+                    fileName: document.fileName,
+                    azureCompatible: false,
+                    skipSyntaxCheck,
+                    ...(resourceOverrides && { resources: resourceOverrides }),
+                    ...(Object.keys(compileTimeVariables).length && { variables: compileTimeVariables }),
+                };
+
+                vscode.window.setStatusBarMessage('Expanding pipeline templates...', 2000);
+                const expandedYaml = parser.expandPipelineFromString(sourceText, parserOverrides);
+
+                // Analyze the expanded pipeline
+                vscode.window.setStatusBarMessage('Analyzing dependencies...', 2000);
+                const dependencies = dependencyAnalyzer.analyzePipeline(expandedYaml);
+
+                // Create webview panel to display diagram
+                const panel = vscode.window.createWebviewPanel(
+                    'pipelineDependencies',
+                    'Pipeline Dependencies',
+                    vscode.ViewColumn.Beside,
+                    { enableScripts: true }
+                );
+
+                // Generate Mermaid diagram
+                const mermaidDiagram =
+                    dependencies.stages.length > 0 || dependencies.jobs.length > 0
+                        ? dependencyAnalyzer.generateMermaidDiagram(dependencies)
+                        : '';
+
+                // Create HTML content with professional styling
+                const projectName =
+                    lastRenderedDocument?.fileName?.split('/').pop()?.replace('.yaml', '') || 'Pipeline';
+                const stageCount = dependencies.stages.length || dependencies.jobs.length || 0;
+
+                const htmlContent = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pipeline Dependencies</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #1e1e1e;
+            min-height: 100vh;
+            padding: 0;
+            margin: 0;
+        }
+
+        .container {
+            max-width: 100%;
+            margin: 0;
+            background: #252526;
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #1a1a1a 0%, #0d0d0d 100%);
+            color: white;
+            padding: 30px;
+            border-bottom: 4px solid #D13438;
+        }
+
+        .header h1 {
+            font-size: 2em;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .header-icon {
+            font-size: 1.2em;
+        }
+
+        .header-info {
+            display: flex;
+            gap: 30px;
+            margin-top: 15px;
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+
+        .header-info-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .tabs {
+            display: flex;
+            background: #2d2d2d;
+            border-bottom: 2px solid #3e3e42;
+        }
+
+        .tab {
+            padding: 15px 30px;
+            cursor: pointer;
+            transition: all 0.3s;
+            border-bottom: 3px solid transparent;
+            font-weight: 500;
+            color: #cccccc;
+        }
+
+        .tab:hover {
+            background: #3e3e42;
+            color: #ffffff;
+        }
+
+        .tab.active {
+            background: #252526;
+            border-bottom-color: #D13438;
+            color: #ffffff;
+        }
+
+        .content {
+            padding: 20px;
+            min-height: calc(100vh - 200px);
+            background: #252526;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+            animation: fadeIn 0.3s;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .diagram-container {
+            background: #1e1e1e;
+            border-radius: 0;
+            padding: 20px;
+            margin-bottom: 0;
+            overflow-x: auto;
+        }
+
+        .mermaid {
+            display: flex;
+            justify-content: center;
+            background: #1e1e1e;
+            border-radius: 0;
+            min-height: 400px;
+            overflow: auto;
+        }
+
+        .legend {
+            display: flex;
+            gap: 20px;
+            padding: 10px 20px;
+            background: #2d2d2d;
+            border-radius: 0;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.9em;
+            color: #cccccc;
+        }
+
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 2px;
+        }
+
+        .stage-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .stage-card {
+            background: #1e1e1e;
+            border-radius: 4px;
+            padding: 20px;
+            border-left: 4px solid #4299e1;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+            transition: all 0.3s;
+            cursor: pointer;
+        }
+
+        .stage-card:hover {
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+            transform: translateY(-2px);
+        }
+
+        .stage-divider {
+            grid-column: 1 / -1;
+            height: 1px;
+            background: linear-gradient(to right, transparent, #3e3e42, transparent);
+            margin: 10px 0;
+        }
+
+        .stage-card h3 {
+            color: #ffffff;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .stage-number {
+            display: inline-block;
+            width: 28px;
+            height: 28px;
+            background: #4299e1;
+            color: white;
+            border-radius: 4px;
+            text-align: center;
+            line-height: 28px;
+            font-size: 0.85em;
+            margin-right: 10px;
+        }
+
+        .stage-deps {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #3e3e42;
+        }
+
+        .stage-deps-title {
+            font-size: 0.85em;
+            font-weight: 600;
+            color: #cccccc;
+            margin-bottom: 8px;
+        }
+
+        .dep-badge {
+            display: inline-block;
+            background: #3e3e42;
+            color: #e0e0e0;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 0.8em;
+            margin-right: 6px;
+            margin-bottom: 6px;
+        }
+
+        .stage-details {
+            display: none;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 2px solid #3e3e42;
+            color: #cccccc;
+        }
+
+        .stage-card.expanded .stage-details {
+            display: block;
+        }
+
+        .expand-icon {
+            transition: transform 0.3s;
+        }
+
+        .stage-card.expanded .expand-icon {
+            transform: rotate(180deg);
+        }
+
+        .search-box {
+            margin-bottom: 20px;
+            position: relative;
+        }
+
+        .search-box input {
+            width: 100%;
+            padding: 12px 40px 12px 16px;
+            border: 2px solid #3e3e42;
+            border-radius: 4px;
+            font-size: 1em;
+            background: #1e1e1e;
+            color: #e0e0e0;
+            transition: border-color 0.3s;
+        }
+
+        .search-box input:focus {
+            outline: none;
+            border-color: #D13438;
+        }
+
+        .critical-path-box {
+            background: #ffeef0;
+            border-left: 4px solid #e53e3e;
+            padding: 20px;
+            border-radius: 4px;
+            margin: 20px 0;
+        }
+
+        .critical-path-box h3 {
+            color: #c53030;
+            margin-bottom: 10px;
+        }
+
+        .critical-path-box p {
+            font-family: 'Courier New', monospace;
+            color: #742a2a;
+            line-height: 1.8;
+            margin-bottom: 15px;
+        }
+
+        .resources-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+        }
+
+        .resource-card {
+            background: #1e1e1e;
+            border-radius: 4px;
+            padding: 20px;
+            border-left: 4px solid #48bb78;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+        }
+
+        .resource-card h3 {
+            color: #ffffff;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .resource-type {
+            display: inline-block;
+            background: #48bb78;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 0.75em;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .resource-details {
+            font-size: 0.9em;
+            color: #cccccc;
+        }
+
+        .resource-details div {
+            padding: 6px 0;
+            border-bottom: 1px solid #3e3e42;
+        }
+
+        .resource-details div:last-child {
+            border-bottom: none;
+        }
+        
+        .resource-details strong {
+            color: #ffffff;
+        }
+
+        @media (max-width: 768px) {
+            .stage-list {
+                grid-template-columns: 1fr;
+            }
+            .header h1 {
+                font-size: 1.5em;
+            }
+            .tabs {
+                overflow-x: auto;
+            }
+            .tab {
+                padding: 12px 20px;
+                white-space: nowrap;
+            }
+        }
+        
+        h2 {
+            color: #ffffff;
+        }
+        
+        p {
+            color: #cccccc;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <h1 style="margin: 0;">
+                    <span class="header-icon">🔄</span>
+                    Pipeline Dependencies
+                </h1>
+                <button onclick="openInBrowser()" style="padding: 8px 16px; background: #0078d4; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 500;">🌐 Open in Browser</button>
+            </div>
+            <div class="header-info">
+                <div class="header-info-item">
+                    <span>📄</span>
+                    <span>File: ${projectName}</span>
+                </div>
+                <div class="header-info-item">
+                    <span>🏗️</span>
+                    <span>${stageCount} Stage${stageCount !== 1 ? 's' : ''}</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="tabs">
+            <div class="tab active" data-tab="diagram" onclick="switchTab('diagram')">📊 Diagram</div>
+            <div class="tab" data-tab="stages" onclick="switchTab('stages')">🎯 Details</div>
+            ${dependencies.resources.length > 0 ? '<div class="tab" data-tab="resources" onclick="switchTab(\'resources\')">📚 Resources</div>' : ''}
+        </div>
+
+        <div class="content">
+            <!-- Diagram Tab -->
+            <div class="tab-content active" id="diagram">
+                <div class="legend">
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #D13438;"></div>
+                        <span>🔴 Critical Path</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #1d4ed8;"></div>
+                        <span>Build Stages</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #16a34a;"></div>
+                        <span>Release Stages</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #ea580c;"></div>
+                        <span>Security/Signing</span>
+                    </div>
+                </div>
+
+                <div class="diagram-container">
+                    <div class="mermaid">
+${mermaidDiagram
+    .split('\n')
+    .map((line) => '                        ' + line)
+    .join('\n')}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Details Tab -->
+            <div class="tab-content" id="stages">
+                <div class="stage-list" id="stageList">
+                    <!-- Stages will be populated dynamically -->
+                </div>
+            </div>
+
+            <!-- Resources Tab -->
+            ${
+                dependencies.resources.length > 0
+                    ? `
+            <div class="tab-content" id="resources">
+                <h2 style="margin-bottom: 20px; color: #2d3748;">Pipeline Resources</h2>
+                <div class="resources-grid">
+                    ${dependencies.resources
+                        .map(
+                            (resource) => `
+                        <div class="resource-card">
+                            <h3>
+                                <span class="resource-type">${resource.type}</span>
+                                ${resource.name}
+                            </h3>
+                            <div class="resource-details">
+                                <div><strong>Type:</strong> ${resource.type}</div>
+                                ${resource.source ? '<div><strong>Source:</strong> ' + resource.source + '</div>' : ''}
+                            </div>
+                        </div>
+                    `
+                        )
+                        .join('')}
+                </div>
+            </div>
+            `
+                    : ''
+            }
+        </div>
+    </div>
+
+    <script>
+        const stagesData = ${JSON.stringify(dependencies.stages.map((s, i) => ({ ...s, number: i + 1 })))};
+        
+        // Open in browser function
+        window.openInBrowser = function() {
+            const vscode = acquireVsCodeApi();
+            vscode.postMessage({ command: 'openInBrowser' });
+        };
+        
+        // Global tab switching function
+        window.switchTab = function(tabName) {
+            // Hide all tab contents
+            const allContents = document.querySelectorAll('.tab-content');
+            for (let i = 0; i < allContents.length; i++) {
+                allContents[i].classList.remove('active');
+            }
+            
+            // Remove active class from all tabs
+            const allTabs = document.querySelectorAll('.tab');
+            for (let i = 0; i < allTabs.length; i++) {
+                allTabs[i].classList.remove('active');
+            }
+            
+            // Show the selected tab content
+            const selectedContent = document.getElementById(tabName);
+            if (selectedContent) {
+                selectedContent.classList.add('active');
+            }
+            
+            // Mark the clicked tab as active
+            const selectedTab = document.querySelector('.tab[data-tab="' + tabName + '"]');
+            if (selectedTab) {
+                selectedTab.classList.add('active');
+            }
+            
+            // Render stages when Details tab is opened
+            if (tabName === 'stages') {
+                renderStages();
+            }
+        };
+        
+        window.renderStages = function() {
+            const stageList = document.getElementById('stageList');
+            if (!stageList) return;
+            
+            let html = '';
+            for (let i = 0; i < stagesData.length; i++) {
+                const stage = stagesData[i];
+                let depsHtml = '';
+                
+                if (stage.dependsOn && stage.dependsOn.length > 0) {
+                    depsHtml = '<div class="stage-deps"><div class="stage-deps-title">Dependencies:</div>';
+                    for (let j = 0; j < stage.dependsOn.length; j++) {
+                        depsHtml += '<span class="dep-badge">' + stage.dependsOn[j] + '</span>';
+                    }
+                    depsHtml += '</div>';
+                } else {
+                    depsHtml = '<div class="stage-deps"><div class="stage-deps-title">Entry stage (no dependencies)</div></div>';
+                }
+                
+                html += '<div class="stage-card" data-stage="' + stage.name + '">';
+                html += '<h3>';
+                html += '<span>';
+                html += '<span class="stage-number">' + stage.number + '</span>';
+                html += (stage.displayName || stage.name);
+                html += '</span>';
+                html += '<span class="expand-icon">▼</span>';
+                html += '</h3>';
+                html += depsHtml;
+                html += '<div class="stage-details">';
+                html += '<p style="color: #4a5568; margin-bottom: 10px;">';
+                html += (stage.jobs ? 'Jobs: ' + stage.jobs.length : 'Stage');
+                html += '</p>';
+                html += '</div>';
+                html += '</div>';
+                
+                // Add divider between stages
+                if (i < stagesData.length - 1) {
+                    html += '<div class="stage-divider"></div>';
+                }
+            }
+            
+            stageList.innerHTML = html;
+            
+            // Add click handlers to stage cards
+            const stageCards = document.querySelectorAll('.stage-card');
+            for (let i = 0; i < stageCards.length; i++) {
+                stageCards[i].addEventListener('click', function() {
+                    this.classList.toggle('expanded');
+                });
+            }
+        };
+        
+        // Initialize Mermaid
+        mermaid.initialize({ 
+            startOnLoad: true,
+            theme: 'dark',
+            flowchart: {
+                useMaxWidth: true,
+                htmlLabels: true,
+                curve: 'basis'
+            }
+        });
+        mermaid.contentLoaded();
+        
+        // Initial render
+        renderStages();
+    </script>
+</body>
+</html>`;
+
+                panel.webview.html = htmlContent;
+
+                // Handle messages from webview
+                panel.webview.onDidReceiveMessage(
+                    async (message) => {
+                        if (message.command === 'openInBrowser') {
+                            try {
+                                const os = require('os');
+                                const tempFile = path.join(os.tmpdir(), `pipeline-dependencies-${Date.now()}.html`);
+                                fs.writeFileSync(tempFile, htmlContent);
+                                await vscode.env.openExternal(vscode.Uri.file(tempFile));
+                                vscode.window.showInformationMessage('Opened dependencies in browser');
+                            } catch (err) {
+                                vscode.window.showErrorMessage(`Failed to open in browser: ${err.message}`);
+                            }
+                        }
+                    },
+                    undefined,
+                    context.subscriptions
+                );
+
+                vscode.window.setStatusBarMessage('Pipeline dependencies analyzed.', 3000);
+            } catch (error) {
+                console.error('Error analyzing dependencies:', error);
+                vscode.window.showErrorMessage(`Failed to analyze dependencies: ${error.message}`);
+            }
+        }
+    );
+    context.subscriptions.push(showDependenciesCommandDisposable);
+
     context.subscriptions.push(
         vscode.workspace.onDidCloseTextDocument((document) => {
             if (document.uri.scheme === renderedScheme) {
@@ -597,6 +1251,7 @@ module.exports = {
     AzurePipelineParser,
     formatYaml,
     formatFilesRecursively,
+    DependencyAnalyzer,
 };
 
 function buildRepositoryOverridesFromCliEntries(entries, cwd) {
@@ -1007,7 +1662,16 @@ function runCli(args) {
                         const refined = `[${filePath}] Template(${tmpl}) expansion failed. Potential issues:${tail ? `${tail}` : ''}`;
                         console.error(refined);
                     } else {
-                        console.error(`[${filePath}] Template expansion failed: ${msg}`);
+                        const lines = msg.split('\n');
+                        const firstLine = lines[0];
+                        const restLines = lines
+                            .slice(1)
+                            .map((line) => '  ' + line)
+                            .join('\n');
+                        const formatted = restLines
+                            ? `[${filePath}] Template expansion failed\n  ${firstLine}\n${restLines}`
+                            : `[${filePath}] Template expansion failed\n  ${firstLine}`;
+                        console.error(formatted);
                     }
                     if (argv.debug) {
                         console.error('[DEBUG] Full error:', expandError);
@@ -1028,12 +1692,16 @@ function runCli(args) {
 
             const formatted = formatYaml(yamlToFormat, fileOptions);
             if (formatted.error) {
-                console.error(`[${filePath}] ${formatted.error}`);
+                const errorLines = formatted.error.split('\n');
+                const indentedError = errorLines.map((line, idx) => (idx === 0 ? line : '  ' + line)).join('\n');
+                console.error(`[${filePath}] ${indentedError}`);
                 hasErrors = true;
                 continue;
             }
             if (formatted.warning) {
-                console.warn(`[${filePath}] ${formatted.warning}`);
+                const warningLines = formatted.warning.split('\n');
+                const indentedWarning = warningLines.map((line, idx) => (idx === 0 ? line : '  ' + line)).join('\n');
+                console.warn(`[${filePath}] ${indentedWarning}`);
             }
             let outputText = formatted.text;
 

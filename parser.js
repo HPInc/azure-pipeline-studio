@@ -243,7 +243,17 @@ class AzurePipelineParser {
         }
 
         try {
-            const yamlDoc = YAML.parseDocument(source);
+            let yamlDoc;
+            try {
+                const docs = YAML.parseAllDocuments(source);
+                yamlDoc = docs.find((doc) => doc.contents !== null && doc.contents !== undefined);
+                if (!yamlDoc) {
+                    throw new Error('Empty YAML document');
+                }
+            } catch (parseError) {
+                yamlDoc = YAML.parseDocument(source);
+            }
+
             const jsonDoc = yamlDoc.toJSON() || {};
             return { yamlDoc, jsonDoc };
         } catch (error) {
@@ -868,6 +878,10 @@ class AzurePipelineParser {
 
     formatErrorWithStack(message, context) {
         try {
+            // Avoid adding call stack if it's already present
+            if (message.includes('Template call stack:')) {
+                return message;
+            }
             const stack = this.getTemplateCallStack(context);
             return stack ? `${message}${stack}` : message;
         } catch (e) {
@@ -879,10 +893,11 @@ class AzurePipelineParser {
         const templateName = templatePath || 'template';
 
         if (errors.missingRequired.length > 0) {
-            const paramList = errors.missingRequired.map((p) => `'${p}'`).join(', ');
+            const paramList = errors.missingRequired.map((p) => `  * ${p}`).join('\n');
             errorMessages.push(
-                `Missing required parameter(s) for template '${templateName}': ${paramList}. ` +
-                    `These parameters do not have default values and must be provided when calling the template.`
+                `Missing required parameter(s) for template '${templateName}'\n` +
+                    `Following parameters do not have default values and must be provided when calling the template.\n` +
+                    `${paramList}`
             );
         }
 
@@ -2024,12 +2039,25 @@ class AzurePipelineParser {
 
         // Fix unescaped backslashes in string literals for Azure Pipelines compatibility
         // Azure Pipelines allows '\' in strings, but JavaScript requires '\\'
-        // Use regex to find string literals and escape single backslashes within them
+        // Process string literals by counting consecutive backslashes to avoid double-escaping
         return expr.replace(/(['"])((?:\\.|(?!\1).)*?)\1/g, (match, quote, content) => {
-            // Process the string content to escape single backslashes
-            // Replace single backslash with double, but preserve existing escape sequences
-            const escaped = content.replace(/\\(?![\\'"nrtbfv0xu])/g, '\\\\');
-            return quote + escaped + quote;
+            let result = '';
+            let i = 0;
+            while (i < content.length) {
+                if (content[i] === '\\') {
+                    let count = 0;
+                    while (i < content.length && content[i] === '\\') {
+                        count++;
+                        i++;
+                    }
+                    // If odd count, the last backslash is unescaped - add one more to escape it
+                    // If even count, all backslashes are already properly escaped
+                    result += count % 2 === 1 ? '\\'.repeat(count + 1) : '\\'.repeat(count);
+                } else {
+                    result += content[i++];
+                }
+            }
+            return quote + result + quote;
         });
     }
 
@@ -2085,6 +2113,10 @@ class AzurePipelineParser {
                 if (target == null) return undefined;
                 const property = this.evaluatePropertyKey(node.property, node.computed, context);
                 if (property == null) return undefined;
+                if (target === context.parameters && !Object.prototype.hasOwnProperty.call(target, property)) {
+                    const paramName = String(property);
+                    throw new Error(this.formatErrorWithStack(`Undefined template parameter '${paramName}'.`, context));
+                }
                 return target[property];
             }
             case 'CallExpression': {
@@ -2296,6 +2328,17 @@ class AzurePipelineParser {
         }
 
         const [first, ...rest] = segments;
+        if (first === 'parameters') {
+            const parameters = context.parameters || {};
+            if (rest.length === 0) {
+                return parameters;
+            }
+            const paramName = rest[0];
+            if (!Object.prototype.hasOwnProperty.call(parameters, paramName)) {
+                throw new Error(this.formatErrorWithStack(`Undefined template parameter '${paramName}'.`, context));
+            }
+            return this.walkSegments(parameters, rest);
+        }
         const walkIfHas = (container) =>
             container && Object.prototype.hasOwnProperty.call(container, first)
                 ? this.walkSegments(container[first], rest)
@@ -2305,7 +2348,6 @@ class AzurePipelineParser {
         if (localMatch !== undefined) return localMatch;
 
         const directTargets = {
-            parameters: context.parameters,
             variables: context.variables,
             resources: context.resources,
         };

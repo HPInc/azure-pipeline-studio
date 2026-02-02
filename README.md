@@ -8,6 +8,7 @@ VS Code extension and CLI tool for formatting and expanding Azure DevOps YAML pi
 
 - **Template Expansion**: Expand pipelines with shared templates and repository resources
 - **Compile-Time Variables**: Set Azure Pipeline variables (Build.Reason, Build.SourceBranch, etc.) to test different build scenarios (see [docs/COMPILE_TIME_VARIABLES.md](docs/COMPILE_TIME_VARIABLES.md))
+- **Dependency Visualization**: View stage and job dependencies in a clear, structured format
 - **Parameter Validation**: Automatic validation ensures all required template parameters are provided
 - **Expression Evaluation**: All 33 Azure DevOps expression functions (`${{ }}`, `$[]`, `$()`)
 - **Advanced Formatting**: Customizable indentation, line width, array formatting, native comment preservation
@@ -34,7 +35,7 @@ node extension-bundle.js --help
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/HPInc/azure-pipeline-studio.git
-    rev: v1.0.7
+    rev: v1.0.10
     hooks:
       - id: azure-pipeline-formatter
 ```
@@ -116,6 +117,7 @@ Available commands:
 - **Format YAML** - Format the current file in-place
 - **Expand Pipeline (Standard)** - Expand templates and expressions with user settings
 - **Expand Pipeline (Azure Compatible)** - Expand with Azure DevOps-compatible formatting (literal blocks, capitalized booleans)
+- **Show Dependencies** - Analyze and display pipeline dependencies (stages, jobs, templates, resources)
 - **Configure Resource Locations** - Set up repository paths for template resolution
 
 ## Configuration

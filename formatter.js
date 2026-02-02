@@ -15,11 +15,11 @@ function isConditionalDirective(line, conditionalDirectives = null) {
     // Match ${{ if ..., ${{ elseif ..., ${{ else }}, ${{ each ..., ${{ insert }}
     // These are template directives that don't need a leading dash
     const isRealDirective = /^\$\{\{\s*(if|elseif|else|each|insert)(\s|\})/i.test(trimmed);
-    
+
     if (isRealDirective) {
         return true;
     }
-    
+
     // Check if this is a placeholder that was originally a conditional directive
     if (conditionalDirectives) {
         const placeholderMatch = trimmed.match(/^(__EXPR_PLACEHOLDER_\d+__)/);
@@ -27,7 +27,7 @@ function isConditionalDirective(line, conditionalDirectives = null) {
             return true;
         }
     }
-    
+
     return false;
 }
 
@@ -58,12 +58,12 @@ function replaceTemplateExpressionsWithPlaceholders(content) {
         }
 
         placeholderMap.set(placeholder, normalized);
-        
+
         // Track if this placeholder represents a conditional directive
         if (isConditionalDirective(normalized)) {
             conditionalDirectives.add(placeholder);
         }
-        
+
         counter++;
         return placeholder;
     });
@@ -327,6 +327,158 @@ function parseDirectiveOptions(optionsStr) {
 }
 
 /**
+ * Validate template expressions for syntax errors (missing brackets, unbalanced parentheses, unclosed strings)
+ * @param {string} line - The line containing expressions to validate
+ * @param {number} lineNumber - The line number (1-based) for error reporting
+ * @returns {string[]} Array of error messages
+ */
+function validateTemplateExpressions(line, lineNumber) {
+    const hints = [];
+
+    // Check for unmatched template expression brackets (missing }})
+    let pos = 0;
+    while (pos < line.length) {
+        const openIdx = line.indexOf('${{', pos);
+        if (openIdx === -1) break;
+
+        const closeIdx = line.indexOf('}}', openIdx + 3);
+        if (closeIdx === -1) {
+            hints.push(
+                `line ${lineNumber}: Missing closing '}}' for template expression starting at column ${openIdx + 1}.`
+            );
+            break;
+        }
+        pos = closeIdx + 2;
+    }
+
+    // Check for unbalanced brackets within template expressions
+    const exprMatches = line.matchAll(/\$\{\{([\s\S]*?)\}\}/g);
+    for (const match of exprMatches) {
+        const expr = match[1];
+        let parenCount = 0;
+        let bracketCount = 0;
+        let braceCount = 0;
+        let inString = false;
+        let stringChar = null;
+
+        for (let j = 0; j < expr.length; j++) {
+            const char = expr[j];
+
+            // Handle string literals
+            if (char === '"' || char === "'") {
+                // Count preceding backslashes to determine if quote is escaped
+                let backslashCount = 0;
+                let k = j - 1;
+                while (k >= 0 && expr[k] === '\\') {
+                    backslashCount++;
+                    k--;
+                }
+                // If even number of backslashes (including 0), quote is not escaped
+                const isEscaped = backslashCount % 2 === 1;
+
+                if (!isEscaped) {
+                    if (!inString) {
+                        inString = true;
+                        stringChar = char;
+                    } else if (char === stringChar) {
+                        inString = false;
+                        stringChar = null;
+                    }
+                }
+            }
+
+            // Only count brackets outside of strings
+            if (!inString) {
+                if (char === '(') parenCount++;
+                else if (char === ')') parenCount--;
+                else if (char === '[') bracketCount++;
+                else if (char === ']') bracketCount--;
+                else if (char === '{') braceCount++;
+                else if (char === '}') braceCount--;
+
+                // Check for negative counts (closing before opening)
+                if (parenCount < 0) {
+                    hints.push(
+                        `line ${lineNumber}: Unbalanced parentheses in template expression - extra closing ')' found.`
+                    );
+                    parenCount = 0;
+                }
+                if (bracketCount < 0) {
+                    hints.push(
+                        `line ${lineNumber}: Unbalanced brackets in template expression - extra closing ']' found.`
+                    );
+                    bracketCount = 0;
+                }
+                if (braceCount < 0) {
+                    hints.push(
+                        `line ${lineNumber}: Unbalanced braces in template expression - extra closing '}}' found.`
+                    );
+                    braceCount = 0;
+                }
+            }
+        }
+
+        // Check if string was never closed (potential escape sequence error)
+        if (inString) {
+            // Look for the pattern \' or \" at the last quote position
+            // Find the last quote character that matches stringChar
+            let lastQuotePos = -1;
+            for (let j = expr.length - 1; j >= 0; j--) {
+                if (expr[j] === stringChar) {
+                    lastQuotePos = j;
+                    break;
+                }
+            }
+
+            // Check if that quote was preceded by a single backslash
+            let hasImproperEscape = false;
+            if (lastQuotePos >= 0 && lastQuotePos > 0 && expr[lastQuotePos - 1] === '\\') {
+                // Count backslashes before this quote
+                let backslashCount = 0;
+                let k = lastQuotePos - 1;
+                while (k >= 0 && expr[k] === '\\') {
+                    backslashCount++;
+                    k--;
+                }
+                // If odd number of backslashes, the quote was treated as escaped
+                hasImproperEscape = backslashCount % 2 === 1;
+            }
+
+            if (hasImproperEscape) {
+                hints.push(
+                    `line ${lineNumber}: Unclosed string in template expression - use '\\\\' to escape backslash before quote, not '\\'.`
+                );
+            } else {
+                hints.push(
+                    `line ${lineNumber}: Unclosed string in template expression - missing closing ${stringChar} quote.`
+                );
+            }
+            // Skip bracket error reporting for this expression as they're misleading
+            continue;
+        }
+
+        // Check for unclosed brackets
+        if (parenCount > 0) {
+            hints.push(
+                `line ${lineNumber}: Unbalanced parentheses in template expression - missing ${parenCount} closing ')'.`
+            );
+        }
+        if (bracketCount > 0) {
+            hints.push(
+                `line ${lineNumber}: Unbalanced brackets in template expression - missing ${bracketCount} closing ']'.`
+            );
+        }
+        if (braceCount > 0) {
+            hints.push(
+                `line ${lineNumber}: Unbalanced braces in template expression - missing ${braceCount} closing '}'.`
+            );
+        }
+    }
+
+    return hints;
+}
+
+/**
  * Describe YAML syntax errors in a user-friendly way
  * @param {Error} error - The error object
  * @returns {string|undefined} A formatted error message or undefined
@@ -349,7 +501,7 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         const trimmed = line.trim();
-        
+
         // Skip empty lines and comments for structure validation
         if (trimmed && !trimmed.startsWith('#')) {
             const indent = line.match(/^(\s*)/)[1].length;
@@ -375,7 +527,14 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
                 const isTemplateExpr = trimmed.match(/^\$\{\{/) || trimmed.match(/^\$\[/);
 
                 // Check if we've exited the jobs block (but exclude "jobs:" itself)
-                if (!isTemplateExpr && indent <= jobsIndent && trimmed.includes(':') && !trimmed.startsWith('-') && !trimmed.startsWith('${{') && !trimmed.startsWith('jobs:')) {
+                if (
+                    !isTemplateExpr &&
+                    indent <= jobsIndent &&
+                    trimmed.includes(':') &&
+                    !trimmed.startsWith('-') &&
+                    !trimmed.startsWith('${{') &&
+                    !trimmed.startsWith('jobs:')
+                ) {
                     inJobsArray = false;
                     inJobObject = false;
                 }
@@ -383,8 +542,9 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
                 // If we're in a job, track the indentation of job properties
                 if (inJobObject && !isTemplateExpr) {
                     // Common job properties to establish baseline indent
-                    const jobPropertyPattern = /^(displayName|dependsOn|condition|workspace|pool|strategy|timeoutInMinutes|cancelTimeoutInMinutes|variables|container|services):/;
-                    
+                    const jobPropertyPattern =
+                        /^(displayName|dependsOn|condition|workspace|pool|strategy|timeoutInMinutes|cancelTimeoutInMinutes|variables|container|services):/;
+
                     if (trimmed.match(jobPropertyPattern)) {
                         if (jobPropertiesIndent === -1) {
                             jobPropertiesIndent = indent;
@@ -397,8 +557,8 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
                         if (jobPropertiesIndent !== -1 && indent < jobPropertiesIndent) {
                             hints.push(
                                 `line ${i + 1}: 'steps:' is not properly indented under the job.\n` +
-                                `    Expected ${jobPropertiesIndent} spaces (same as other job properties like 'displayName' or 'pool'), but found ${indent} spaces.\n` +
-                                `    The 'steps:' property must be at the same indentation level as other job properties (job starts at line ${jobLineNumber}).`
+                                    `    Expected ${jobPropertiesIndent} spaces (same as other job properties like 'displayName' or 'pool'), but found ${indent} spaces.\n` +
+                                    `    The 'steps:' property must be at the same indentation level as other job properties (job starts at line ${jobLineNumber}).`
                             );
                         }
                         // Reset job tracking as we've seen steps
@@ -407,15 +567,16 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
 
                     // Check for implicit step items (without explicit steps: keyword)
                     // Common step types: - script:, - task:, - bash:, - pwsh:, - powershell:, - checkout:, - download:, - publish:, - template:
-                    const stepItemPattern = /^-\s+(script|task|bash|pwsh|powershell|checkout|download|publish|template):/;
+                    const stepItemPattern =
+                        /^-\s+(script|task|bash|pwsh|powershell|checkout|download|publish|template):/;
                     if (trimmed.match(stepItemPattern)) {
                         // If we have established job properties indent, step items should match it
                         if (jobPropertiesIndent !== -1 && indent < jobPropertiesIndent) {
                             const stepType = trimmed.match(stepItemPattern)[1];
                             hints.push(
                                 `line ${i + 1}: Step item '- ${stepType}:' is not properly indented under the job.\n` +
-                                `    Expected ${jobPropertiesIndent} spaces (same as other job properties like 'displayName' or 'pool'), but found ${indent} spaces.\n` +
-                                `    Step items must be at the same indentation level as other job properties (job starts at line ${jobLineNumber}).`
+                                    `    Expected ${jobPropertiesIndent} spaces (same as other job properties like 'displayName' or 'pool'), but found ${indent} spaces.\n` +
+                                    `    Step items must be at the same indentation level as other job properties (job starts at line ${jobLineNumber}).`
                             );
                         }
                         // Reset job tracking as we've seen step items (job is ending)
@@ -424,7 +585,11 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
 
                     // Detect if we're starting a new job (end of current job tracking)
                     // Only reset if we're currently tracking a job and see another job start
-                    if (inJobObject && (trimmed.match(/^-\s+job:/) || (trimmed.startsWith('job:') && jobPropertiesIndent !== -1 && indent <= jobPropertiesIndent))) {
+                    if (
+                        inJobObject &&
+                        (trimmed.match(/^-\s+job:/) ||
+                            (trimmed.startsWith('job:') && jobPropertiesIndent !== -1 && indent <= jobPropertiesIndent))
+                    ) {
                         // Check if this is a NEW job (not the one we just detected on line 342-346)
                         // by checking if we already have jobPropertiesIndent set
                         if (jobPropertiesIndent !== -1) {
@@ -516,6 +681,10 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
                 }
             }
         }
+
+        // Validate template expressions on this line
+        const expressionHints = validateTemplateExpressions(line, i + 1);
+        hints.push(...expressionHints);
     }
 
     return hints;
@@ -1161,10 +1330,24 @@ function insertStepSpacing(lines) {
             }
         }
 
-        // Check for list items; only add spacing within steps section
+        // Check for list items; add spacing within steps, jobs, and stages sections
         if (!inMultiLineBlock && isListItem(line)) {
-            const currentSection = sectionStack.length ? sectionStack[sectionStack.length - 1].name : null;
-            if (currentSection === 'steps') {
+            // Find which section this list item belongs to
+            // The list item should belong to the most recent section on the stack
+            // where the list item is indented at or beyond the section's indent
+            const listItemIndent = indent;
+            let applicableSection = null;
+
+            // Look through the stack from most recent to find the applicable section
+            for (let s = sectionStack.length - 1; s >= 0; s--) {
+                const section = sectionStack[s];
+                if (section.indent <= listItemIndent && mainListSections.has(section.name)) {
+                    applicableSection = section.name;
+                    break;
+                }
+            }
+
+            if (applicableSection) {
                 // Find next sibling list item at same indent
                 let nextItemIdx = null;
                 for (let j = i + 1; j < lines.length; j++) {
@@ -1182,8 +1365,18 @@ function insertStepSpacing(lines) {
                 }
 
                 if (nextItemIdx !== null) {
-                    const hasBlank = lines.slice(i + 1, nextItemIdx).some((l) => isBlank(l));
-                    if (!hasBlank) {
+                    // Check if there's a blank line immediately before the next sibling
+                    let hasBlankBefore = false;
+                    for (let k = nextItemIdx - 1; k >= 0; k--) {
+                        if (isBlank(lines[k])) {
+                            hasBlankBefore = true;
+                            break;
+                        }
+                        if (!isBlank(lines[k])) {
+                            break;
+                        }
+                    }
+                    if (!hasBlankBefore) {
                         insertPositions.push(nextItemIdx);
                     }
                 }
@@ -1396,8 +1589,61 @@ function formatYaml(content, options = {}) {
         return baseResult;
     }
 
+    // Handle multi-document YAML files (documents separated by ---)
+    const isMultiDocument = /\n---\n/.test(content);
+    if (isMultiDocument) {
+        const documents = content.split(/\n---\n/);
+        const formattedDocs = [];
+        const warnings = [];
+        const errors = [];
+
+        for (let docIndex = 0; docIndex < documents.length; docIndex++) {
+            const doc = documents[docIndex];
+            if (!doc.trim()) continue;
+
+            const result = formatYaml(doc, options);
+            if (result.error) {
+                errors.push(`Document ${docIndex + 1}: ${result.error}`);
+                continue;
+            }
+            if (result.warning) {
+                warnings.push(`Document ${docIndex + 1}: ${result.warning}`);
+            }
+            formattedDocs.push(result.text.trim());
+        }
+
+        if (formattedDocs.length === 0) {
+            return {
+                text: content,
+                warning: warnings.length > 0 ? warnings.join('\n') : undefined,
+                error: errors.length > 0 ? errors.join('\n') : 'All documents failed to format',
+            };
+        }
+
+        return {
+            text: formattedDocs.join('\n\n---\n'),
+            warning: warnings.length > 0 ? warnings.join('\n') : undefined,
+            error: errors.length > 0 ? errors.join('\n') : undefined,
+        };
+    }
+
     const preflightHints = analyzeTemplateHints(content);
     const hintsBlock = preflightHints.length ? `\n  ${preflightHints.join('\n  ')}` : '';
+
+    // Throw error if there are critical syntax issues (but skip during template expansion)
+    if (preflightHints.length > 0 && !options.expandTemplates) {
+        const hasCriticalError = preflightHints.some(
+            (hint) =>
+                hint.includes('Missing closing') ||
+                hint.includes('Unbalanced parentheses') ||
+                hint.includes('Unbalanced brackets') ||
+                hint.includes('Unbalanced braces') ||
+                hint.includes('Unclosed string')
+        );
+        if (hasCriticalError) {
+            throw new Error(`Template validation failed:${hintsBlock}`);
+        }
+    }
 
     // Check for file-level formatting directives
     const directives = parseFormatDirectives(content);
@@ -1436,7 +1682,11 @@ function formatYaml(content, options = {}) {
     try {
         let inputContent = content;
 
-        const { content: preprocessedContent, placeholderMap, conditionalDirectives } = effective.expandTemplates
+        const {
+            content: preprocessedContent,
+            placeholderMap,
+            conditionalDirectives,
+        } = effective.expandTemplates
             ? { content: inputContent, placeholderMap: new Map(), conditionalDirectives: new Set() }
             : replaceTemplateExpressionsWithPlaceholders(inputContent);
 
@@ -1446,7 +1696,9 @@ function formatYaml(content, options = {}) {
         if (preprocessedHints.length > 0) {
             const hintsBlock = `\n  ${preprocessedHints.join('\n  ')}`;
             const filePrefix = effective.fileName ? `[${effective.fileName}] ` : '';
-            console.error(`${filePrefix}YAML validation warnings:${hintsBlock}`);
+            const lines = `YAML validation warnings:${hintsBlock}`.split('\n');
+            const indented = lines.map((line, idx) => (idx === 0 ? line : '  ' + line)).join('\n');
+            console.error(`${filePrefix}${indented}`);
             return {
                 text: content,
                 warning: hintsBlock,
@@ -1464,7 +1716,9 @@ function formatYaml(content, options = {}) {
             if (genuineErrors.length > 0) {
                 const errorMessages = genuineErrors.map((e) => e.message).join(', ');
                 const filePrefix = effective.fileName ? `[${effective.fileName}] ` : '';
-                console.error(`${filePrefix}YAML parsing error:`, errorMessages);
+                const lines = `YAML parsing error: ${errorMessages}`.split('\n');
+                const indented = lines.map((line, idx) => (idx === 0 ? line : '  ' + line)).join('\n');
+                console.error(`${filePrefix}${indented}`);
                 const hintSuffix = hintsBlock;
                 return {
                     text: content,
@@ -1525,7 +1779,9 @@ function formatYaml(content, options = {}) {
         const filePrefix = effective.fileName ? `[${effective.fileName}] ` : '';
 
         if (syntaxMessage) {
-            console.error(`${filePrefix}${syntaxMessage}`);
+            const lines = syntaxMessage.split('\n');
+            const indented = lines.map((line, idx) => (idx === 0 ? line : '  ' + line)).join('\n');
+            console.error(`${filePrefix}${indented}`);
             return {
                 text: content,
                 warning: hintsBlock || undefined,
@@ -1533,7 +1789,10 @@ function formatYaml(content, options = {}) {
             };
         }
 
-        console.error(`${filePrefix}YAML formatting failed:`, error.message);
+        const formattingError = `YAML formatting failed: ${error.message}`;
+        const lines = formattingError.split('\n');
+        const indented = lines.map((line, idx) => (idx === 0 ? line : '  ' + line)).join('\n');
+        console.error(`${filePrefix}${indented}`);
         return {
             text: content,
             warning: hintsBlock || undefined,

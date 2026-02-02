@@ -1,6 +1,6 @@
 repos:
 - repo: https://github.com/HPInc/azure-pipeline-studio
-  rev: v1.0.8
+  rev: v1.0.9
   hooks:
   - id: azure-pipeline-formatter
 - repo: local
