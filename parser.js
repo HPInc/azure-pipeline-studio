@@ -878,6 +878,10 @@ class AzurePipelineParser {
 
     formatErrorWithStack(message, context) {
         try {
+            // Avoid adding call stack if it's already present
+            if (message.includes('Template call stack:')) {
+                return message;
+            }
             const stack = this.getTemplateCallStack(context);
             return stack ? `${message}${stack}` : message;
         } catch (e) {
@@ -2096,6 +2100,10 @@ class AzurePipelineParser {
                 if (target == null) return undefined;
                 const property = this.evaluatePropertyKey(node.property, node.computed, context);
                 if (property == null) return undefined;
+                if (target === context.parameters && !Object.prototype.hasOwnProperty.call(target, property)) {
+                    const paramName = String(property);
+                    throw new Error(this.formatErrorWithStack(`Undefined template parameter '${paramName}'.`, context));
+                }
                 return target[property];
             }
             case 'CallExpression': {
@@ -2307,6 +2315,17 @@ class AzurePipelineParser {
         }
 
         const [first, ...rest] = segments;
+        if (first === 'parameters') {
+            const parameters = context.parameters || {};
+            if (rest.length === 0) {
+                return parameters;
+            }
+            const paramName = rest[0];
+            if (!Object.prototype.hasOwnProperty.call(parameters, paramName)) {
+                throw new Error(this.formatErrorWithStack(`Undefined template parameter '${paramName}'.`, context));
+            }
+            return this.walkSegments(parameters, rest);
+        }
         const walkIfHas = (container) =>
             container && Object.prototype.hasOwnProperty.call(container, first)
                 ? this.walkSegments(container[first], rest)
@@ -2316,7 +2335,6 @@ class AzurePipelineParser {
         if (localMatch !== undefined) return localMatch;
 
         const directTargets = {
-            parameters: context.parameters,
             variables: context.variables,
             resources: context.resources,
         };
