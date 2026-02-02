@@ -35,7 +35,7 @@ node extension-bundle.js --help
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/HPInc/azure-pipeline-studio.git
-    rev: v1.0.7
+    rev: v1.0.10
     hooks:
       - id: azure-pipeline-formatter
 ```

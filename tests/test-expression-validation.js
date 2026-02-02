@@ -370,7 +370,40 @@ steps:
 } else {
     failed++;
 }
+// Test: Improperly escaped backslash before quote (like '\' instead of '\\')
+if (
+    runTestCase('Improper escape sequence - backslash before quote', () => {
+        const yaml = `
+steps:
+  - script: echo test
+    condition: \${{ replace(parameters.path, '/', '\\') }}
+`;
+        expectError(() => formatYaml(yaml), 'Unclosed string');
+    })
+) {
+    passed++;
+} else {
+    failed++;
+}
 
+// Test: Properly escaped backslash before quote (like '\\' which is correct)
+if (
+    runTestCase('Proper escape sequence - double backslash before quote', () => {
+        const yaml = `
+steps:
+  - script: echo test
+    condition: \${{ replace(parameters.path, '/', '\\\\') }}
+`;
+        const result = formatYaml(yaml);
+        if (typeof result !== 'object' || !result.text || !result.text.includes('condition:')) {
+            throw new Error('Expected result to include "condition:"');
+        }
+    })
+) {
+    passed++;
+} else {
+    failed++;
+}
 // Summary
 console.log('='.repeat(50));
 console.log(`Tests passed: ${passed}`);

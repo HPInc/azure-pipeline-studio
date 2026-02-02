@@ -2039,12 +2039,25 @@ class AzurePipelineParser {
 
         // Fix unescaped backslashes in string literals for Azure Pipelines compatibility
         // Azure Pipelines allows '\' in strings, but JavaScript requires '\\'
-        // Use regex to find string literals and escape single backslashes within them
+        // Process string literals by counting consecutive backslashes to avoid double-escaping
         return expr.replace(/(['"])((?:\\.|(?!\1).)*?)\1/g, (match, quote, content) => {
-            // Process the string content to escape single backslashes
-            // Replace single backslash with double, but preserve existing escape sequences
-            const escaped = content.replace(/\\(?![\\'"nrtbfv0xu])/g, '\\\\');
-            return quote + escaped + quote;
+            let result = '';
+            let i = 0;
+            while (i < content.length) {
+                if (content[i] === '\\') {
+                    let count = 0;
+                    while (i < content.length && content[i] === '\\') {
+                        count++;
+                        i++;
+                    }
+                    // If odd count, the last backslash is unescaped - add one more to escape it
+                    // If even count, all backslashes are already properly escaped
+                    result += count % 2 === 1 ? '\\'.repeat(count + 1) : '\\'.repeat(count);
+                } else {
+                    result += content[i++];
+                }
+            }
+            return quote + result + quote;
         });
     }
 

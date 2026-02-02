@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 .html).
 
+## [1.0.10] - 2026-02-02
+
+### Added
+- Pipeline dependency visualization support for viewing stage and job dependencies
+- Dependency analyzer module (`dependency-analyzer.js`) for analyzing pipeline dependencies and relationships
+- Expression validation with comprehensive bracket and parentheses checking for all bracket types (`{`, `[`, `(`)
+- Stage and job spacing validation test suite to ensure proper YAML formatting
+
+### Fixed
+- Fixed expression expansion for backslash-heavy strings by replacing regex-based preprocessing with backslash counting algorithm
+- Expressions like `${{ replace(parameters.testPatterns, '/', '\\') }}` now correctly evaluate to their expected values instead of returning literal text
+- Resolved issue where already-escaped backslashes were being double-escaped, breaking jsep parser
+
+[1.0.10]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.0.10
+
 ## [1.0.9] - 2026-01-29
 
 ### Added

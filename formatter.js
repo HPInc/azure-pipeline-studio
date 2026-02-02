@@ -327,6 +327,158 @@ function parseDirectiveOptions(optionsStr) {
 }
 
 /**
+ * Validate template expressions for syntax errors (missing brackets, unbalanced parentheses, unclosed strings)
+ * @param {string} line - The line containing expressions to validate
+ * @param {number} lineNumber - The line number (1-based) for error reporting
+ * @returns {string[]} Array of error messages
+ */
+function validateTemplateExpressions(line, lineNumber) {
+    const hints = [];
+
+    // Check for unmatched template expression brackets (missing }})
+    let pos = 0;
+    while (pos < line.length) {
+        const openIdx = line.indexOf('${{', pos);
+        if (openIdx === -1) break;
+
+        const closeIdx = line.indexOf('}}', openIdx + 3);
+        if (closeIdx === -1) {
+            hints.push(
+                `line ${lineNumber}: Missing closing '}}' for template expression starting at column ${openIdx + 1}.`
+            );
+            break;
+        }
+        pos = closeIdx + 2;
+    }
+
+    // Check for unbalanced brackets within template expressions
+    const exprMatches = line.matchAll(/\$\{\{([\s\S]*?)\}\}/g);
+    for (const match of exprMatches) {
+        const expr = match[1];
+        let parenCount = 0;
+        let bracketCount = 0;
+        let braceCount = 0;
+        let inString = false;
+        let stringChar = null;
+
+        for (let j = 0; j < expr.length; j++) {
+            const char = expr[j];
+
+            // Handle string literals
+            if (char === '"' || char === "'") {
+                // Count preceding backslashes to determine if quote is escaped
+                let backslashCount = 0;
+                let k = j - 1;
+                while (k >= 0 && expr[k] === '\\') {
+                    backslashCount++;
+                    k--;
+                }
+                // If even number of backslashes (including 0), quote is not escaped
+                const isEscaped = backslashCount % 2 === 1;
+
+                if (!isEscaped) {
+                    if (!inString) {
+                        inString = true;
+                        stringChar = char;
+                    } else if (char === stringChar) {
+                        inString = false;
+                        stringChar = null;
+                    }
+                }
+            }
+
+            // Only count brackets outside of strings
+            if (!inString) {
+                if (char === '(') parenCount++;
+                else if (char === ')') parenCount--;
+                else if (char === '[') bracketCount++;
+                else if (char === ']') bracketCount--;
+                else if (char === '{') braceCount++;
+                else if (char === '}') braceCount--;
+
+                // Check for negative counts (closing before opening)
+                if (parenCount < 0) {
+                    hints.push(
+                        `line ${lineNumber}: Unbalanced parentheses in template expression - extra closing ')' found.`
+                    );
+                    parenCount = 0;
+                }
+                if (bracketCount < 0) {
+                    hints.push(
+                        `line ${lineNumber}: Unbalanced brackets in template expression - extra closing ']' found.`
+                    );
+                    bracketCount = 0;
+                }
+                if (braceCount < 0) {
+                    hints.push(
+                        `line ${lineNumber}: Unbalanced braces in template expression - extra closing '}}' found.`
+                    );
+                    braceCount = 0;
+                }
+            }
+        }
+
+        // Check if string was never closed (potential escape sequence error)
+        if (inString) {
+            // Look for the pattern \' or \" at the last quote position
+            // Find the last quote character that matches stringChar
+            let lastQuotePos = -1;
+            for (let j = expr.length - 1; j >= 0; j--) {
+                if (expr[j] === stringChar) {
+                    lastQuotePos = j;
+                    break;
+                }
+            }
+
+            // Check if that quote was preceded by a single backslash
+            let hasImproperEscape = false;
+            if (lastQuotePos >= 0 && lastQuotePos > 0 && expr[lastQuotePos - 1] === '\\') {
+                // Count backslashes before this quote
+                let backslashCount = 0;
+                let k = lastQuotePos - 1;
+                while (k >= 0 && expr[k] === '\\') {
+                    backslashCount++;
+                    k--;
+                }
+                // If odd number of backslashes, the quote was treated as escaped
+                hasImproperEscape = backslashCount % 2 === 1;
+            }
+
+            if (hasImproperEscape) {
+                hints.push(
+                    `line ${lineNumber}: Unclosed string in template expression - use '\\\\' to escape backslash before quote, not '\\'.`
+                );
+            } else {
+                hints.push(
+                    `line ${lineNumber}: Unclosed string in template expression - missing closing ${stringChar} quote.`
+                );
+            }
+            // Skip bracket error reporting for this expression as they're misleading
+            continue;
+        }
+
+        // Check for unclosed brackets
+        if (parenCount > 0) {
+            hints.push(
+                `line ${lineNumber}: Unbalanced parentheses in template expression - missing ${parenCount} closing ')'.`
+            );
+        }
+        if (bracketCount > 0) {
+            hints.push(
+                `line ${lineNumber}: Unbalanced brackets in template expression - missing ${bracketCount} closing ']'.`
+            );
+        }
+        if (braceCount > 0) {
+            hints.push(
+                `line ${lineNumber}: Unbalanced braces in template expression - missing ${braceCount} closing '}'.`
+            );
+        }
+    }
+
+    return hints;
+}
+
+/**
  * Describe YAML syntax errors in a user-friendly way
  * @param {Error} error - The error object
  * @returns {string|undefined} A formatted error message or undefined
@@ -530,106 +682,9 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
             }
         }
 
-        // Check for unmatched template expression brackets (missing }})
-        let pos = 0;
-        while (pos < line.length) {
-            const openIdx = line.indexOf('${{', pos);
-            if (openIdx === -1) break;
-
-            const closeIdx = line.indexOf('}}', openIdx + 3);
-            if (closeIdx === -1) {
-                hints.push(
-                    `line ${i + 1}: Missing closing '}}' for template expression starting at column ${openIdx + 1}.`
-                );
-                break;
-            }
-            pos = closeIdx + 2;
-        }
-
-        // Check for unbalanced brackets within template expressions
-        const exprMatches = line.matchAll(/\$\{\{([\s\S]*?)\}\}/g);
-        for (const match of exprMatches) {
-            const expr = match[1];
-            let parenCount = 0;
-            let bracketCount = 0;
-            let braceCount = 0;
-            let inString = false;
-            let stringChar = null;
-
-            for (let j = 0; j < expr.length; j++) {
-                const char = expr[j];
-
-                // Handle string literals
-                if (char === '"' || char === "'") {
-                    // Count preceding backslashes to determine if quote is escaped
-                    let backslashCount = 0;
-                    let k = j - 1;
-                    while (k >= 0 && expr[k] === '\\') {
-                        backslashCount++;
-                        k--;
-                    }
-                    // If even number of backslashes (including 0), quote is not escaped
-                    const isEscaped = backslashCount % 2 === 1;
-
-                    if (!isEscaped) {
-                        if (!inString) {
-                            inString = true;
-                            stringChar = char;
-                        } else if (char === stringChar) {
-                            inString = false;
-                            stringChar = null;
-                        }
-                    }
-                }
-
-                // Only count brackets outside of strings
-                if (!inString) {
-                    if (char === '(') parenCount++;
-                    else if (char === ')') parenCount--;
-                    else if (char === '[') bracketCount++;
-                    else if (char === ']') bracketCount--;
-                    else if (char === '{') braceCount++;
-                    else if (char === '}') braceCount--;
-
-                    // Check for negative counts (closing before opening)
-                    if (parenCount < 0) {
-                        hints.push(
-                            `line ${i + 1}: Unbalanced parentheses in template expression - extra closing ')' found.`
-                        );
-                        parenCount = 0;
-                    }
-                    if (bracketCount < 0) {
-                        hints.push(
-                            `line ${i + 1}: Unbalanced brackets in template expression - extra closing ']' found.`
-                        );
-                        bracketCount = 0;
-                    }
-                    if (braceCount < 0) {
-                        hints.push(
-                            `line ${i + 1}: Unbalanced braces in template expression - extra closing '}}' found.`
-                        );
-                        braceCount = 0;
-                    }
-                }
-            }
-
-            // Check for unclosed brackets
-            if (parenCount > 0) {
-                hints.push(
-                    `line ${i + 1}: Unbalanced parentheses in template expression - missing ${parenCount} closing ')'.`
-                );
-            }
-            if (bracketCount > 0) {
-                hints.push(
-                    `line ${i + 1}: Unbalanced brackets in template expression - missing ${bracketCount} closing ']'.`
-                );
-            }
-            if (braceCount > 0) {
-                hints.push(
-                    `line ${i + 1}: Unbalanced braces in template expression - missing ${braceCount} closing '}'.`
-                );
-            }
-        }
+        // Validate template expressions on this line
+        const expressionHints = validateTemplateExpressions(line, i + 1);
+        hints.push(...expressionHints);
     }
 
     return hints;
@@ -1575,14 +1630,15 @@ function formatYaml(content, options = {}) {
     const preflightHints = analyzeTemplateHints(content);
     const hintsBlock = preflightHints.length ? `\n  ${preflightHints.join('\n  ')}` : '';
 
-    // Throw error if there are critical syntax issues
-    if (preflightHints.length > 0) {
+    // Throw error if there are critical syntax issues (but skip during template expansion)
+    if (preflightHints.length > 0 && !options.expandTemplates) {
         const hasCriticalError = preflightHints.some(
             (hint) =>
                 hint.includes('Missing closing') ||
                 hint.includes('Unbalanced parentheses') ||
                 hint.includes('Unbalanced brackets') ||
-                hint.includes('Unbalanced braces')
+                hint.includes('Unbalanced braces') ||
+                hint.includes('Unclosed string')
         );
         if (hasCriticalError) {
             throw new Error(`Template validation failed:${hintsBlock}`);
