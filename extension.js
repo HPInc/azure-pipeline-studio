@@ -1482,7 +1482,7 @@ function runCli(args) {
         '  -r, --repo <alias=path>      Map repository alias to local path\n' +
         '  -v, --variables <key=value>  Set compile-time variables (e.g., Build.Reason=Manual)\n' +
         '  -f, --format-option <key=value>  Set format option (e.g., indent=4)\n' +
-        '  -R, --format-recursive <path>    Format files recursively in directory\n' +
+        '  -R, --format-recursive <path>    Format files recursively in directory (when used, all paths are treated as recursive targets)\n' +
         '  -e, --extension <ext>        File extensions to format (default: .yml, .yaml)\n' +
         '  -x, --expand-templates       Expand Azure Pipeline template expressions (${{}},$[],$())\n' +
         '  -a, --azure-compatible       Use Azure-compatible expansion mode (adds blank lines, etc.)\n' +
@@ -1523,7 +1523,12 @@ function runCli(args) {
     const repo = toArray(argv.repo);
     const variables = toArray(argv.variables);
     const formatOption = toArray(argv['format-option']);
-    const formatRecursive = toArray(argv['format-recursive']);
+    const formatRecursiveRaw = argv['format-recursive'];
+    const formatRecursiveValues = toArray(formatRecursiveRaw).filter(
+        (value) => typeof value === 'string' && value.trim().length
+    );
+    const formatRecursiveFlag =
+        args.includes('-R') || args.includes('--format-recursive') || formatRecursiveRaw === true;
     const extension = toArray(argv.extension);
     const repositoryEntries = [];
     const variablesMap = {};
@@ -1560,10 +1565,24 @@ function runCli(args) {
         return;
     }
 
-    if (formatRecursive.length) {
+    const filesToFormat = argv._;
+    const recursiveTargets = formatRecursiveFlag
+        ? [...formatRecursiveValues, ...filesToFormat]
+        : formatRecursiveValues.length
+          ? [...formatRecursiveValues, ...filesToFormat]
+          : [];
+
+    if (formatRecursiveFlag && recursiveTargets.length === 0) {
+        console.error('Error: --format-recursive requires at least one path.');
+        console.error(usage);
+        process.exitCode = 1;
+        return;
+    }
+
+    if (recursiveTargets.length) {
         const formatOverrides = buildFormatOptionsFromCli(formatOption) || {};
         const extensionFilters = extension.length ? extension : ['.yml', '.yaml'];
-        const recursiveResult = formatFilesRecursively(formatRecursive, extensionFilters, formatOverrides);
+        const recursiveResult = formatFilesRecursively(recursiveTargets, extensionFilters, formatOverrides);
         recursiveResult.formattedFiles.forEach((filePath) => {
             const displayPath = path.relative(process.cwd(), filePath) || filePath;
             console.log(`Formatted: ${displayPath}`);
@@ -1588,8 +1607,6 @@ function runCli(args) {
         }
         return;
     }
-
-    const filesToFormat = argv._;
 
     if (filesToFormat.length === 0) {
         console.error(usage);

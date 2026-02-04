@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 .html).
 
+## [1.0.11] - 2026-02-04
+
+### Added
+- Interactive dependency graph visualization for pipeline stages and jobs
+- Critical path highlighting for pipeline analysis
+- Visual stage representation with emoji icons (🔨 build, 🧪 test, 🚀 release, etc.)
+- Template expansion before dependency analysis
+
+### Changed
+- Enhanced critical path calculation for accurate pipeline flow analysis
+- Improved dependency extraction for stages and jobs
+
+### Fixed
+- Dependency visualization and edge rendering issues
+- Stage dependency mapping and display
+
+[1.0.11]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.0.11
+
 ## [1.0.10] - 2026-02-02
 
 ### Added
