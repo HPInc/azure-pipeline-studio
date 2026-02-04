@@ -13,7 +13,8 @@ const testContent = fs.readFileSync(testFile, 'utf8').replace(/\r\n/g, '\n');
 const testCases = testContent.split('\n---\n').map((tc) => tc.trim());
 
 // Test 1: Sibling templates inside conditionals (original bug)
-const test1Expected = `steps:
+const test1Expected = `# aps-format=false
+steps:
 - \${{ if parameters.enableMsixSigning }}:
   - template: /steps/template-one.yaml
     parameters:
@@ -118,6 +119,8 @@ const test5Expected = `parameters:
 - name: param3
   type: string
   default: value3
+
+
 variables:
 - name: var1
   value: val1
