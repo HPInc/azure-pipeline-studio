@@ -45,6 +45,9 @@ class AzurePipelineParser {
         const { yamlDoc, jsonDoc } = this.parseYamlDocument(sourceText, undefined, skipSyntax);
 
         const context = this.buildExecutionContext(jsonDoc, overrides);
+        context.errors = []; // Add error collection array
+        context.sourceLines = sourceText.split('\n'); // Store source lines for line number info
+        context.sourceText = sourceText; // Store full source text
         const { quoteStyles, save } = this.captureQuoteStyles(yamlDoc.contents, []);
         context.quoteResult = { quoteStyles, save };
         context.quoteResult.stringsWithExpressions = new Set();
@@ -53,6 +56,23 @@ class AzurePipelineParser {
         context.templateQuoteStyles = new Map();
 
         const expandedDocument = this.expandNode(jsonDoc, context);
+
+        // Check if errors were collected during parsing and throw them all together
+        if (context.errors.length > 0) {
+            // Deduplicate errors based on message content
+            const uniqueErrors = [];
+            const seenMessages = new Set();
+
+            for (const error of context.errors) {
+                if (!seenMessages.has(error.message)) {
+                    uniqueErrors.push(error.message);
+                    seenMessages.add(error.message);
+                }
+            }
+
+            const allErrors = uniqueErrors.join('\n\n');
+            throw new Error(allErrors);
+        }
 
         // Convert variables from object format to array format while preserving quotes
         this.convertVariablesToArrayFormat(expandedDocument, context);
@@ -858,7 +878,7 @@ class AzurePipelineParser {
         });
     }
 
-    getTemplateCallStack(context) {
+    getTemplateCallStack(context, lineNumber) {
         const rawStack = Array.isArray(context?.templateStack) ? [...context.templateStack] : [];
         if (context?.rootTemplate) {
             if (rawStack.length === 0 || rawStack[0] !== context.rootTemplate) {
@@ -869,11 +889,23 @@ class AzurePipelineParser {
 
         const lines = [];
         lines.push('Template call stack:');
-        lines.push('    ' + rawStack[0]);
+        // Add line number to the first file path if provided
+        const firstPath = lineNumber ? `${rawStack[0]}:${lineNumber}` : rawStack[0];
+        lines.push('    ' + firstPath);
         for (let i = 1; i < rawStack.length; i++) {
             lines.push('    ' + '  '.repeat(i) + '└── ' + rawStack[i]);
         }
         return '\n' + lines.join('\n');
+    }
+
+    getFirstTemplateStackPath(context) {
+        const rawStack = Array.isArray(context?.templateStack) ? [...context.templateStack] : [];
+        if (context?.rootTemplate) {
+            if (rawStack.length === 0 || rawStack[0] !== context.rootTemplate) {
+                rawStack.unshift(context.rootTemplate);
+            }
+        }
+        return rawStack.length > 0 ? rawStack[0] : undefined;
     }
 
     formatErrorWithStack(message, context) {
@@ -2115,7 +2147,48 @@ class AzurePipelineParser {
                 if (property == null) return undefined;
                 if (target === context.parameters && !Object.prototype.hasOwnProperty.call(target, property)) {
                     const paramName = String(property);
-                    throw new Error(this.formatErrorWithStack(`Undefined template parameter '${paramName}'.`, context));
+                    const msgLines = [`Undefined template parameter '${paramName}'.`];
+
+                    // Find line number for this parameter - search for parameter reference
+                    let lineNumber = null;
+                    if (context.sourceLines) {
+                        // Build search patterns - most specific first
+                        const patterns = [
+                            `parameters.${paramName}`, // Direct reference
+                            paramName, // Simple name reference
+                        ];
+
+                        for (const pattern of patterns) {
+                            for (let i = 0; i < context.sourceLines.length; i++) {
+                                if (context.sourceLines[i].includes(pattern)) {
+                                    lineNumber = i + 1;
+                                    break;
+                                }
+                            }
+                            if (lineNumber) break;
+                        }
+                    }
+
+                    // Add file path with line number
+                    const filePath = this.getFirstTemplateStackPath(context);
+                    if (lineNumber && filePath) {
+                        msgLines.push(`${filePath}:${lineNumber}`);
+                    }
+
+                    // Add helpful tips
+                    msgLines.push(`Tips:`);
+                    msgLines.push(`- Ensure '${paramName}' is declared in the 'parameters' section`);
+                    const loopTip = `- Check if the reference should use a loop object instead of parameters (For e.g. {{ each cfg in configurations }}:, properties inside cfg should be referred with cfg.${paramName})`;
+                    msgLines.push(loopTip);
+
+                    const fullMsg = msgLines.join('\n');
+
+                    if (context.errors) {
+                        context.errors.push({ message: fullMsg, line: lineNumber });
+                        return undefined; // Continue parsing instead of throwing
+                    } else {
+                        throw new Error(fullMsg);
+                    }
                 }
                 return target[property];
             }
@@ -2335,7 +2408,48 @@ class AzurePipelineParser {
             }
             const paramName = rest[0];
             if (!Object.prototype.hasOwnProperty.call(parameters, paramName)) {
-                throw new Error(this.formatErrorWithStack(`Undefined template parameter '${paramName}'.`, context));
+                const msgLines = [`Undefined template parameter '${paramName}'.`];
+
+                // Find line number for this parameter - search for parameter reference
+                let lineNumber = null;
+                if (context.sourceLines) {
+                    // Build search patterns - most specific first
+                    const patterns = [
+                        `parameters.${paramName}`, // Direct reference
+                        paramName, // Simple name reference
+                    ];
+
+                    for (const pattern of patterns) {
+                        for (let i = 0; i < context.sourceLines.length; i++) {
+                            if (context.sourceLines[i].includes(pattern)) {
+                                lineNumber = i + 1;
+                                break;
+                            }
+                        }
+                        if (lineNumber) break;
+                    }
+                }
+
+                // Add file path with line number
+                const filePath = this.getFirstTemplateStackPath(context);
+                if (lineNumber && filePath) {
+                    msgLines.push(`${filePath}:${lineNumber}`);
+                }
+
+                // Add helpful tips
+                msgLines.push(`Tips:`);
+                msgLines.push(`- Ensure '${paramName}' is declared in the 'parameters' section`);
+                const loopTip = `- Check if the reference should use a loop object instead of parameters (For e.g. {{ each cfg in configurations }}:, properties inside cfg should be referred with cfg.${paramName})`;
+                msgLines.push(loopTip);
+
+                const fullMsg = msgLines.join('\n');
+
+                if (context.errors) {
+                    context.errors.push({ message: fullMsg, line: lineNumber });
+                    return undefined; // Continue parsing instead of throwing
+                } else {
+                    throw new Error(fullMsg);
+                }
             }
             return this.walkSegments(parameters, rest);
         }
@@ -2437,6 +2551,9 @@ class AzurePipelineParser {
             stepIndex: parent.stepIndex,
             templateStack: parent.templateStack || [],
             rootTemplate: parent.rootTemplate,
+            sourceLines: parent.sourceLines, // Preserve source lines for line number extraction
+            sourceText: parent.sourceText, // Preserve source text for context
+            errors: parent.errors, // Preserve errors array for error collection
         };
     }
 
@@ -2465,6 +2582,9 @@ class AzurePipelineParser {
             jobIndex: parent.jobIndex,
             stepIndex: parent.stepIndex,
             rootTemplate: parent.rootTemplate,
+            sourceLines: parent.sourceLines, // Preserve source lines for line number extraction
+            sourceText: parent.sourceText, // Preserve source text for context
+            errors: parent.errors, // Preserve errors array for error collection
         };
     }
 

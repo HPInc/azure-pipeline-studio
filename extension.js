@@ -159,6 +159,247 @@ function activate(context) {
         }
     };
 
+    let errorPanelOpen = false;
+
+    const showErrorWebview = (error, context) => {
+        // Register command handler for opening files with optional line number
+        const openFileCommand = vscode.commands.registerCommand(
+            'azurePipelineStudio.openErrorFile',
+            async (filePath, lineNumber) => {
+                try {
+                    const document = await vscode.workspace.openTextDocument(filePath);
+                    const options = { preview: false };
+                    if (lineNumber && lineNumber > 0) {
+                        const position = new vscode.Position(lineNumber - 1, 0);
+                        options.selection = new vscode.Range(position, position);
+                    }
+                    await vscode.window.showTextDocument(document, options);
+                } catch (err) {
+                    vscode.window.showErrorMessage(`Failed to open file: ${filePath}`);
+                }
+            }
+        );
+        context.subscriptions.push(openFileCommand);
+
+        // Create webview panel
+        const panel = vscode.window.createWebviewPanel(
+            'azurePipelineError',
+            '❌ Pipeline Expansion Error',
+            vscode.ViewColumn.Beside,
+            { enableScripts: true }
+        );
+
+        // Mark error panel as open
+        errorPanelOpen = true;
+
+        // Clean up when panel is disposed
+        panel.onDidDispose(() => {
+            errorPanelOpen = false;
+        });
+
+        const escapeHtml = (text) => {
+            return String(text)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        };
+
+        // Convert file paths in text to clickable links
+        const makePathsClickable = (text) => {
+            // Match UNC, Windows, and Unix paths with optional line numbers
+            const pathRegex =
+                /(\\\\[^\s\n:]+\.(?:ya?ml|js|ts))(?::(\d+))?(?::(\d+))?|([A-Za-z]:\\[^\s\n:]+\.(?:ya?ml|js|ts))(?::(\d+))?(?::(\d+))?|(\/[^\s\n:]+\.(?:ya?ml|js|ts))(?::(\d+))?(?::(\d+))?/g;
+
+            return text.replace(
+                pathRegex,
+                (match, uncPath, uncLine, uncCol, winPath, winLine, winCol, unixPath, unixLine, unixCol) => {
+                    const filePath = uncPath || winPath || unixPath;
+                    const lineNumber = uncLine || winLine || unixLine;
+
+                    // Skip extension bundle paths
+                    if (filePath && filePath.includes('extension-bundle.js')) {
+                        return match;
+                    }
+
+                    if (filePath) {
+                        const escapedPath = filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                        const lineParam = lineNumber ? lineNumber : 'null';
+                        return `<a class="file-link" href="#" onclick="openFile('${escapedPath}', ${lineParam}); return false;">${escapeHtml(match)}</a>`;
+                    }
+                    return match;
+                }
+            );
+        };
+
+        // Format error message with line breaks and proper indentation
+        const formatErrorMessage = (text) => {
+            // First escape HTML
+            const escaped = escapeHtml(text);
+            // Make paths clickable
+            const withLinks = makePathsClickable(escaped);
+            // Convert newlines to <br> and preserve spaces
+            return withLinks
+                .split('\n')
+                .map((line) => line.replace(/^( +)/, (match) => '&nbsp;'.repeat(match.length)))
+                .join('<br>');
+        };
+
+        // Build HTML content with proper styling
+        let htmlContent = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <style>
+                    body {
+                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                        line-height: 1.6;
+                        color: #e0e0e0;
+                        background-color: #1e1e1e;
+                        padding: 20px;
+                        margin: 0;
+                    }
+                    .error-container {
+                        max-width: 900px;
+                        margin: 0 auto;
+                    }
+                    h1 {
+                        color: #ff6b6b;
+                        margin-top: 0;
+                        font-size: 1.8em;
+                    }
+                    h2 {
+                        color: #ff9f43;
+                        margin-top: 20px;
+                        font-size: 1.3em;
+                        border-bottom: 1px solid #444;
+                        padding-bottom: 8px;
+                    }
+                    .error-details {
+                        background-color: #252526;
+                        border-left: 3px solid #ff6b6b;
+                        padding: 12px;
+                        margin: 12px 0;
+                        border-radius: 4px;
+                        overflow-x: auto;
+                        line-height: 1.8;
+                    }
+                    .error-details code {
+                        font-family: 'Courier New', Courier, monospace;
+                        font-size: 0.95em;
+                        color: #ce9178;
+                        white-space: normal;
+                        display: block;
+                    }
+                    .tip-box {
+                        background-color: #1f3a2c;
+                        border-left: 3px solid #4ec9b0;
+                        padding: 12px;
+                        margin: 12px 0;
+                        border-radius: 4px;
+                    }
+                    .tip-label {
+                        font-weight: bold;
+                        color: #4ec9b0;
+                        margin-bottom: 8px;
+                    }
+                    ul {
+                        margin: 8px 0;
+                        padding-left: 20px;
+                    }
+                    li {
+                        margin: 4px 0;
+                    }
+                    .file-link {
+                        color: #569cd6;
+                        text-decoration: underline;
+                        cursor: pointer;
+                        font-family: inherit;
+                    }
+                    .file-link:hover {
+                        color: #4fc3f7;
+                    }
+                    .stack-trace {
+                        background-color: #252526;
+                        border-left: 3px solid #888;
+                        padding: 12px;
+                        margin: 12px 0;
+                        border-radius: 4px;
+                        overflow-x: auto;
+                        font-family: 'Courier New', Courier, monospace;
+                        font-size: 0.9em;
+                        color: #d4d4d4;
+                        max-height: 400px;
+                        overflow-y: auto;
+                    }
+                    .file-list {
+                        background-color: #252526;
+                        border-left: 3px solid #569cd6;
+                        padding: 12px;
+                        margin: 12px 0;
+                        border-radius: 4px;
+                    }
+                    .hr {
+                        border: none;
+                        border-top: 1px solid #444;
+                        margin: 16px 0;
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="error-container">
+                    <h1>❌ Error Expanding Azure Pipeline</h1>
+                    
+                    <h2>Error Details</h2>
+                    <div class="error-details">
+                        <code>${formatErrorMessage(error.message || String(error))}</code>
+                    </div>
+
+                    <div class="hr"></div>
+                    <div class="tip-box">
+                        <div class="tip-label">💡 Tip: Common Issues</div>
+                        <ul>
+                            <li><code>steps:</code> not properly indented under <code>job:</code></li>
+                            <li>Missing or extra spaces in YAML structure</li>
+                            <li>Template expressions that are malformed</li>
+                        </ul>
+                    </div>
+
+                    <h2>Stack Trace</h2>
+                    <div class="stack-trace">
+                        <pre>${makePathsClickable(escapeHtml(error.stack || 'No stack trace available'))}</pre>
+                    </div>
+                </div>
+
+                <script>
+                    const vscode = acquireVsCodeApi();
+                    function openFile(filePath, lineNumber) {
+                        vscode.postMessage({
+                            command: 'openFile',
+                            filePath: filePath,
+                            lineNumber: lineNumber
+                        });
+                    }
+                </script>
+            </body>
+            </html>
+        `;
+
+        panel.webview.html = htmlContent;
+
+        // Handle messages from webview
+        panel.webview.onDidReceiveMessage((message) => {
+            if (message.command === 'openFile') {
+                vscode.commands.executeCommand(
+                    'azurePipelineStudio.openErrorFile',
+                    message.filePath,
+                    message.lineNumber
+                );
+            }
+        });
+    };
+
     const scheduleRender = (document, delayMs = 500) => {
         if (!shouldRenderDocument(document)) return;
         pendingDocument = document;
@@ -171,8 +412,57 @@ function activate(context) {
         }, delayMs);
     };
 
+    const enrichErrorWithLineNumbers = async (error) => {
+        try {
+            const errorText = error.message || String(error);
+
+            // Extract file paths and parameters from error
+            const filePathRegex = /(\\\\[^\s\n:]+\.ya?ml|[A-Za-z]:\\[^\s\n:]+\.ya?ml|\/[^\s\n:]+\.ya?ml)/g;
+            const undefinedParamRegex = /Undefined template parameter '([^']+)'/g;
+
+            let paramName = null;
+            let paramMatch = undefinedParamRegex.exec(errorText);
+            if (paramMatch) {
+                paramName = paramMatch[1];
+            }
+
+            let filePath = null;
+            let fileMatch = filePathRegex.exec(errorText);
+            if (fileMatch) {
+                filePath = fileMatch[1];
+            }
+
+            if (paramName && filePath) {
+                try {
+                    const fileUri = vscode.Uri.file(filePath);
+                    const fileContent = await vscode.workspace.fs.readFile(fileUri);
+                    const fileText = new TextDecoder().decode(fileContent);
+                    const lines = fileText.split('\n');
+
+                    // Search for the parameter in the file
+                    for (let i = 0; i < lines.length; i++) {
+                        if (lines[i].includes(paramName)) {
+                            const lineNumber = i + 1;
+                            // Add line number to error message
+                            const enrichedError = new Error(errorText.replace(filePath, `${filePath}:${lineNumber}`));
+                            enrichedError.stack = error.stack;
+                            return enrichedError;
+                        }
+                    }
+                } catch (e) {
+                    // If we can't read the file, just return the original error
+                    return error;
+                }
+            }
+
+            return error;
+        } catch (e) {
+            return error;
+        }
+    };
+
     const renderYamlDocument = async (document, options = {}) => {
-        if (!document) return;
+        if (!document || errorPanelOpen) return;
 
         lastRenderedDocument = document;
         const sourceText = document.getText();
@@ -215,44 +505,7 @@ function activate(context) {
             }
         } catch (error) {
             console.error('Error expanding pipeline:', error);
-            const targetUri = getRenderTargetUri(document);
-
-            // Clear any previous content and show error prominently
-            const errorMessage = [
-                '# ❌ Error Expanding Azure Pipeline',
-                '',
-                '## Error Details',
-                '',
-                '```',
-                error.message || String(error),
-                '```',
-                '',
-                '---',
-                '',
-                '**Tip**: Check the indentation in your YAML file. Common issues include:',
-                '- `steps:` not properly indented under `job:`',
-                '- Missing or extra spaces in YAML structure',
-                '- Template expressions that are malformed',
-                '',
-                '## Stack Trace',
-                '',
-                '```',
-                error.stack || 'No stack trace available',
-                '```',
-            ].join('\n');
-
-            renderedContent.set(targetUri.toString(), errorMessage);
-            renderedEmitter.fire(targetUri);
-
-            // Always show errors, even in silent mode
-            const targetDoc = await vscode.workspace.openTextDocument(targetUri);
-            await vscode.window.showTextDocument(targetDoc, {
-                viewColumn: vscode.ViewColumn.Beside,
-                preview: false,
-                preserveFocus: true,
-            });
-
-            vscode.window.showErrorMessage(`Failed to expand Azure Pipeline: ${error.message}`);
+            showErrorWebview(error, context);
         } finally {
             isRendering = false;
             pendingDocument && scheduleRender(pendingDocument, 0);
