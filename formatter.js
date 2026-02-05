@@ -1354,7 +1354,6 @@ function insertStepSpacing(lines, conditionalDirectiveExpressions = new Set()) {
     let currentSection = null;
     // Track if we're inside variables/parameters sections where we don't want ANY spacing
     let insideVariablesOrParameters = false;
-    let variablesParametersIndent = -1;
 
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
@@ -1372,10 +1371,8 @@ function insertStepSpacing(lines, conditionalDirectiveExpressions = new Set()) {
             // Mark if we're entering variables or parameters sections
             if (currentSection === 'variables' || currentSection === 'parameters') {
                 insideVariablesOrParameters = true;
-                variablesParametersIndent = indent;
             } else {
                 insideVariablesOrParameters = false;
-                variablesParametersIndent = -1;
             }
         }
 
@@ -1385,7 +1382,6 @@ function insertStepSpacing(lines, conditionalDirectiveExpressions = new Set()) {
             const sectionName = trimmed.slice(0, -1);
             if (sectionName !== 'variables' && sectionName !== 'parameters') {
                 insideVariablesOrParameters = false;
-                variablesParametersIndent = -1;
             }
         }
 

@@ -898,23 +898,13 @@ class AzurePipelineParser {
         return '\n' + lines.join('\n');
     }
 
-    getFirstTemplateStackPath(context) {
-        const rawStack = Array.isArray(context?.templateStack) ? [...context.templateStack] : [];
-        if (context?.rootTemplate) {
-            if (rawStack.length === 0 || rawStack[0] !== context.rootTemplate) {
-                rawStack.unshift(context.rootTemplate);
-            }
-        }
-        return rawStack.length > 0 ? rawStack[0] : undefined;
-    }
-
-    formatErrorWithStack(message, context) {
+    formatErrorWithStack(message, context, lineNumber = null) {
         try {
             // Avoid adding call stack if it's already present
             if (message.includes('Template call stack:')) {
                 return message;
             }
-            const stack = this.getTemplateCallStack(context);
+            const stack = this.getTemplateCallStack(context, lineNumber || undefined);
             return stack ? `${message}${stack}` : message;
         } catch (e) {
             return message;
@@ -2169,12 +2159,6 @@ class AzurePipelineParser {
                         }
                     }
 
-                    // Add file path with line number
-                    const filePath = this.getFirstTemplateStackPath(context);
-                    if (lineNumber && filePath) {
-                        msgLines.push(`${filePath}:${lineNumber}`);
-                    }
-
                     // Add helpful tips
                     msgLines.push(`Tips:`);
                     msgLines.push(`- Ensure '${paramName}' is declared in the 'parameters' section`);
@@ -2182,12 +2166,13 @@ class AzurePipelineParser {
                     msgLines.push(loopTip);
 
                     const fullMsg = msgLines.join('\n');
+                    const fullMsgWithStack = this.formatErrorWithStack(fullMsg, context, lineNumber);
 
                     if (context.errors) {
-                        context.errors.push({ message: fullMsg, line: lineNumber });
+                        context.errors.push({ message: fullMsgWithStack, line: lineNumber });
                         return undefined; // Continue parsing instead of throwing
                     } else {
-                        throw new Error(fullMsg);
+                        throw new Error(fullMsgWithStack);
                     }
                 }
                 return target[property];
@@ -2430,12 +2415,6 @@ class AzurePipelineParser {
                     }
                 }
 
-                // Add file path with line number
-                const filePath = this.getFirstTemplateStackPath(context);
-                if (lineNumber && filePath) {
-                    msgLines.push(`${filePath}:${lineNumber}`);
-                }
-
                 // Add helpful tips
                 msgLines.push(`Tips:`);
                 msgLines.push(`- Ensure '${paramName}' is declared in the 'parameters' section`);
@@ -2443,12 +2422,13 @@ class AzurePipelineParser {
                 msgLines.push(loopTip);
 
                 const fullMsg = msgLines.join('\n');
+                const fullMsgWithStack = this.formatErrorWithStack(fullMsg, context, lineNumber);
 
                 if (context.errors) {
-                    context.errors.push({ message: fullMsg, line: lineNumber });
+                    context.errors.push({ message: fullMsgWithStack, line: lineNumber });
                     return undefined; // Continue parsing instead of throwing
                 } else {
-                    throw new Error(fullMsg);
+                    throw new Error(fullMsgWithStack);
                 }
             }
             return this.walkSegments(parameters, rest);

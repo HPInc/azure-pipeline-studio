@@ -142,15 +142,6 @@ function activate(context) {
             return;
         }
 
-        if (formatResult.text === originalText) {
-            if (formatResult.warning) {
-                vscode.window.showWarningMessage(formatResult.warning);
-            } else {
-                vscode.window.showInformationMessage('YAML is already formatted.');
-            }
-            return;
-        }
-
         const fullRange = document.validateRange(
             new vscode.Range(0, 0, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER)
         );
@@ -162,6 +153,9 @@ function activate(context) {
             return;
         }
 
+        // Close error panel on successful formatting
+        closeErrorPanel();
+
         if (formatResult.warning) {
             vscode.window.showWarningMessage(formatResult.warning);
         } else {
@@ -171,7 +165,23 @@ function activate(context) {
 
     let errorPanelOpen = false;
     let currentErrorPanel = null;
-    let openErrorFileCommandRegistered = false;
+
+    // Register openErrorFile command once at activation
+    context.subscriptions.push(
+        vscode.commands.registerCommand('azurePipelineStudio.openErrorFile', async (filePath, lineNumber) => {
+            try {
+                const document = await vscode.workspace.openTextDocument(filePath);
+                const options = { preview: false };
+                if (lineNumber && lineNumber > 0) {
+                    const position = new vscode.Position(lineNumber - 1, 0);
+                    options.selection = new vscode.Range(position, position);
+                }
+                await vscode.window.showTextDocument(document, options);
+            } catch (err) {
+                vscode.window.showErrorMessage(`Failed to open file: ${filePath}`);
+            }
+        })
+    );
 
     const showErrorWebview = (error, context, errorType = 'expansion') => {
         // Dispose of existing error panel before creating a new one
@@ -182,27 +192,6 @@ function activate(context) {
                 // Panel already disposed, ignore
             }
             currentErrorPanel = null;
-        }
-
-        if (!openErrorFileCommandRegistered) {
-            const openFileCommand = vscode.commands.registerCommand(
-                'azurePipelineStudio.openErrorFile',
-                async (filePath, lineNumber) => {
-                    try {
-                        const document = await vscode.workspace.openTextDocument(filePath);
-                        const options = { preview: false };
-                        if (lineNumber && lineNumber > 0) {
-                            const position = new vscode.Position(lineNumber - 1, 0);
-                            options.selection = new vscode.Range(position, position);
-                        }
-                        await vscode.window.showTextDocument(document, options);
-                    } catch (err) {
-                        vscode.window.showErrorMessage(`Failed to open file: ${filePath}`);
-                    }
-                }
-            );
-            context.subscriptions.push(openFileCommand);
-            openErrorFileCommandRegistered = true;
         }
 
         // Determine panel title based on error type
@@ -382,7 +371,7 @@ function activate(context) {
             </head>
             <body>
                 <div class="error-container">
-                    <h1>❌ Error Expanding Azure Pipeline</h1>
+                    <h1>${escapeHtml(title)}</h1>
                     
                     <h2>Error Details</h2>
                     <div class="error-details">
@@ -433,6 +422,18 @@ function activate(context) {
         });
     };
 
+    const closeErrorPanel = () => {
+        if (currentErrorPanel) {
+            try {
+                currentErrorPanel.dispose();
+            } catch (e) {
+                // Panel already disposed, ignore
+            }
+            currentErrorPanel = null;
+            errorPanelOpen = false;
+        }
+    };
+
     const scheduleRender = (document, delayMs = 500) => {
         if (!shouldRenderDocument(document)) return;
         pendingDocument = document;
@@ -454,13 +455,13 @@ function activate(context) {
             const undefinedParamRegex = /Undefined template parameter '([^']+)'/g;
 
             let paramName = null;
-            let paramMatch = undefinedParamRegex.exec(errorText);
+            const paramMatch = undefinedParamRegex.exec(errorText);
             if (paramMatch) {
                 paramName = paramMatch[1];
             }
 
             let filePath = null;
-            let fileMatch = filePathRegex.exec(errorText);
+            const fileMatch = filePathRegex.exec(errorText);
             if (fileMatch) {
                 filePath = fileMatch[1];
             }
@@ -495,7 +496,10 @@ function activate(context) {
     };
 
     const renderYamlDocument = async (document, options = {}) => {
-        if (!document || errorPanelOpen) return;
+        if (!document) return;
+        if (errorPanelOpen) {
+            closeErrorPanel();
+        }
 
         lastRenderedDocument = document;
         const sourceText = document.getText();
@@ -528,6 +532,9 @@ function activate(context) {
             renderedContent.set(targetUri.toString(), formatted.text);
             renderedEmitter.fire(targetUri);
 
+            // Close error panel on successful expansion
+            closeErrorPanel();
+
             if (!options.silent) {
                 const targetDoc = await vscode.workspace.openTextDocument(targetUri);
                 await vscode.window.showTextDocument(targetDoc, {
@@ -538,7 +545,17 @@ function activate(context) {
             }
         } catch (error) {
             console.error('Error expanding pipeline:', error);
-            showErrorWebview(error, context);
+            const errorMessage = error.message || String(error);
+            const enhancedError = new Error(
+                `Error Expanding Azure Pipeline:\n\n${errorMessage}\n\n` +
+                    `💡 Tip: Pipeline expansion errors often occur due to:\n` +
+                    `• Undefined or circular template references\n` +
+                    `• Missing or incorrect parameter values\n` +
+                    `• Malformed YAML structure in referenced templates\n\n` +
+                    `Use "Show Dependencies" to see the complete dependency graph and identify the root cause.`
+            );
+            enhancedError.stack = error.stack;
+            showErrorWebview(enhancedError, context, 'expansion');
         } finally {
             isRendering = false;
             pendingDocument && scheduleRender(pendingDocument, 0);
@@ -606,6 +623,7 @@ function activate(context) {
             return;
         }
 
+        closeErrorPanel();
         await renderYamlDocument(editor.document, { azureCompatible: false });
     });
     context.subscriptions.push(commandDisposable);
@@ -619,6 +637,7 @@ function activate(context) {
                 return;
             }
 
+            closeErrorPanel();
             await renderYamlDocument(editor.document, { azureCompatible: true });
         }
     );
@@ -633,6 +652,7 @@ function activate(context) {
                 return;
             }
 
+            closeErrorPanel();
             await formatOriginalDocument(editor.document);
         }
     );
@@ -661,6 +681,7 @@ function activate(context) {
                 return;
             }
 
+            closeErrorPanel();
             try {
                 const sourceText = editor.document.getText();
                 const document = editor.document;
@@ -688,11 +709,12 @@ function activate(context) {
                 try {
                     dependencies = dependencyAnalyzer.analyzePipeline(expandedYaml);
                 } catch (error) {
-                    showErrorWebview(
-                        error.message || 'An error occurred while analyzing pipeline dependencies',
-                        context,
-                        'dependency'
-                    );
+                    const errorMessage = error.message || 'An error occurred while analyzing pipeline dependencies';
+                    const enhancedMessage =
+                        `Error in Show Dependencies:\n\n${errorMessage}\n\n` +
+                        `💡 Tip: It's often easier to identify and fix issues using "Expand Pipeline" first. ` +
+                        `This will show you the full expanded YAML with all template variables and references resolved.`;
+                    showErrorWebview(enhancedMessage, context, 'dependency');
                     return;
                 }
 
@@ -1287,23 +1309,23 @@ ${mermaidDiagram
                 panel.webview.html = htmlContent;
 
                 // Handle messages from webview
-                panel.webview.onDidReceiveMessage(
-                    async (message) => {
-                        if (message.command === 'openInBrowser') {
-                            try {
-                                const os = require('os');
-                                const tempFile = path.join(os.tmpdir(), `pipeline-dependencies-${Date.now()}.html`);
-                                fs.writeFileSync(tempFile, htmlContent);
-                                await vscode.env.openExternal(vscode.Uri.file(tempFile));
-                                vscode.window.showInformationMessage('Opened dependencies in browser');
-                            } catch (err) {
-                                vscode.window.showErrorMessage(`Failed to open in browser: ${err.message}`);
-                            }
+                // Handle messages from webview (panel-specific, not added to context subscriptions)
+                panel.webview.onDidReceiveMessage(async (message) => {
+                    if (message.command === 'openInBrowser') {
+                        try {
+                            const os = require('os');
+                            const tempFile = path.join(os.tmpdir(), `pipeline-dependencies-${Date.now()}.html`);
+                            fs.writeFileSync(tempFile, htmlContent);
+                            await vscode.env.openExternal(vscode.Uri.file(tempFile));
+                            vscode.window.showInformationMessage('Opened dependencies in browser');
+                        } catch (err) {
+                            vscode.window.showErrorMessage(`Failed to open in browser: ${err.message}`);
                         }
-                    },
-                    undefined,
-                    context.subscriptions
-                );
+                    }
+                });
+
+                // Close error panel on successful dependency analysis
+                closeErrorPanel();
 
                 vscode.window.setStatusBarMessage('Pipeline dependencies analyzed.', 3000);
             } catch (error) {
