@@ -122,13 +122,23 @@ function activate(context) {
         }
 
         const originalText = document.getText();
-        const formatOptions = getFormatSettings(document);
-        formatOptions.fileName = document.fileName;
-        formatOptions.wasExpanded = false;
-        const formatResult = formatYaml(originalText, formatOptions);
+        let formatResult;
+        try {
+            const formatOptions = getFormatSettings(document);
+            formatOptions.fileName = document.fileName;
+            formatOptions.wasExpanded = false;
+            formatResult = formatYaml(originalText, formatOptions);
 
-        if (formatResult.error) {
-            vscode.window.showErrorMessage(formatResult.error);
+            if (formatResult.error) {
+                const errorValue =
+                    formatResult.error instanceof Error ? formatResult.error : new Error(String(formatResult.error));
+                showErrorWebview(errorValue, context, 'formatting');
+                return;
+            }
+        } catch (error) {
+            const errorMessage =
+                error && error.message ? error.message : 'An unexpected error occurred during YAML formatting';
+            showErrorWebview(errorMessage, context, 'formatting');
             return;
         }
 
@@ -160,34 +170,56 @@ function activate(context) {
     };
 
     let errorPanelOpen = false;
+    let currentErrorPanel = null;
+    let openErrorFileCommandRegistered = false;
 
-    const showErrorWebview = (error, context) => {
-        // Register command handler for opening files with optional line number
-        const openFileCommand = vscode.commands.registerCommand(
-            'azurePipelineStudio.openErrorFile',
-            async (filePath, lineNumber) => {
-                try {
-                    const document = await vscode.workspace.openTextDocument(filePath);
-                    const options = { preview: false };
-                    if (lineNumber && lineNumber > 0) {
-                        const position = new vscode.Position(lineNumber - 1, 0);
-                        options.selection = new vscode.Range(position, position);
-                    }
-                    await vscode.window.showTextDocument(document, options);
-                } catch (err) {
-                    vscode.window.showErrorMessage(`Failed to open file: ${filePath}`);
-                }
+    const showErrorWebview = (error, context, errorType = 'expansion') => {
+        // Dispose of existing error panel before creating a new one
+        if (currentErrorPanel) {
+            try {
+                currentErrorPanel.dispose();
+            } catch (e) {
+                // Panel already disposed, ignore
             }
-        );
-        context.subscriptions.push(openFileCommand);
+            currentErrorPanel = null;
+        }
+
+        if (!openErrorFileCommandRegistered) {
+            const openFileCommand = vscode.commands.registerCommand(
+                'azurePipelineStudio.openErrorFile',
+                async (filePath, lineNumber) => {
+                    try {
+                        const document = await vscode.workspace.openTextDocument(filePath);
+                        const options = { preview: false };
+                        if (lineNumber && lineNumber > 0) {
+                            const position = new vscode.Position(lineNumber - 1, 0);
+                            options.selection = new vscode.Range(position, position);
+                        }
+                        await vscode.window.showTextDocument(document, options);
+                    } catch (err) {
+                        vscode.window.showErrorMessage(`Failed to open file: ${filePath}`);
+                    }
+                }
+            );
+            context.subscriptions.push(openFileCommand);
+            openErrorFileCommandRegistered = true;
+        }
+
+        // Determine panel title based on error type
+        const titles = {
+            expansion: '❌ Pipeline Expansion Error',
+            formatting: '❌ YAML Formatting Error',
+            dependency: '❌ Dependency Analysis Error',
+        };
+        const title = titles[errorType] || '❌ Pipeline Error';
 
         // Create webview panel
-        const panel = vscode.window.createWebviewPanel(
-            'azurePipelineError',
-            '❌ Pipeline Expansion Error',
-            vscode.ViewColumn.Beside,
-            { enableScripts: true }
-        );
+        const panel = vscode.window.createWebviewPanel('azurePipelineError', title, vscode.ViewColumn.Beside, {
+            enableScripts: true,
+        });
+
+        // Store reference to current error panel
+        currentErrorPanel = panel;
 
         // Mark error panel as open
         errorPanelOpen = true;
@@ -195,6 +227,7 @@ function activate(context) {
         // Clean up when panel is disposed
         panel.onDidDispose(() => {
             errorPanelOpen = false;
+            currentErrorPanel = null;
         });
 
         const escapeHtml = (text) => {
@@ -651,7 +684,17 @@ function activate(context) {
 
                 // Analyze the expanded pipeline
                 vscode.window.setStatusBarMessage('Analyzing dependencies...', 2000);
-                const dependencies = dependencyAnalyzer.analyzePipeline(expandedYaml);
+                let dependencies;
+                try {
+                    dependencies = dependencyAnalyzer.analyzePipeline(expandedYaml);
+                } catch (error) {
+                    showErrorWebview(
+                        error.message || 'An error occurred while analyzing pipeline dependencies',
+                        context,
+                        'dependency'
+                    );
+                    return;
+                }
 
                 // Create webview panel to display diagram
                 const panel = vscode.window.createWebviewPanel(
@@ -1265,7 +1308,11 @@ ${mermaidDiagram
                 vscode.window.setStatusBarMessage('Pipeline dependencies analyzed.', 3000);
             } catch (error) {
                 console.error('Error analyzing dependencies:', error);
-                vscode.window.showErrorMessage(`Failed to analyze dependencies: ${error.message}`);
+                showErrorWebview(
+                    error.message || 'An unexpected error occurred while analyzing pipeline dependencies',
+                    context,
+                    'dependency'
+                );
             }
         }
     );
