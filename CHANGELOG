@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 .html).
 
+## [1.0.12] - 2026-02-05
+
+### Added
+- Clickable error links in output for faster navigation to issues
+
+### Changed
+- Refactored formatter spacing logic with state object pattern and focused helper functions for improved maintainability
+- Enhanced code readability by extracting complex conditional logic into descriptive helper functions
+
+### Fixed
+- Variables and parameters sections now correctly track indent levels to prevent unwanted blank lines
+- Conditional template blocks preserve proper spacing without removing blank lines
+
+[1.0.12]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.0.12
+
 ## [1.0.11] - 2026-02-04
 
 ### Added

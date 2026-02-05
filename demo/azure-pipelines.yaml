@@ -1,31 +1,100 @@
 name: $(Date:yyyyMMdd)$(Rev:.r)
-
 trigger:
 - main
+
+parameters:
+- name: environment
+  type: string
+  default: dev
+  values:
+  - dev
+  - staging
+  - prod
+- name: runTests
+  type: boolean
+  default: true
+- name: runScan
+  type: boolean
+  default: true
 
 pool:
   vmImage: ubuntu-latest
 
 variables:
   projectRoot: ./src
+  isMain: $[eq(variables['Build.SourceBranch'], 'refs/heads/main')]
 
 stages:
+- stage: Setup
+  displayName: Setup
+
+  jobs:
+  - job: Setup
+    displayName: Setup
+
+    steps:
+    - script: echo "Preparing workspace"
+      displayName: Prep
+
 - stage: Build
+  displayName: Build
+  dependsOn: Setup
+  condition: succeeded()
 
   jobs:
   - template: templates/build-job.yml
     parameters:
       buildConfiguration: Release
       projectPath: $(projectRoot)
-      # timeoutInMinutes: '60' # This would trigger a type warning if uncommented (string vs number)
-      runTests: true
+      runTests: ${{ parameters.runTests }}
+
+- stage: Test
+  displayName: Test
+  dependsOn: Build
+  condition: and(succeeded(), eq(${{ parameters.runTests }}, true))
+
+  jobs:
+  - job: Tests
+    displayName: Run Tests
+
+    steps:
+    - script: echo "Running tests"
+      displayName: Test
+
+- stage: Scan
+  displayName: Scan
+  dependsOn: Build
+  condition: and(succeeded(), eq(${{ parameters.runScan }}, true))
+
+  jobs:
+  - job: Scan
+    displayName: Security Scan
+
+    steps:
+    - script: echo "Running scan"
+      displayName: Scan
+
+- stage: Release
+  displayName: Release
+  dependsOn:
+  - Test
+  - Scan
+  condition: and(succeeded(), eq(variables.isMain, true))
+
+  jobs:
+  - job: Release
+    displayName: Release
+
+    steps:
+    - script: echo "Preparing release"
+      displayName: Release
 
 - stage: Deploy
-  dependsOn: Build
+  displayName: Deploy
+  dependsOn: Release
+  condition: and(succeeded(), ne('${{ parameters.environmentName }}', 'dev'))
 
   jobs:
   - template: templates/deploy-job.yml
     parameters:
-      environmentName: Production
-
-      # Missing required parameter 'strategy' will use default
+      environmentName: ${{ parameters.environment }}
