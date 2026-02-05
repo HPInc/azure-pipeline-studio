@@ -900,9 +900,11 @@ function isStepOrExpressionListItem(line) {
  * @param {object} state - The formatting state object
  */
 function handleCommentLine(state) {
-    const { lineNum, inMultiLineBlock, pass1, currentSection, stepSpacingSections, lines } = state;
+    const { lineNum, inMultiLineBlock, pass1, currentSection, stepSpacingSections, lines, foundFirstMainSection } =
+        state;
     const line = lines[lineNum];
     const index = lineNum;
+
     // Keep comments inside multi-line scalars untouched
     if (inMultiLineBlock) {
         pass1.push(line);
@@ -934,15 +936,42 @@ function handleCommentLine(state) {
                 pass1.push('');
             }
         }
-    } else if (currentSection === 'steps' || stepSpacingSections.includes(currentSection)) {
-        // Add blank before a comment in steps only when there is preceding content
-        // (avoid inserting a blank right after the section header)
-        const lastLine = pass1.length > 0 ? pass1[pass1.length - 1] : null;
-        const lastTrimmed = lastLine ? lastLine.trim() : '';
-        const lastIsHeader = lastTrimmed === 'steps:' || lastTrimmed === 'jobs:' || lastTrimmed === 'stages:';
+    } else {
+        // Add blank before a comment in steps/jobs/stages, OR if we're at root level after finding a main section
+        // (this catches comments at root level between items, even if currentSection tracking lost the context)
+        // ALSO check if we're in a nested steps section by looking backward for a steps: header
+        let inNestedSteps = false;
+        const commentIndent = getIndent(line);
+        // Increased from 20 to 100 to handle larger steps sections
+        for (let j = lineNum - 1; j >= 0 && j >= lineNum - 100; j--) {
+            const checkLine = lines[j];
+            if (isBlank(checkLine) || isComment(checkLine)) continue;
+            const checkIndent = getIndent(checkLine);
+            const checkTrimmed = checkLine.trim();
+            // If we find a steps: header at lower or equal indent, we're inside it
+            if (checkTrimmed === 'steps:' && checkIndent <= commentIndent) {
+                inNestedSteps = true;
+                break;
+            }
+            // Stop if we hit content at lower indent AND it's not a list item (we've gone up a level)
+            if (checkIndent < commentIndent && !checkLine.trim().startsWith('-')) {
+                break;
+            }
+        }
 
-        if (lastLine && !isBlank(lastLine) && !lastIsHeader) {
-            pass1.push('');
+        if (
+            inNestedSteps ||
+            currentSection === 'steps' ||
+            stepSpacingSections.includes(currentSection) ||
+            (foundFirstMainSection && getIndent(line) === 0)
+        ) {
+            const lastLine = pass1.length > 0 ? pass1[pass1.length - 1] : null;
+            const lastTrimmed = lastLine ? lastLine.trim() : '';
+            const lastIsHeader = lastTrimmed === 'steps:' || lastTrimmed === 'jobs:' || lastTrimmed === 'stages:';
+
+            if (lastLine && !isBlank(lastLine) && !lastIsHeader) {
+                pass1.push('');
+            }
         }
     }
 
@@ -1294,6 +1323,7 @@ function compactBlankLines(pass1, newline) {
 
                 // Remove blanks between sibling list items in nested sections (dependsOn, variables, parameters, etc)
                 // Keep blanks between sibling list items in main sections (steps, jobs, stages)
+                // NOTE: Comments don't affect spacing - they are treated as part of the next item
                 if (effectivePrevIsList && nextIsList && !insideMainListSection) {
                     continue;
                 }
@@ -1382,7 +1412,9 @@ function insertStepSpacing(lines, conditionalDirectiveExpressions = new Set()) {
 
         // Maintain section stack (only for content outside multi-line blocks)
         if (!effectivelyInMultiLineBlock && !isBlank(line)) {
-            if (!isListItem(line)) {
+            // IMPORTANT: Comments should not affect section stack
+            // Only pop/push sections for actual YAML structure (mappings), not comments
+            if (!isListItem(line) && !isComment(line)) {
                 while (sectionStack.length && sectionStack[sectionStack.length - 1].indent >= indent) {
                     // Don't pop implicit sections
                     if (sectionStack[sectionStack.length - 1].implicit) {
@@ -1391,7 +1423,7 @@ function insertStepSpacing(lines, conditionalDirectiveExpressions = new Set()) {
                     sectionStack.pop();
                 }
             }
-            if (!isListItem(line) && isMappingKey(line)) {
+            if (!isListItem(line) && !isComment(line) && isMappingKey(line)) {
                 const sectionName = trimmed.slice(0, -1);
                 if (mainListSections.has(sectionName)) {
                     sectionStack.push({ name: sectionName, indent });
@@ -1430,7 +1462,8 @@ function insertStepSpacing(lines, conditionalDirectiveExpressions = new Set()) {
                 const nextLineIndent = getIndent(nextNonBlankLine);
 
                 // If the next non-blank line is a child (indented more), remove ALL blanks before it
-                if (nextLineIndent > listItemIndent) {
+                // BUT: Do NOT remove blanks if the next line is a comment - comments don't count as children
+                if (nextLineIndent > listItemIndent && !isComment(nextNonBlankLine)) {
                     for (const blankIdx of blankIndices) {
                         removePositions.push(blankIdx);
                     }
@@ -1487,10 +1520,61 @@ function insertStepSpacing(lines, conditionalDirectiveExpressions = new Set()) {
                 }
 
                 if (insideMainSection) {
+                    // First, check if there's a comment immediately before the CURRENT task
+                    // and remove any blanks between that comment and this task
+                    // This handles cases where this is the last task (no next sibling to process it)
+                    for (let k = i - 1; k >= 0; k--) {
+                        const checkLine = lines[k];
+
+                        if (isBlank(checkLine)) {
+                            continue; // Keep looking
+                        }
+
+                        if (isComment(checkLine)) {
+                            // Found a comment before this task
+                            // Check if there's a PREVIOUS list item before this comment
+                            // If so, preserve the first blank (it separates the previous item from this comment)
+                            let hasPreviousListItem = false;
+                            let firstBlankIdx = -1;
+
+                            for (let m = k - 1; m >= 0; m--) {
+                                if (isBlank(lines[m])) {
+                                    if (firstBlankIdx === -1) firstBlankIdx = m;
+                                    continue;
+                                }
+                                if (isListItem(lines[m])) {
+                                    hasPreviousListItem = true;
+                                    break;
+                                }
+                                // If we hit something else, stop
+                                break;
+                            }
+
+                            // Remove blanks between comment and task
+                            // But if there's a previous list item, preserve the first blank (separator between items)
+                            for (let b = k + 1; b < i; b++) {
+                                if (isBlank(lines[b])) {
+                                    const shouldPreserve = hasPreviousListItem && b === firstBlankIdx;
+                                    if (!shouldPreserve) {
+                                        removePositions.push(b);
+                                    }
+                                }
+                            }
+                            break;
+                        }
+
+                        // If we hit a list item or other content, stop looking
+                        break;
+                    }
+
                     // Find next sibling list item at same indent
+                    // Notes: Comments can appear between siblings but they don't prevent us from finding the next item.
+                    // We skip comments during the search so we can find the actual next sibling.
                     let nextItemIdx = null;
                     for (let j = i + 1; j < lines.length; j++) {
                         if (isBlank(lines[j])) continue;
+                        // Skip comments - they don't block sibling detection, they're just between items
+                        if (isComment(lines[j])) continue;
 
                         const nextIndent = getIndent(lines[j]);
                         const isNextList = isListItem(lines[j]);
@@ -1506,7 +1590,7 @@ function insertStepSpacing(lines, conditionalDirectiveExpressions = new Set()) {
                             break;
                         }
 
-                        // Stop if we encounter a line at same or lower indent that's not a list item
+                        // Stop if we encounter a line at same or lower indent that's not a list item and not a comment
                         if (nextIndent <= listItemIndent && !isNextList) {
                             break;
                         }
@@ -1518,18 +1602,60 @@ function insertStepSpacing(lines, conditionalDirectiveExpressions = new Set()) {
                         // but kept for clarity
                         const nextItemIndent = getIndent(lines[nextItemIdx]);
                         if (nextItemIndent === listItemIndent) {
-                            // Check if there's a blank line immediately before the next sibling
+                            // Check if there's a blank line before the next sibling
+                            // OR if there's a comment between siblings (comments are visual separators)
                             let hasBlankBefore = false;
+                            let hasCommentBetween = false;
+
+                            // Look backwards from nextItemIdx to find what's between siblings
                             for (let k = nextItemIdx - 1; k >= 0; k--) {
-                                if (isBlank(lines[k])) {
+                                const checkLine = lines[k];
+
+                                if (isBlank(checkLine)) {
                                     hasBlankBefore = true;
-                                    break;
+                                    continue; // Keep looking for comments
                                 }
-                                if (!isBlank(lines[k])) {
-                                    break;
+
+                                if (isComment(checkLine)) {
+                                    hasCommentBetween = true;
+                                    // Check if there's a previous list item before this comment
+                                    // If so, keep the first blank (separates tasks)
+                                    let hasPrevTask = false;
+                                    let firstBlank = -1;
+
+                                    for (let m = k - 1; m >= i; m--) {
+                                        if (isBlank(lines[m])) {
+                                            if (firstBlank === -1) firstBlank = m;
+                                            continue;
+                                        }
+                                        if (isListItem(lines[m])) {
+                                            hasPrevTask = true;
+                                            break;
+                                        }
+                                        break;
+                                    }
+
+                                    // Remove any blanks between this comment and the next task
+                                    // But preserve the first blank if there's a previous task
+                                    for (let b = k + 1; b < nextItemIdx; b++) {
+                                        if (isBlank(lines[b])) {
+                                            const shouldKeep = hasPrevTask && b === firstBlank;
+                                            if (!shouldKeep) {
+                                                removePositions.push(b);
+                                            }
+                                        }
+                                    }
+                                    break; // Found comment, stop looking
                                 }
+
+                                // If we hit content (not blank, not comment), we've reached the previous item
+                                // Stop looking further back
+                                break;
                             }
-                            if (!hasBlankBefore) {
+
+                            // Only add blank if there's no blank AND no comment between siblings
+                            // If there's a comment but no blank before it, we still add a blank (before the comment)
+                            if (!hasBlankBefore && !hasCommentBetween) {
                                 insertPositions.push(nextItemIdx);
                             }
                         }
@@ -1669,7 +1795,8 @@ function applyPipelineFormatting(text, newline, options) {
         state.lineIndent = lineIndent;
 
         // Track the current root section
-        if (lineIndent === 0 && isNonCommentContent(trimmed) && isMappingKey(trimmed)) {
+        // IMPORTANT: Only mapping keys at root level are sections, NOT list items (even if they have colons)
+        if (lineIndent === 0 && isNonCommentContent(trimmed) && isMappingKey(trimmed) && !isListItem(line)) {
             state.currentSection = trimmed.slice(0, -1);
         }
 

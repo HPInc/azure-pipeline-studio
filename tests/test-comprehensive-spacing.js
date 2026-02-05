@@ -223,6 +223,41 @@ runTest(
 );
 
 // ============================================================
+// SECTION 7: Comment Alignment with Task Items
+// ============================================================
+console.log('\n📍 Comment Alignment Tests');
+
+runTest(
+    'Comments between tasks preserve spacing',
+    'steps:\n- task: UseDotNet@2\n  displayName: Install .NET SDK\n  inputs:\n    packageType: sdk\n    version: 8.0.x\n\n# Stop hphost service\n- task: PowerShell@2\n  inputs:\n    targetType: inline\n    script: Stop-Service -Name "hphost" -Force\n    pwsh: false\n  displayName: Stop hphost service',
+    'steps:\n- task: UseDotNet@2\n  displayName: Install .NET SDK\n  inputs:\n    packageType: sdk\n    version: 8.0.x\n\n# Stop hphost service\n- task: PowerShell@2\n  inputs:\n    targetType: inline\n    script: Stop-Service -Name "hphost" -Force\n    pwsh: false\n  displayName: Stop hphost service'
+);
+
+runTest(
+    'Multiple tasks with comments keep spacing',
+    'steps:\n- task: Setup@1\n\n# Build the application\n- task: DotNetCoreCLI@2\n  inputs:\n    command: build\n\n# Run tests\n- task: DotNetCoreCLI@2\n  inputs:\n    command: test',
+    'steps:\n- task: Setup@1\n\n# Build the application\n- task: DotNetCoreCLI@2\n  inputs:\n    command: build\n\n# Run tests\n- task: DotNetCoreCLI@2\n  inputs:\n    command: test'
+);
+
+runTest(
+    'Comment with conditional block preserves spacing',
+    "steps:\n- task: Setup@1\n\n# Deploy only on main branch\n- ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/main') }}:\n  - task: Deploy@1\n    inputs:\n      environment: production\n\n# Final step\n- task: Cleanup@1",
+    "steps:\n- task: Setup@1\n\n# Deploy only on main branch\n- ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/main') }}:\n  - task: Deploy@1\n    inputs:\n      environment: production\n\n# Final step\n- task: Cleanup@1"
+);
+
+runTest(
+    'Nested steps in jobs preserve comment spacing',
+    'jobs:\n- job: Build\n  steps:\n  - task: UseDotNet@2\n    inputs:\n      version: 8.0.x\n\n  # Run tests\n  - task: DotNetCoreCLI@2\n    inputs:\n      command: test',
+    'jobs:\n- job: Build\n  steps:\n  - task: UseDotNet@2\n    inputs:\n      version: 8.0.x\n\n  # Run tests\n  - task: DotNetCoreCLI@2\n    inputs:\n      command: test'
+);
+
+runTest(
+    'Comment before task with blank then another comment preserves spacing',
+    'steps:\n- task: PowerShell@2\n  inputs:\n    targetType: inline\n    script: Stop-Service -Name "hphost" -Force\n    pwsh: false\n  displayName: Stop hphost service\n\n# Start hphost service\n- task: PowerShell@2\n  inputs:\n    targetType: inline\n    script: Start-Service -Name "hphost"\n    pwsh: false\n  displayName: Start hphost service',
+    'steps:\n- task: PowerShell@2\n  inputs:\n    targetType: inline\n    script: Stop-Service -Name "hphost" -Force\n    pwsh: false\n  displayName: Stop hphost service\n\n# Start hphost service\n- task: PowerShell@2\n  inputs:\n    targetType: inline\n    script: Start-Service -Name "hphost"\n    pwsh: false\n  displayName: Start hphost service'
+);
+
+// ============================================================
 // Summary
 // ============================================================
 console.log('\n' + '='.repeat(60));
