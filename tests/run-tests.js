@@ -33,8 +33,7 @@ const tests = [
     'test-variable-scoping.js',
     'test-template-call-stack.js',
     'test-formatting.js',
-    'test-stage-job-spacing.js',
-    'test-multiline-sibling-spacing.js',
+    'test-comprehensive-spacing.js',
 ];
 
 console.log('='.repeat(70));

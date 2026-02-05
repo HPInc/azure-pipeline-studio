@@ -12,9 +12,12 @@ function escapeRegExp(string) {
 // Checks if trimmed line is a conditional directive (if/elseif/else without leading dash)
 function isConditionalDirective(line, conditionalDirectives = null) {
     const trimmed = line.trim();
+    // Remove leading dash for list items to check the actual directive
+    const contentAfterDash = trimmed.replace(/^-\s+/, '');
+
     // Match ${{ if ..., ${{ elseif ..., ${{ else }}, ${{ each ..., ${{ insert }}
     // These are template directives that don't need a leading dash
-    const isRealDirective = /^\$\{\{\s*(if|elseif|else|each|insert)(\s|\})/i.test(trimmed);
+    const isRealDirective = /^\$\{\{\s*(if|elseif|else|each|insert)(\s|\})/i.test(contentAfterDash);
 
     if (isRealDirective) {
         return true;
@@ -22,7 +25,8 @@ function isConditionalDirective(line, conditionalDirectives = null) {
 
     // Check if this is a placeholder that was originally a conditional directive
     if (conditionalDirectives) {
-        const placeholderMatch = trimmed.match(/^(__EXPR_PLACEHOLDER_\d+__)/);
+        // For list items, check the content after the dash
+        const placeholderMatch = contentAfterDash.match(/^(__EXPR_PLACEHOLDER_\d+__)/);
         if (placeholderMatch && conditionalDirectives.has(placeholderMatch[1])) {
             return true;
         }
@@ -1228,6 +1232,7 @@ function compactBlankLines(pass1, newline) {
     const compacted = [];
     const sectionStack = [];
     const mainListSections = new Set(['steps', 'jobs', 'stages']);
+    const nestedListSections = new Set(['dependsOn', 'parameters', 'variables']);
 
     for (let i = 0; i < pass1.length; i++) {
         const line = pass1[i];
@@ -1240,9 +1245,13 @@ function compactBlankLines(pass1, newline) {
                 sectionStack.pop();
             }
         }
+        // Only track sections at indent 0 (root level) or nested list-containing sections
         if (!isListItem(line) && isMappingKey(line)) {
             const sectionName = line.trim().slice(0, -1);
-            sectionStack.push({ name: sectionName, indent });
+            // Only push sections at root level (indent 0) or known nested list sections
+            if (indent === 0 || nestedListSections.has(sectionName)) {
+                sectionStack.push({ name: sectionName, indent });
+            }
         }
 
         if (isBlank(line)) {
@@ -1265,22 +1274,26 @@ function compactBlankLines(pass1, newline) {
                 let effectivePrevIsList = prevIsList;
                 if (nextIsList && !insideMainListSection && !prevIsList) {
                     // Look back to find the last list item
+                    const nextIndent = getIndent(nextLine);
                     for (let j = prevIdx - 1; j >= 0; j--) {
                         if (!isBlank(pass1[j])) {
                             if (isListItem(pass1[j])) {
                                 effectivePrevIsList = true;
                                 break;
                             }
-                            // If we hit another mapping key or less-indented line, stop
+                            // If we hit a line at the same indent as the next list item (or less), check if it's structural
                             const jIndent = getIndent(pass1[j]);
-                            const prevIndent = getIndent(prevLine);
-                            if (jIndent <= prevIndent && (isMappingKey(pass1[j]) || isListItem(pass1[j]))) {
+                            if (jIndent <= nextIndent && isMappingKey(pass1[j]) && !isListItem(pass1[j])) {
+                                // This is a section header, stop looking
                                 break;
                             }
+                            // Otherwise continue looking back (we might be in nested mapping children)
                         }
                     }
                 }
 
+                // Remove blanks between sibling list items in nested sections (dependsOn, variables, parameters, etc)
+                // Keep blanks between sibling list items in main sections (steps, jobs, stages)
                 if (effectivePrevIsList && nextIsList && !insideMainListSection) {
                     continue;
                 }
@@ -1296,7 +1309,7 @@ function compactBlankLines(pass1, newline) {
 /**
  * Insert blank lines between step items if stepSpacing is enabled
  */
-function insertStepSpacing(lines) {
+function insertStepSpacing(lines, conditionalDirectiveExpressions = new Set()) {
     const insertPositions = [];
     const removePositions = []; // Track blanks to remove (between parent and child)
     const sectionStack = [];
@@ -1307,6 +1320,11 @@ function insertStepSpacing(lines) {
     // When we're inside such a mapping, we DON'T add blanks between list items
     let insideNestedMapping = false;
     let nestedMappingIndent = -1;
+    // Track current section to avoid creating implicit spacing in variables/parameters
+    let currentSection = null;
+    // Track if we're inside variables/parameters sections where we don't want ANY spacing
+    let insideVariablesOrParameters = false;
+    let variablesParametersIndent = -1;
 
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
@@ -1317,6 +1335,30 @@ function insertStepSpacing(lines) {
         // This is needed because a line that STARTS a multiline block should still be processed for spacing
         const wasInMultiLineBlock = inMultiLineBlock;
 
+        // Track current section at root level
+        // IMPORTANT: Don't treat list items as sections, even if they look like mapping keys after trimming
+        if (indent === 0 && !isBlank(line) && !isListItem(line) && isMappingKey(trimmed)) {
+            currentSection = trimmed.slice(0, -1);
+            // Mark if we're entering variables or parameters sections
+            if (currentSection === 'variables' || currentSection === 'parameters') {
+                insideVariablesOrParameters = true;
+                variablesParametersIndent = indent;
+            } else {
+                insideVariablesOrParameters = false;
+                variablesParametersIndent = -1;
+            }
+        }
+
+        // Exit variables/parameters section when we encounter another root-level section
+        // IMPORTANT: Only mapping keys can be sections, not list items
+        if (insideVariablesOrParameters && indent === 0 && !isListItem(line) && isMappingKey(trimmed)) {
+            const sectionName = trimmed.slice(0, -1);
+            if (sectionName !== 'variables' && sectionName !== 'parameters') {
+                insideVariablesOrParameters = false;
+                variablesParametersIndent = -1;
+            }
+        }
+
         // Track multi-line block state
         if (startsMultiLineScalarBlock(line)) {
             inMultiLineBlock = true;
@@ -1325,6 +1367,9 @@ function insertStepSpacing(lines) {
             inMultiLineBlock = false;
             multiLineBlockIndent = -1;
         }
+
+        // If this line ends a multi-line block, treat it as NOT being in the block for spacing purposes
+        const effectivelyInMultiLineBlock = wasInMultiLineBlock && inMultiLineBlock;
 
         // Exit nested mapping context if we're at an indent less than the mapping,
         // or at the same indent but NOT a list item (e.g., another mapping key)
@@ -1336,7 +1381,7 @@ function insertStepSpacing(lines) {
         }
 
         // Maintain section stack (only for content outside multi-line blocks)
-        if (!wasInMultiLineBlock && !isBlank(line)) {
+        if (!effectivelyInMultiLineBlock && !isBlank(line)) {
             if (!isListItem(line)) {
                 while (sectionStack.length && sectionStack[sectionStack.length - 1].indent >= indent) {
                     // Don't pop implicit sections
@@ -1360,123 +1405,133 @@ function insertStepSpacing(lines) {
             }
         }
 
-        // Check for list items; add spacing within steps, jobs, and stages sections
-        // Use wasInMultiLineBlock so that lines that START a multiline block are still processed
-        if (!wasInMultiLineBlock && isListItem(line) && !insideNestedMapping) {
-            // Find the NEAREST main list section that could contain this item
-            // We want the one with the highest indent that's still a main section
-            let insideMainSection = false;
-            for (let s = sectionStack.length - 1; s >= 0; s--) {
-                if (mainListSections.has(sectionStack[s].name)) {
-                    insideMainSection = true;
+        // Check for list items; handle spacing and blank removal
+        // This block runs for all list items to handle blank removal even inside nested contexts
+        if (!effectivelyInMultiLineBlock && isListItem(line)) {
+            const listItemIndent = indent;
+
+            // ALWAYS check if there are blank lines after this list item followed by a child
+            // This is important even when insideNestedMapping is true, because we need to
+            // remove blanks between parent list items and their children
+            let nextNonBlankIdx = -1;
+            let blankIndices = [];
+            for (let j = i + 1; j < lines.length; j++) {
+                if (isBlank(lines[j])) {
+                    blankIndices.push(j);
+                } else {
+                    nextNonBlankIdx = j;
                     break;
                 }
             }
 
-            // Also treat top-level list items with template expressions or stage/job children as being in stages section
-            if (!insideMainSection && indent === 0) {
-                // Check if this looks like a stage/job item (has template expression or stage/job child)
-                let shouldAddImplicitSection = false;
+            // If we found blanks followed by a non-blank line
+            if (blankIndices.length > 0 && nextNonBlankIdx > 0) {
+                const nextNonBlankLine = lines[nextNonBlankIdx];
+                const nextLineIndent = getIndent(nextNonBlankLine);
 
-                if (containsTemplateExpression(trimmed)) {
-                    shouldAddImplicitSection = true;
-                } else {
-                    // Check first non-blank child
-                    for (let j = i + 1; j < Math.min(i + 10, lines.length); j++) {
-                        if (!isBlank(lines[j])) {
-                            const childLine = lines[j].trim();
-                            const childIndent = getIndent(lines[j]);
-                            if (childIndent > indent && childLine.match(/^-\s+(stage|job|task):/)) {
-                                shouldAddImplicitSection = true;
-                            }
-                            break;
-                        }
+                // If the next non-blank line is a child (indented more), remove ALL blanks before it
+                if (nextLineIndent > listItemIndent) {
+                    for (const blankIdx of blankIndices) {
+                        removePositions.push(blankIdx);
                     }
-                }
-
-                if (shouldAddImplicitSection) {
-                    // Only add implicit section once
-                    const hasImplicitSection = sectionStack.some((s) => s.implicit);
-                    if (!hasImplicitSection) {
-                        sectionStack.push({ name: 'stages', indent: -1, implicit: true });
-                    }
-                    insideMainSection = true;
                 }
             }
 
-            if (insideMainSection) {
-                const listItemIndent = indent;
+            // Only process spacing logic when NOT in nested mapping mode AND NOT in variables/parameters
+            if (!insideNestedMapping && !insideVariablesOrParameters) {
+                // Find the NEAREST main list section that could contain this item
+                // We want the one with the highest indent that's still a main section
+                let insideMainSection = false;
+                for (let s = sectionStack.length - 1; s >= 0; s--) {
+                    if (mainListSections.has(sectionStack[s].name)) {
+                        insideMainSection = true;
+                        break;
+                    }
+                }
 
-                // Check if there are blank lines after this list item followed by a child
-                // Scan ahead to find the next non-blank line
-                let nextNonBlankIdx = -1;
-                let blankIndices = [];
-                for (let j = i + 1; j < lines.length; j++) {
-                    if (isBlank(lines[j])) {
-                        blankIndices.push(j);
+                // Also treat top-level list items with template expressions or stage/job children as being in stages section
+                // BUT not if we're under variables or parameters sections
+                if (
+                    !insideMainSection &&
+                    indent === 0 &&
+                    currentSection !== 'variables' &&
+                    currentSection !== 'parameters'
+                ) {
+                    // Check if this looks like a stage/job item (has template expression or stage/job child)
+                    let shouldAddImplicitSection = false;
+
+                    if (containsTemplateExpression(trimmed)) {
+                        shouldAddImplicitSection = true;
                     } else {
-                        nextNonBlankIdx = j;
-                        break;
-                    }
-                }
-
-                // If we found blanks followed by a non-blank line
-                if (blankIndices.length > 0 && nextNonBlankIdx > 0) {
-                    const nextNonBlankLine = lines[nextNonBlankIdx];
-                    const nextLineIndent = getIndent(nextNonBlankLine);
-
-                    // If the next non-blank line is a child (indented more), remove ALL blanks before it
-                    if (nextLineIndent > listItemIndent) {
-                        for (const blankIdx of blankIndices) {
-                            removePositions.push(blankIdx);
-                        }
-                    }
-                }
-
-                // Find next sibling list item at same indent
-                let nextItemIdx = null;
-                for (let j = i + 1; j < lines.length; j++) {
-                    if (isBlank(lines[j])) continue;
-
-                    const nextIndent = getIndent(lines[j]);
-                    const isNextList = isListItem(lines[j]);
-
-                    if (isNextList && nextIndent === listItemIndent) {
-                        nextItemIdx = j;
-                        break;
-                    }
-
-                    // Stop if we encounter a list item at LOWER indent - it starts a new hierarchy branch
-                    // and any items after it are not siblings of the current item
-                    if (isNextList && nextIndent < listItemIndent) {
-                        break;
-                    }
-
-                    // Stop if we encounter a line at same or lower indent that's not a list item
-                    if (nextIndent <= listItemIndent && !isNextList) {
-                        break;
-                    }
-                }
-
-                if (nextItemIdx !== null && !insideNestedMapping) {
-                    // Don't add blank if the next item is a child (indented more than current)
-                    // This check is redundant since we only set nextItemIdx for same indent,
-                    // but kept for clarity
-                    const nextItemIndent = getIndent(lines[nextItemIdx]);
-                    if (nextItemIndent === listItemIndent) {
-                        // Check if there's a blank line immediately before the next sibling
-                        let hasBlankBefore = false;
-                        for (let k = nextItemIdx - 1; k >= 0; k--) {
-                            if (isBlank(lines[k])) {
-                                hasBlankBefore = true;
-                                break;
-                            }
-                            if (!isBlank(lines[k])) {
+                        // Check first non-blank child
+                        for (let j = i + 1; j < Math.min(i + 10, lines.length); j++) {
+                            if (!isBlank(lines[j])) {
+                                const childLine = lines[j].trim();
+                                const childIndent = getIndent(lines[j]);
+                                if (childIndent > indent && childLine.match(/^-\s+(stage|job|task):/)) {
+                                    shouldAddImplicitSection = true;
+                                }
                                 break;
                             }
                         }
-                        if (!hasBlankBefore) {
-                            insertPositions.push(nextItemIdx);
+                    }
+
+                    if (shouldAddImplicitSection) {
+                        // Only add implicit section once
+                        const hasImplicitSection = sectionStack.some((s) => s.implicit);
+                        if (!hasImplicitSection) {
+                            sectionStack.push({ name: 'stages', indent: -1, implicit: true });
+                        }
+                        insideMainSection = true;
+                    }
+                }
+
+                if (insideMainSection) {
+                    // Find next sibling list item at same indent
+                    let nextItemIdx = null;
+                    for (let j = i + 1; j < lines.length; j++) {
+                        if (isBlank(lines[j])) continue;
+
+                        const nextIndent = getIndent(lines[j]);
+                        const isNextList = isListItem(lines[j]);
+
+                        if (isNextList && nextIndent === listItemIndent) {
+                            nextItemIdx = j;
+                            break;
+                        }
+
+                        // Stop if we encounter a list item at LOWER indent - it starts a new hierarchy branch
+                        // and any items after it are not siblings of the current item
+                        if (isNextList && nextIndent < listItemIndent) {
+                            break;
+                        }
+
+                        // Stop if we encounter a line at same or lower indent that's not a list item
+                        if (nextIndent <= listItemIndent && !isNextList) {
+                            break;
+                        }
+                    }
+
+                    if (nextItemIdx !== null) {
+                        // Don't add blank if the next item is a child (indented more than current)
+                        // This check is redundant since we only set nextItemIdx for same indent,
+                        // but kept for clarity
+                        const nextItemIndent = getIndent(lines[nextItemIdx]);
+                        if (nextItemIndent === listItemIndent) {
+                            // Check if there's a blank line immediately before the next sibling
+                            let hasBlankBefore = false;
+                            for (let k = nextItemIdx - 1; k >= 0; k--) {
+                                if (isBlank(lines[k])) {
+                                    hasBlankBefore = true;
+                                    break;
+                                }
+                                if (!isBlank(lines[k])) {
+                                    break;
+                                }
+                            }
+                            if (!hasBlankBefore) {
+                                insertPositions.push(nextItemIdx);
+                            }
                         }
                     }
                 }
@@ -1683,7 +1738,10 @@ function applyPipelineFormatting(text, newline, options) {
     // here because expansion-formatting follows a different path (handled elsewhere
     // or intentionally preserved). Respect the wasExpanded flag to prevent adding
     // extra blank lines for expanded output.
-    const finalLines = options?.stepSpacing && !options?.wasExpanded ? insertStepSpacing(compacted) : compacted;
+    const finalLines =
+        options?.stepSpacing && !options?.wasExpanded
+            ? insertStepSpacing(compacted, options?.conditionalDirectiveExpressions)
+            : compacted;
 
     return finalLines.join(newline);
 }
@@ -1871,6 +1929,16 @@ function formatYaml(content, options = {}) {
 
         const newline = effective.newlineFormat;
         let normalized = result.replace(/\r?\n/g, newline);
+
+        // Build a set of actual conditional directive expressions for use in formatting
+        const conditionalDirectiveExpressions = new Set();
+        for (const [placeholder, expression] of placeholderMap) {
+            if (conditionalDirectives.has(placeholder)) {
+                conditionalDirectiveExpressions.add(expression);
+            }
+        }
+        effective.conditionalDirectiveExpressions = conditionalDirectiveExpressions;
+
         normalized = applyPipelineFormatting(normalized, newline, effective);
         normalized = normalized
             .split(newline)
