@@ -28,8 +28,11 @@ function activate(context) {
     const dependencyAnalyzer = new DependencyAnalyzer(parser);
     let lastRenderedDocument;
     let debounceTimer;
+    let errorDebounceTimer;
+    const errorDebounceDelayMs = 500;
     let isRendering = false;
     let pendingDocument = null;
+    let pendingError = null;
     const renderedScheme = 'ado-pipeline-expanded';
     const renderedContent = new Map();
     const renderedEmitter = new vscode.EventEmitter();
@@ -183,7 +186,7 @@ function activate(context) {
         })
     );
 
-    const showErrorWebview = (error, context, errorType = 'expansion') => {
+    const showErrorWebviewNow = (error, context, errorType = 'expansion') => {
         const normalizedError = error instanceof Error ? error : new Error(String(error));
         const errorStackText = normalizedError.stack || '';
         // Dispose of existing error panel before creating a new one
@@ -533,6 +536,26 @@ function activate(context) {
         });
     };
 
+    const scheduleErrorDisplay = (delayMs = errorDebounceDelayMs) => {
+        clearTimeout(errorDebounceTimer);
+        errorDebounceTimer = setTimeout(() => {
+            if (!pendingError) return;
+            if (isRendering) {
+                scheduleErrorDisplay(delayMs);
+                return;
+            }
+            const { error: err, context: ctx, errorType: type } = pendingError;
+            pendingError = null;
+            errorDebounceTimer = undefined;
+            showErrorWebviewNow(err, ctx, type);
+        }, delayMs);
+    };
+
+    const showErrorWebview = (error, context, errorType = 'expansion') => {
+        pendingError = { error, context, errorType };
+        scheduleErrorDisplay();
+    };
+
     const closeErrorPanel = () => {
         if (currentErrorPanel) {
             try {
@@ -642,6 +665,10 @@ function activate(context) {
             const targetUri = getRenderTargetUri(document);
             renderedContent.set(targetUri.toString(), formatted.text);
             renderedEmitter.fire(targetUri);
+
+            clearTimeout(errorDebounceTimer);
+            errorDebounceTimer = undefined;
+            pendingError = null;
 
             // Close error panel on successful expansion
             closeErrorPanel();
@@ -1234,31 +1261,60 @@ function activate(context) {
         <div class="content">
             <!-- Diagram Tab -->
             <div class="tab-content active" id="diagram">
-                <div class="legend">
-                    <div class="legend-item">
-                        <div class="legend-color" style="background: #D13438;"></div>
-                        <span>🔴 Critical Path</span>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <div class="legend" style="margin-bottom: 0; flex: 1;">
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #D13438;"></div>
+                            <span>🔴 Critical Path</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #1d4ed8;"></div>
+                            <span>Build Stages</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #16a34a;"></div>
+                            <span>Release Stages</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #ea580c;"></div>
+                            <span>Security/Signing</span>
+                        </div>
                     </div>
-                    <div class="legend-item">
-                        <div class="legend-color" style="background: #1d4ed8;"></div>
-                        <span>Build Stages</span>
-                    </div>
-                    <div class="legend-item">
-                        <div class="legend-color" style="background: #16a34a;"></div>
-                        <span>Release Stages</span>
-                    </div>
-                    <div class="legend-item">
-                        <div class="legend-color" style="background: #ea580c;"></div>
-                        <span>Security/Signing</span>
-                    </div>
+                    <button onclick="toggleDiagramSource()" id="source-toggle-btn" style="padding: 8px 16px; background: #3e3e42; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 500; white-space: nowrap;">📝 View Source</button>
                 </div>
 
                 <div class="diagram-container">
-                    <div class="mermaid">
+                    <div class="mermaid" id="mermaid-diagram">
 ${mermaidDiagram
     .split('\n')
     .map((line) => '                        ' + line)
     .join('\n')}
+                    </div>
+                    <div id="mermaid-error" style="display: none; padding: 20px; background: #2d1f1f; border-left: 4px solid #ff6b6b; color: #ff6b6b; border-radius: 4px; margin-top: 10px;">
+                        <h3 style="margin-top: 0; color: #ff6b6b;">⚠️ Diagram Rendering Error</h3>
+                        <p style="color: #cccccc; margin-bottom: 10px;">The Mermaid diagram failed to render. This could be due to:</p>
+                        <ul style="color: #cccccc; margin-left: 20px;">
+                            <li>Invalid Mermaid syntax in the generated diagram</li>
+                            <li>Complex pipeline structure that exceeds rendering limits</li>
+                            <li>Circular dependencies or invalid stage references</li>
+                        </ul>
+                        <p style="color: #cccccc; margin-top: 10px;">💡 <strong>Tip:</strong> View the source code below or check the "Mermaid Source" tab to validate it at <a href="https://mermaid.live" style="color: #569cd6;">mermaid.live</a></p>
+                        <pre id="mermaid-error-details" style="background: #1e1e1e; padding: 10px; border-radius: 4px; overflow-x: auto; margin-top: 10px; color: #ce9178;"></pre>
+                    </div>
+                </div>
+                
+                <!-- Collapsible Source Code Section -->
+                <div id="diagram-source-section" style="display: none; margin-top: 15px; background: #1e1e1e; border-radius: 4px; overflow: hidden; border-left: 4px solid #0078d4;">
+                    <div style="padding: 15px; background: #2d2d2d; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #3e3e42;">
+                        <h3 style="margin: 0; color: #ffffff; font-size: 1.1em;">📝 Mermaid Source Code</h3>
+                        <div style="display: flex; gap: 10px;">
+                            <button onclick="copyDiagramSource()" style="padding: 6px 12px; background: #0078d4; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500;">📋 Copy</button>
+                            <button onclick="toggleDiagramSource()" style="padding: 6px 12px; background: #3e3e42; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500;">✖ Close</button>
+                        </div>
+                    </div>
+                    <div style="padding: 0;">
+                        <span id="diagram-copy-feedback" style="display: none; position: absolute; right: 20px; margin-top: 10px; color: #4ec9b0; background: #1e1e1e; padding: 5px 10px; border-radius: 4px; font-size: 13px;">✓ Copied!</span>
+                        <pre id="diagram-source-code" style="background: #1e1e1e; padding: 20px; margin: 0; overflow-x: auto; color: #ce9178; line-height: 1.6; font-family: 'Courier New', Courier, monospace; font-size: 14px; white-space: pre-wrap; word-wrap: break-word;">${mermaidDiagram.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
                     </div>
                 </div>
             </div>
@@ -1394,9 +1450,37 @@ ${mermaidDiagram
             }
         };
         
-        // Initialize Mermaid
+        // Toggle diagram source visibility
+        window.toggleDiagramSource = function() {
+            const sourceSection = document.getElementById('diagram-source-section');
+            const toggleBtn = document.getElementById('source-toggle-btn');
+            if (sourceSection && toggleBtn) {
+                const isVisible = sourceSection.style.display !== 'none';
+                sourceSection.style.display = isVisible ? 'none' : 'block';
+                toggleBtn.textContent = isVisible ? '📝 View Source' : '🔼 Hide Source';
+            }
+        };
+        
+        // Copy diagram source to clipboard
+        window.copyDiagramSource = function() {
+            const sourceCode = document.getElementById('diagram-source-code');
+            const feedback = document.getElementById('diagram-copy-feedback');
+            if (sourceCode) {
+                const text = sourceCode.textContent;
+                navigator.clipboard.writeText(text).then(function() {
+                    feedback.style.display = 'inline';
+                    setTimeout(function() {
+                        feedback.style.display = 'none';
+                    }, 2000);
+                }).catch(function(err) {
+                    console.error('Failed to copy:', err);
+                });
+            }
+        };
+        
+        // Initialize Mermaid with error handling
         mermaid.initialize({ 
-            startOnLoad: true,
+            startOnLoad: false,
             theme: 'dark',
             flowchart: {
                 useMaxWidth: true,
@@ -1404,7 +1488,33 @@ ${mermaidDiagram
                 curve: 'basis'
             }
         });
-        mermaid.contentLoaded();
+        
+        // Manually render with error handling
+        try {
+            mermaid.run({
+                querySelector: '.mermaid',
+            }).catch(function(error) {
+                console.error('Mermaid rendering error:', error);
+                const diagramDiv = document.getElementById('mermaid-diagram');
+                const errorDiv = document.getElementById('mermaid-error');
+                const errorDetails = document.getElementById('mermaid-error-details');
+                if (diagramDiv && errorDiv && errorDetails) {
+                    diagramDiv.style.display = 'none';
+                    errorDiv.style.display = 'block';
+                    errorDetails.textContent = error.message || String(error);
+                }
+            });
+        } catch (error) {
+            console.error('Mermaid initialization error:', error);
+            const diagramDiv = document.getElementById('mermaid-diagram');
+            const errorDiv = document.getElementById('mermaid-error');
+            const errorDetails = document.getElementById('mermaid-error-details');
+            if (diagramDiv && errorDiv && errorDetails) {
+                diagramDiv.style.display = 'none';
+                errorDiv.style.display = 'block';
+                errorDetails.textContent = error.message || String(error);
+            }
+        }
         
         // Initial render
         renderStages();

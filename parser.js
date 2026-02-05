@@ -893,6 +893,7 @@ class AzurePipelineParser {
         const firstPath = lineNumber ? `${rawStack[0]}:${lineNumber}` : rawStack[0];
         lines.push('    ' + firstPath);
         for (let i = 1; i < rawStack.length; i++) {
+            // Stack entries now include line numbers in format "path:line" or just "path"
             lines.push('    ' + '  '.repeat(i) + '└── ' + rawStack[i]);
         }
         return '\n' + lines.join('\n');
@@ -2807,13 +2808,32 @@ class AzurePipelineParser {
         const mergedParameters = { ...parameterInfo.parameters, ...providedParameters };
         const templateDisplayPath = repoRef ? `${repoRef.templatePath}@${repoRef.repository}` : templatePath;
 
-        // Build additional human-friendly stack entries: include the display path
-        // Use the repo-qualified display path when available, otherwise the provided
-        // templatePath. This avoids duplicate/misordered entries.
-        const canonicalEntry = templateDisplayPath;
+        // Try to find line number where this template is referenced
+        let templateLineNumber = null;
+        if (context.sourceLines && Array.isArray(context.sourceLines)) {
+            const templateSearchStr = typeof templateRaw === 'string' ? templateRaw : String(templateRaw);
+            for (let i = 0; i < context.sourceLines.length; i++) {
+                const line = context.sourceLines[i];
+                if (line.includes('template:') && line.includes(templateSearchStr)) {
+                    templateLineNumber = i + 1;
+                    break;
+                }
+            }
+        }
+
+        // Build stack entry with path, resolved location (for repo templates), and line number
+        let stackEntry;
+        if (repoRef) {
+            stackEntry = templateLineNumber
+                ? `${templateDisplayPath}:${templateLineNumber} (${resolvedPath})`
+                : `${templateDisplayPath} (${resolvedPath})`;
+        } else {
+            stackEntry = templateLineNumber ? `${templateDisplayPath}:${templateLineNumber}` : templateDisplayPath;
+        }
+
         const updatedContext = {
             ...context,
-            templateStack: [...(context.templateStack || []), canonicalEntry],
+            templateStack: [...(context.templateStack || []), stackEntry],
             parameterMap: { ...parameterInfo.parameterMap }, // Use only template's parameterMap, don't inherit parent's
         };
 
@@ -2821,6 +2841,10 @@ class AzurePipelineParser {
         const templateContext = this.createTemplateContext(updatedContext, mergedParameters, templateBaseDir, {
             repoBaseDir: repoBaseDirForContext,
         });
+
+        // Update source lines to the template file so nested templates can find their line numbers
+        templateContext.sourceLines = templateSource.split('\n');
+
         const expandedTemplate = this.expandNode(templateJson, templateContext) || {};
 
         // Convert template variables to array format before extracting body
