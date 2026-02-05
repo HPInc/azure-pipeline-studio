@@ -1339,53 +1339,74 @@ function compactBlankLines(pass1, newline) {
 /**
  * Update multi-line block tracking state (detects scalar blocks like | and >)
  */
-function updateMultiLineBlockStateForSpacing(line, indent, inMultiLineBlock, multiLineBlockIndent) {
+function updateMultiLineBlockStateForSpacing(state) {
+    const { line, indent, inMultiLineBlock, multiLineBlockIndent } = state;
     if (startsMultiLineScalarBlock(line)) {
-        return { inMultiLineBlock: true, multiLineBlockIndent: indent };
+        state.inMultiLineBlock = true;
+        state.multiLineBlockIndent = indent;
     } else if (inMultiLineBlock && !isBlank(line) && indent <= multiLineBlockIndent) {
-        return { inMultiLineBlock: false, multiLineBlockIndent: -1 };
+        state.inMultiLineBlock = false;
+        state.multiLineBlockIndent = -1;
     }
-    return { inMultiLineBlock, multiLineBlockIndent };
 }
 
 /**
  * Update section context tracking (nested mappings, variables, parameters)
  */
-function updateSectionContextForSpacing(line, indent, trimmed, currentSection, insideVariablesOrParameters) {
-    // Track current section at root level (don't treat list items as sections)
-    if (indent === 0 && !isBlank(line) && !isListItem(line) && isMappingKey(trimmed)) {
-        currentSection = trimmed.slice(0, -1);
-        insideVariablesOrParameters = currentSection === 'variables' || currentSection === 'parameters';
-    }
+function updateSectionContextForSpacing(state) {
+    const { line, indent, trimmed } = state;
 
-    // Exit variables/parameters section when encountering another root-level section
-    if (insideVariablesOrParameters && indent === 0 && !isListItem(line) && isMappingKey(trimmed)) {
+    // Enter variables/parameters section when we see the keyword
+    if (!isBlank(line) && !isListItem(line) && isMappingKey(trimmed)) {
         const sectionName = trimmed.slice(0, -1);
-        if (sectionName !== 'variables' && sectionName !== 'parameters') {
-            insideVariablesOrParameters = false;
+        if (sectionName === 'variables' || sectionName === 'parameters') {
+            state.insideVariablesOrParameters = true;
+            state.variablesOrParametersIndent = indent;
+        } else {
+            // Non-variables/parameters mapping key encountered
+            state.currentSection = sectionName;
         }
     }
 
-    return { currentSection, insideVariablesOrParameters };
+    // Exit variables/parameters section when indent drops below the entry indent
+    if (state.insideVariablesOrParameters && indent < state.variablesOrParametersIndent) {
+        state.insideVariablesOrParameters = false;
+        state.variablesOrParametersIndent = -1;
+    }
+
+    // Also exit when we encounter a sibling mapping key at same indent as entry point
+    if (state.insideVariablesOrParameters && !isBlank(line) && !isListItem(line) && isMappingKey(trimmed)) {
+        const sectionName = trimmed.slice(0, -1);
+        if (
+            sectionName !== 'variables' &&
+            sectionName !== 'parameters' &&
+            indent === state.variablesOrParametersIndent
+        ) {
+            state.insideVariablesOrParameters = false;
+            state.variablesOrParametersIndent = -1;
+        }
+    }
 }
 
 /**
  * Update nested mapping context (mappings with child lists like dependsOn:, parameters:)
  */
-function updateNestedMappingContextForSpacing(
-    insideNestedMapping,
-    nestedMappingIndent,
-    line,
-    indent,
-    trimmed,
-    sectionStack,
-    effectivelyInMultiLineBlock
-) {
+function updateNestedMappingContextForSpacing(state) {
+    const {
+        line,
+        indent,
+        trimmed,
+        sectionStack,
+        effectivelyInMultiLineBlock,
+        insideNestedMapping,
+        nestedMappingIndent,
+    } = state;
+
     // Exit nested mapping context if at lower indent or at same indent but not a list item
     if (insideNestedMapping && !isBlank(line)) {
         if (indent < nestedMappingIndent || (indent === nestedMappingIndent && !isListItem(line))) {
-            insideNestedMapping = false;
-            nestedMappingIndent = -1;
+            state.insideNestedMapping = false;
+            state.nestedMappingIndent = -1;
         }
     }
 
@@ -1402,18 +1423,17 @@ function updateNestedMappingContextForSpacing(
         const sectionName = trimmed.slice(0, -1);
         const mainListSections = new Set(['steps', 'jobs', 'stages']);
         if (!mainListSections.has(sectionName)) {
-            insideNestedMapping = true;
-            nestedMappingIndent = indent;
+            state.insideNestedMapping = true;
+            state.nestedMappingIndent = indent;
         }
     }
-
-    return { insideNestedMapping, nestedMappingIndent };
 }
 
 /**
  * Update section stack for context tracking
  */
-function updateSectionStackForSpacing(sectionStack, line, indent, trimmed, effectivelyInMultiLineBlock) {
+function updateSectionStackForSpacing(state) {
+    const { line, indent, trimmed, sectionStack, effectivelyInMultiLineBlock } = state;
     if (effectivelyInMultiLineBlock || isBlank(line)) return;
 
     const mainListSections = new Set(['steps', 'jobs', 'stages']);
@@ -1439,7 +1459,8 @@ function updateSectionStackForSpacing(sectionStack, line, indent, trimmed, effec
 /**
  * Handle blank removal between parent list item and child content
  */
-function handleBlanksBetweenParentAndChildForSpacing(lines, currentLineIdx, listItemIndent, removePositions) {
+function handleBlanksBetweenParentAndChildForSpacing(state) {
+    const { lines, currentLineIdx, listItemIndent, removePositions } = state;
     let nextNonBlankIdx = -1;
     let blankIndices = [];
 
@@ -1468,7 +1489,8 @@ function handleBlanksBetweenParentAndChildForSpacing(lines, currentLineIdx, list
 /**
  * Check if this list item is inside a main list section (steps, jobs, stages)
  */
-function isInsideMainListSectionForSpacing(sectionStack) {
+function isInsideMainListSectionForSpacing(state) {
+    const { sectionStack } = state;
     const mainListSections = new Set(['steps', 'jobs', 'stages']);
     for (let s = sectionStack.length - 1; s >= 0; s--) {
         if (mainListSections.has(sectionStack[s].name)) {
@@ -1481,11 +1503,12 @@ function isInsideMainListSectionForSpacing(sectionStack) {
 /**
  * Check if this list item should have an implicit main section and add it if needed
  */
-function checkAndAddImplicitSectionForSpacing(sectionStack, triggerLineIdx, lines, trimmed, indent, currentSection) {
+function checkAndAddImplicitSectionForSpacing(state) {
+    const { sectionStack, currentLineIdx, lines, trimmed, indent, currentSection } = state;
     const mainListSections = new Set(['steps', 'jobs', 'stages']);
 
     if (
-        !isInsideMainListSectionForSpacing(sectionStack) &&
+        !isInsideMainListSectionForSpacing(state) &&
         indent === 0 &&
         currentSection !== 'variables' &&
         currentSection !== 'parameters'
@@ -1496,7 +1519,7 @@ function checkAndAddImplicitSectionForSpacing(sectionStack, triggerLineIdx, line
             shouldAddImplicitSection = true;
         } else {
             // Check first non-blank child
-            for (let j = triggerLineIdx + 1; j < Math.min(triggerLineIdx + 10, lines.length); j++) {
+            for (let j = currentLineIdx + 1; j < Math.min(currentLineIdx + 10, lines.length); j++) {
                 if (!isBlank(lines[j])) {
                     const childLine = lines[j].trim();
                     const childIndent = getIndent(lines[j]);
@@ -1522,7 +1545,9 @@ function checkAndAddImplicitSectionForSpacing(sectionStack, triggerLineIdx, line
 /**
  * Process and remove blanks between comments and current task
  */
-function processCommentsBeforeItemForSpacing(lines, currentLineIdx, listItemIndent, removePositions) {
+function processCommentsBeforeItemForSpacing(state) {
+    const { lines, currentLineIdx, listItemIndent, removePositions } = state;
+
     for (let k = currentLineIdx - 1; k >= 0; k--) {
         const checkLine = lines[k];
 
@@ -1561,7 +1586,9 @@ function processCommentsBeforeItemForSpacing(lines, currentLineIdx, listItemInde
 /**
  * Find the next sibling list item at the same indent level
  */
-function findNextSiblingListItemForSpacing(lines, currentLineIdx, listItemIndent) {
+function findNextSiblingListItemForSpacing(state) {
+    const { lines, currentLineIdx, listItemIndent } = state;
+
     for (let j = currentLineIdx + 1; j < lines.length; j++) {
         if (isBlank(lines[j])) continue;
         if (isComment(lines[j])) continue;
@@ -1589,14 +1616,9 @@ function findNextSiblingListItemForSpacing(lines, currentLineIdx, listItemIndent
 /**
  * Process spacing between sibling list items with multi-line condition handling
  */
-function processSiblingSpacingForSpacing(
-    lines,
-    currentLineIdx,
-    listItemIndent,
-    nextItemIdx,
-    removePositions,
-    insertPositions
-) {
+function processSiblingSpacingForSpacing(state, nextItemIdx) {
+    const { lines, currentLineIdx, listItemIndent, removePositions, insertPositions } = state;
+
     const nextItemIndent = getIndent(lines[nextItemIdx]);
     if (nextItemIndent !== listItemIndent) return;
 
@@ -1655,57 +1677,31 @@ function processSiblingSpacingForSpacing(
 /**
  * Process list item for spacing (handles blank removal and insertion)
  */
-function processListItemSpacingForSpacing(
-    lines,
-    currentLineIdx,
-    line,
-    indent,
-    trimmed,
-    sectionStack,
-    insideNestedMapping,
-    insideVariablesOrParameters,
-    currentSection,
-    removePositions,
-    insertPositions
-) {
-    const listItemIndent = indent;
+function processListItemSpacingForSpacing(state) {
+    const { listItemIndent, insideNestedMapping, insideVariablesOrParameters, currentLineIdx } = state;
 
     // Always handle blanks between parent and child, regardless of context
-    handleBlanksBetweenParentAndChildForSpacing(lines, currentLineIdx, listItemIndent, removePositions);
+    handleBlanksBetweenParentAndChildForSpacing(state);
 
     // Only process sibling spacing when NOT in nested mapping AND NOT in variables/parameters
     if (insideNestedMapping || insideVariablesOrParameters) return;
 
-    let insideMainSection = isInsideMainListSectionForSpacing(sectionStack);
+    let insideMainSection = isInsideMainListSectionForSpacing(state);
 
     // Check if we should add implicit section
     if (!insideMainSection) {
-        const added = checkAndAddImplicitSectionForSpacing(
-            sectionStack,
-            currentLineIdx,
-            lines,
-            trimmed,
-            indent,
-            currentSection
-        );
-        insideMainSection = added || isInsideMainListSectionForSpacing(sectionStack);
+        const added = checkAndAddImplicitSectionForSpacing(state);
+        insideMainSection = added || isInsideMainListSectionForSpacing(state);
     }
 
     // Process spacing for items in main sections
     if (!insideMainSection) return;
 
-    processCommentsBeforeItemForSpacing(lines, currentLineIdx, listItemIndent, removePositions);
+    processCommentsBeforeItemForSpacing(state);
 
-    const nextItemIdx = findNextSiblingListItemForSpacing(lines, currentLineIdx, listItemIndent);
+    const nextItemIdx = findNextSiblingListItemForSpacing(state);
     if (nextItemIdx !== null) {
-        processSiblingSpacingForSpacing(
-            lines,
-            currentLineIdx,
-            listItemIndent,
-            nextItemIdx,
-            removePositions,
-            insertPositions
-        );
+        processSiblingSpacingForSpacing(state, nextItemIdx);
     }
 }
 
@@ -1713,76 +1709,56 @@ function processListItemSpacingForSpacing(
  * Insert blank lines between step items if stepSpacing is enabled
  */
 function insertStepSpacing(lines) {
-    const insertPositions = [];
-    const removePositions = [];
-    const sectionStack = [];
-    let inMultiLineBlock = false;
-    let multiLineBlockIndent = -1;
-    let insideNestedMapping = false;
-    let nestedMappingIndent = -1;
-    let currentSection = null;
-    let insideVariablesOrParameters = false;
+    const state = {
+        lines,
+        insertPositions: [],
+        removePositions: [],
+        sectionStack: [],
+        inMultiLineBlock: false,
+        multiLineBlockIndent: -1,
+        insideNestedMapping: false,
+        nestedMappingIndent: -1,
+        currentSection: null,
+        insideVariablesOrParameters: false,
+        variablesOrParametersIndent: -1,
+        currentLineIdx: 0,
+        listItemIndent: 0,
+        line: '',
+        indent: 0,
+        trimmed: '',
+        effectivelyInMultiLineBlock: false,
+    };
 
     for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        const indent = getIndent(line);
-        const trimmed = line.trim();
+        state.currentLineIdx = i;
+        state.line = lines[i];
+        state.indent = getIndent(state.line);
+        state.trimmed = state.line.trim();
 
         // Save multi-line block state BEFORE processing (line starting a block should still be processed for spacing)
-        const wasInMultiLineBlock = inMultiLineBlock;
+        const wasInMultiLineBlock = state.inMultiLineBlock;
 
         // Update block state
-        const blockState = updateMultiLineBlockStateForSpacing(line, indent, inMultiLineBlock, multiLineBlockIndent);
-        inMultiLineBlock = blockState.inMultiLineBlock;
-        multiLineBlockIndent = blockState.multiLineBlockIndent;
-        const effectivelyInMultiLineBlock = wasInMultiLineBlock && inMultiLineBlock;
+        updateMultiLineBlockStateForSpacing(state);
+        state.effectivelyInMultiLineBlock = wasInMultiLineBlock && state.inMultiLineBlock;
 
         // Update section context
-        const sectionContext = updateSectionContextForSpacing(
-            line,
-            indent,
-            trimmed,
-            currentSection,
-            insideVariablesOrParameters
-        );
-        currentSection = sectionContext.currentSection;
-        insideVariablesOrParameters = sectionContext.insideVariablesOrParameters;
+        updateSectionContextForSpacing(state);
 
         // Update nested mapping context
-        const mappingContext = updateNestedMappingContextForSpacing(
-            insideNestedMapping,
-            nestedMappingIndent,
-            line,
-            indent,
-            trimmed,
-            sectionStack,
-            effectivelyInMultiLineBlock
-        );
-        insideNestedMapping = mappingContext.insideNestedMapping;
-        nestedMappingIndent = mappingContext.nestedMappingIndent;
+        updateNestedMappingContextForSpacing(state);
 
         // Update section stack
-        updateSectionStackForSpacing(sectionStack, line, indent, trimmed, effectivelyInMultiLineBlock);
+        updateSectionStackForSpacing(state);
 
         // Process list item spacing
-        if (!effectivelyInMultiLineBlock && isListItem(line)) {
-            processListItemSpacingForSpacing(
-                lines,
-                i,
-                line,
-                indent,
-                trimmed,
-                sectionStack,
-                insideNestedMapping,
-                insideVariablesOrParameters,
-                currentSection,
-                removePositions,
-                insertPositions
-            );
+        if (!state.effectivelyInMultiLineBlock && isListItem(state.line)) {
+            state.listItemIndent = state.indent;
+            processListItemSpacingForSpacing(state);
         }
     }
 
-    return applyBlankLineAdjustmentsForSpacing(lines, removePositions, insertPositions);
+    return applyBlankLineAdjustmentsForSpacing(lines, state.removePositions, state.insertPositions);
 }
 
 /**
