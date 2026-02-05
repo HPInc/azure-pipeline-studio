@@ -5,6 +5,10 @@ class DependencyAnalyzer {
         this._parser = parser;
     }
 
+    analyzeDependencies(sourceFilePath, sourceText, overrides = {}) {
+        return this.analyzePipeline(sourceText, overrides);
+    }
+
     analyzePipeline(sourceText, overrides = {}) {
         try {
             const { yamlDoc, jsonDoc } = this._parser.parseYamlDocument(sourceText, undefined, false);

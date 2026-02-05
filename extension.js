@@ -122,22 +122,23 @@ function activate(context) {
         }
 
         const originalText = document.getText();
-        const formatOptions = getFormatSettings(document);
-        formatOptions.fileName = document.fileName;
-        formatOptions.wasExpanded = false;
-        const formatResult = formatYaml(originalText, formatOptions);
+        let formatResult;
+        try {
+            const formatOptions = getFormatSettings(document);
+            formatOptions.fileName = document.fileName;
+            formatOptions.wasExpanded = false;
+            formatResult = formatYaml(originalText, formatOptions);
 
-        if (formatResult.error) {
-            vscode.window.showErrorMessage(formatResult.error);
-            return;
-        }
-
-        if (formatResult.text === originalText) {
-            if (formatResult.warning) {
-                vscode.window.showWarningMessage(formatResult.warning);
-            } else {
-                vscode.window.showInformationMessage('YAML is already formatted.');
+            if (formatResult.error) {
+                const errorValue =
+                    formatResult.error instanceof Error ? formatResult.error : new Error(String(formatResult.error));
+                showErrorWebview(errorValue, context, 'formatting');
+                return;
             }
+        } catch (error) {
+            const errorMessage =
+                error && error.message ? error.message : 'An unexpected error occurred during YAML formatting';
+            showErrorWebview(errorMessage, context, 'formatting');
             return;
         }
 
@@ -152,10 +153,395 @@ function activate(context) {
             return;
         }
 
+        // Close error panel on successful formatting
+        closeErrorPanel();
+
         if (formatResult.warning) {
             vscode.window.showWarningMessage(formatResult.warning);
         } else {
             vscode.window.setStatusBarMessage('Applied YAML formatting.', 3000);
+        }
+    };
+
+    let errorPanelOpen = false;
+    let currentErrorPanel = null;
+
+    // Register openErrorFile command once at activation
+    context.subscriptions.push(
+        vscode.commands.registerCommand('azurePipelineStudio.openErrorFile', async (filePath, lineNumber) => {
+            try {
+                const document = await vscode.workspace.openTextDocument(filePath);
+                const options = { preview: false };
+                if (lineNumber && lineNumber > 0) {
+                    const position = new vscode.Position(lineNumber - 1, 0);
+                    options.selection = new vscode.Range(position, position);
+                }
+                await vscode.window.showTextDocument(document, options);
+            } catch (err) {
+                vscode.window.showErrorMessage(`Failed to open file: ${filePath}`);
+            }
+        })
+    );
+
+    const showErrorWebview = (error, context, errorType = 'expansion') => {
+        const normalizedError = error instanceof Error ? error : new Error(String(error));
+        const errorStackText = normalizedError.stack || '';
+        // Dispose of existing error panel before creating a new one
+        if (currentErrorPanel) {
+            try {
+                currentErrorPanel.dispose();
+            } catch (e) {
+                // Panel already disposed, ignore
+            }
+            currentErrorPanel = null;
+        }
+
+        // Determine panel title based on error type
+        const titles = {
+            expansion: '❌ Pipeline Expansion Error',
+            formatting: '❌ YAML Formatting Error',
+            dependency: '❌ Dependency Analysis Error',
+        };
+        const title = titles[errorType] || '❌ Pipeline Error';
+
+        // Create webview panel
+        const panel = vscode.window.createWebviewPanel('azurePipelineError', title, vscode.ViewColumn.Beside, {
+            enableScripts: true,
+        });
+
+        // Store reference to current error panel
+        currentErrorPanel = panel;
+
+        // Mark error panel as open
+        errorPanelOpen = true;
+
+        // Clean up when panel is disposed
+        panel.onDidDispose(() => {
+            errorPanelOpen = false;
+            currentErrorPanel = null;
+        });
+
+        const escapeHtml = (text) => {
+            return String(text)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        };
+
+        // Convert file paths in text to clickable links
+        const makePathsClickable = (text) => {
+            // Match UNC, Windows, and Unix paths with optional line numbers
+            const pathRegex =
+                /(\\\\[^\s\n:]+\.(?:ya?ml|js|ts))(?::(\d+))?(?::(\d+))?|([A-Za-z]:\\[^\s\n:]+\.(?:ya?ml|js|ts))(?::(\d+))?(?::(\d+))?|(\/[^\s\n:]+\.(?:ya?ml|js|ts))(?::(\d+))?(?::(\d+))?/g;
+
+            return text.replace(
+                pathRegex,
+                (match, uncPath, uncLine, uncCol, winPath, winLine, winCol, unixPath, unixLine, unixCol) => {
+                    const filePath = uncPath || winPath || unixPath;
+                    const lineNumber = uncLine || winLine || unixLine;
+
+                    // Skip extension bundle paths
+                    if (filePath && filePath.includes('extension-bundle.js')) {
+                        return match;
+                    }
+
+                    if (filePath) {
+                        const escapedPath = filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                        const lineParam = lineNumber ? lineNumber : 'null';
+                        return `<a class="file-link" href="#" onclick="openFile('${escapedPath}', ${lineParam}); return false;">${escapeHtml(match)}</a>`;
+                    }
+                    return match;
+                }
+            );
+        };
+
+        // Format error message with line breaks and proper indentation
+        const formatErrorMessage = (text) => {
+            // First escape HTML
+            const escaped = escapeHtml(text);
+            // Make paths clickable
+            const withLinks = makePathsClickable(escaped);
+            // Convert newlines to <br> and preserve spaces
+            return withLinks
+                .split('\n')
+                .map((line) => line.replace(/^( +)/, (match) => '&nbsp;'.repeat(match.length)))
+                .join('<br>');
+        };
+
+        const parseErrorSections = (text) => {
+            const lines = String(text || '').split('\n');
+            const messageLines = [];
+            const templateLines = [];
+            const tipLines = [];
+
+            let i = 0;
+            while (i < lines.length) {
+                const trimmed = lines[i].trim();
+                const tipHeaderMatch = /^.*tips?:/i.exec(trimmed);
+                if (trimmed.toLowerCase() === 'template call stack:') {
+                    i++;
+                    while (i < lines.length && lines[i].trim()) {
+                        templateLines.push(lines[i].trim());
+                        i++;
+                    }
+                    continue;
+                }
+                if (tipHeaderMatch) {
+                    const afterColon = trimmed.split(':').slice(1).join(':').trim();
+                    if (afterColon) {
+                        tipLines.push(afterColon);
+                    }
+                    i++;
+                    while (i < lines.length && lines[i].trim()) {
+                        tipLines.push(lines[i].trim());
+                        i++;
+                    }
+                    continue;
+                }
+
+                messageLines.push(lines[i]);
+                i++;
+            }
+
+            return { messageLines, templateLines, tipLines };
+        };
+
+        const extractTemplateCallStackFromText = (text) => {
+            const match = /Template call stack:\s*([\s\S]*?)(?:\n\s*\n|$)/i.exec(String(text || ''));
+            if (!match || !match[1]) {
+                return [];
+            }
+
+            return match[1]
+                .split('\n')
+                .map((line) => line.trim())
+                .filter((line) => line.length > 0);
+        };
+
+        const rawErrorText = normalizedError.message || String(normalizedError);
+        const undefinedParamMatch = /Undefined template parameter '([^']+)'/.exec(rawErrorText);
+        const parsedSections = parseErrorSections(rawErrorText);
+        let messageLines = parsedSections.messageLines.filter((line) => line.trim().length);
+        let templateLines = parsedSections.templateLines;
+        let tipLines = parsedSections.tipLines;
+
+        if (!templateLines.length) {
+            templateLines = extractTemplateCallStackFromText(rawErrorText);
+        }
+
+        if (!templateLines.length && errorStackText) {
+            templateLines = extractTemplateCallStackFromText(errorStackText);
+        }
+
+        if (undefinedParamMatch) {
+            const paramName = undefinedParamMatch[1];
+            messageLines = [`Undefined template parameter '${paramName}'.`];
+            tipLines = [
+                `- Ensure '${paramName}' is declared in the 'parameters' section`,
+                '- Check if the reference should use a loop object instead of parameters (For e.g. {{ each cfg in configurations }}:, properties inside cfg should be referred with cfg.name)',
+            ];
+            if (!templateLines.length && errorStackText) {
+                templateLines = extractTemplateCallStackFromText(errorStackText);
+            }
+        }
+
+        if (tipLines.length === 0 && errorType === 'expansion') {
+            tipLines = [
+                '- Undefined or circular template references',
+                '- Missing or incorrect parameter values',
+                '- Malformed YAML structure in referenced templates',
+                '- Use "Show Dependencies" to see the complete dependency graph and identify the root cause.',
+            ];
+        }
+
+        const detailsLines = [];
+        if (messageLines.length) {
+            detailsLines.push(...messageLines);
+        }
+
+        if (templateLines.length) {
+            detailsLines.push('Template call stack:');
+            templateLines.forEach((line) => {
+                detailsLines.push(`    ${line}`);
+            });
+        }
+
+        const errorDetailsText = detailsLines.join('\n');
+
+        const tipLinesNormalized = tipLines.map((line) =>
+            line.startsWith('-') || line.startsWith('•') ? line : `- ${line}`
+        );
+        const tipsHtml = tipLinesNormalized.length
+            ? `
+                    <h2>Tips</h2>
+                    <div class="error-details">
+                        <code>${formatErrorMessage(tipLinesNormalized.join('\n'))}</code>
+                    </div>
+            `
+            : '';
+
+        const stackLines = errorStackText
+            .split('\n')
+            .filter((line, index) => index === 0 || line.trim().startsWith('at '));
+        const sanitizedStackText = stackLines.length > 1 ? stackLines.slice(1).join('\n') : '';
+
+        // Build HTML content with proper styling
+        let htmlContent = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <style>
+                    body {
+                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                        line-height: 1.6;
+                        color: #e0e0e0;
+                        background-color: #1e1e1e;
+                        padding: 20px;
+                        margin: 0;
+                    }
+                    .error-container {
+                        max-width: 900px;
+                        margin: 0 auto;
+                    }
+                    h1 {
+                        color: #ff6b6b;
+                        margin-top: 0;
+                        font-size: 1.8em;
+                    }
+                    h2 {
+                        color: #ff9f43;
+                        margin-top: 20px;
+                        font-size: 1.3em;
+                        border-bottom: 1px solid #444;
+                        padding-bottom: 8px;
+                    }
+                    .error-details {
+                        background-color: #252526;
+                        border-left: 3px solid #ff6b6b;
+                        padding: 12px;
+                        margin: 12px 0;
+                        border-radius: 4px;
+                        overflow-x: auto;
+                        line-height: 1.8;
+                    }
+                    .error-details code {
+                        font-family: 'Courier New', Courier, monospace;
+                        font-size: 0.95em;
+                        color: #ce9178;
+                        white-space: normal;
+                        display: block;
+                    }
+                    .tip-box {
+                        background-color: #1f3a2c;
+                        border-left: 3px solid #4ec9b0;
+                        padding: 12px;
+                        margin: 12px 0;
+                        border-radius: 4px;
+                    }
+                    .tip-label {
+                        font-weight: bold;
+                        color: #4ec9b0;
+                        margin-bottom: 8px;
+                    }
+                    ul {
+                        margin: 8px 0;
+                        padding-left: 20px;
+                    }
+                    li {
+                        margin: 4px 0;
+                    }
+                    .file-link {
+                        color: #569cd6;
+                        text-decoration: underline;
+                        cursor: pointer;
+                        font-family: inherit;
+                    }
+                    .file-link:hover {
+                        color: #4fc3f7;
+                    }
+                    .stack-trace {
+                        background-color: #252526;
+                        border-left: 3px solid #888;
+                        padding: 12px;
+                        margin: 12px 0;
+                        border-radius: 4px;
+                        overflow-x: auto;
+                        font-family: 'Courier New', Courier, monospace;
+                        font-size: 0.9em;
+                        color: #d4d4d4;
+                        max-height: 400px;
+                        overflow-y: auto;
+                    }
+                    .file-list {
+                        background-color: #252526;
+                        border-left: 3px solid #569cd6;
+                        padding: 12px;
+                        margin: 12px 0;
+                        border-radius: 4px;
+                    }
+                    .hr {
+                        border: none;
+                        border-top: 1px solid #444;
+                        margin: 16px 0;
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="error-container">
+                    <h1>${escapeHtml(title)}</h1>
+                    
+                    <h2>Error Details</h2>
+                    <div class="error-details">
+                        <code>${formatErrorMessage(errorDetailsText)}</code>
+                    </div>
+
+                    ${tipsHtml}
+
+                    <h2>Stack Trace</h2>
+                    <div class="stack-trace">
+                        <pre>${makePathsClickable(escapeHtml(sanitizedStackText || 'No stack trace available'))}</pre>
+                    </div>
+                </div>
+
+                <script>
+                    const vscode = acquireVsCodeApi();
+                    function openFile(filePath, lineNumber) {
+                        vscode.postMessage({
+                            command: 'openFile',
+                            filePath: filePath,
+                            lineNumber: lineNumber
+                        });
+                    }
+                </script>
+            </body>
+            </html>
+        `;
+
+        panel.webview.html = htmlContent;
+
+        // Handle messages from webview
+        panel.webview.onDidReceiveMessage((message) => {
+            if (message.command === 'openFile') {
+                vscode.commands.executeCommand(
+                    'azurePipelineStudio.openErrorFile',
+                    message.filePath,
+                    message.lineNumber
+                );
+            }
+        });
+    };
+
+    const closeErrorPanel = () => {
+        if (currentErrorPanel) {
+            try {
+                currentErrorPanel.dispose();
+            } catch (e) {
+                // Panel already disposed, ignore
+            }
+            currentErrorPanel = null;
+            errorPanelOpen = false;
         }
     };
 
@@ -171,8 +557,60 @@ function activate(context) {
         }, delayMs);
     };
 
+    const enrichErrorWithLineNumbers = async (error) => {
+        try {
+            const errorText = error.message || String(error);
+
+            // Extract file paths and parameters from error
+            const filePathRegex = /(\\\\[^\s\n:]+\.ya?ml|[A-Za-z]:\\[^\s\n:]+\.ya?ml|\/[^\s\n:]+\.ya?ml)/g;
+            const undefinedParamRegex = /Undefined template parameter '([^']+)'/g;
+
+            let paramName = null;
+            const paramMatch = undefinedParamRegex.exec(errorText);
+            if (paramMatch) {
+                paramName = paramMatch[1];
+            }
+
+            let filePath = null;
+            const fileMatch = filePathRegex.exec(errorText);
+            if (fileMatch) {
+                filePath = fileMatch[1];
+            }
+
+            if (paramName && filePath) {
+                try {
+                    const fileUri = vscode.Uri.file(filePath);
+                    const fileContent = await vscode.workspace.fs.readFile(fileUri);
+                    const fileText = new TextDecoder().decode(fileContent);
+                    const lines = fileText.split('\n');
+
+                    // Search for the parameter in the file
+                    for (let i = 0; i < lines.length; i++) {
+                        if (lines[i].includes(paramName)) {
+                            const lineNumber = i + 1;
+                            // Add line number to error message
+                            const enrichedError = new Error(errorText.replace(filePath, `${filePath}:${lineNumber}`));
+                            enrichedError.stack = error.stack;
+                            return enrichedError;
+                        }
+                    }
+                } catch (e) {
+                    // If we can't read the file, just return the original error
+                    return error;
+                }
+            }
+
+            return error;
+        } catch (e) {
+            return error;
+        }
+    };
+
     const renderYamlDocument = async (document, options = {}) => {
         if (!document) return;
+        if (errorPanelOpen) {
+            closeErrorPanel();
+        }
 
         lastRenderedDocument = document;
         const sourceText = document.getText();
@@ -205,6 +643,9 @@ function activate(context) {
             renderedContent.set(targetUri.toString(), formatted.text);
             renderedEmitter.fire(targetUri);
 
+            // Close error panel on successful expansion
+            closeErrorPanel();
+
             if (!options.silent) {
                 const targetDoc = await vscode.workspace.openTextDocument(targetUri);
                 await vscode.window.showTextDocument(targetDoc, {
@@ -215,44 +656,10 @@ function activate(context) {
             }
         } catch (error) {
             console.error('Error expanding pipeline:', error);
-            const targetUri = getRenderTargetUri(document);
-
-            // Clear any previous content and show error prominently
-            const errorMessage = [
-                '# ❌ Error Expanding Azure Pipeline',
-                '',
-                '## Error Details',
-                '',
-                '```',
-                error.message || String(error),
-                '```',
-                '',
-                '---',
-                '',
-                '**Tip**: Check the indentation in your YAML file. Common issues include:',
-                '- `steps:` not properly indented under `job:`',
-                '- Missing or extra spaces in YAML structure',
-                '- Template expressions that are malformed',
-                '',
-                '## Stack Trace',
-                '',
-                '```',
-                error.stack || 'No stack trace available',
-                '```',
-            ].join('\n');
-
-            renderedContent.set(targetUri.toString(), errorMessage);
-            renderedEmitter.fire(targetUri);
-
-            // Always show errors, even in silent mode
-            const targetDoc = await vscode.workspace.openTextDocument(targetUri);
-            await vscode.window.showTextDocument(targetDoc, {
-                viewColumn: vscode.ViewColumn.Beside,
-                preview: false,
-                preserveFocus: true,
-            });
-
-            vscode.window.showErrorMessage(`Failed to expand Azure Pipeline: ${error.message}`);
+            const errorMessage = error.message || String(error);
+            const enhancedError = new Error(`Error Expanding Azure Pipeline:\n\n${errorMessage}`);
+            enhancedError.stack = error.stack;
+            showErrorWebview(enhancedError, context, 'expansion');
         } finally {
             isRendering = false;
             pendingDocument && scheduleRender(pendingDocument, 0);
@@ -320,6 +727,7 @@ function activate(context) {
             return;
         }
 
+        closeErrorPanel();
         await renderYamlDocument(editor.document, { azureCompatible: false });
     });
     context.subscriptions.push(commandDisposable);
@@ -333,6 +741,7 @@ function activate(context) {
                 return;
             }
 
+            closeErrorPanel();
             await renderYamlDocument(editor.document, { azureCompatible: true });
         }
     );
@@ -347,6 +756,7 @@ function activate(context) {
                 return;
             }
 
+            closeErrorPanel();
             await formatOriginalDocument(editor.document);
         }
     );
@@ -375,6 +785,7 @@ function activate(context) {
                 return;
             }
 
+            closeErrorPanel();
             try {
                 const sourceText = editor.document.getText();
                 const document = editor.document;
@@ -398,7 +809,20 @@ function activate(context) {
 
                 // Analyze the expanded pipeline
                 vscode.window.setStatusBarMessage('Analyzing dependencies...', 2000);
-                const dependencies = dependencyAnalyzer.analyzePipeline(expandedYaml);
+                let dependencies;
+                try {
+                    dependencies = dependencyAnalyzer.analyzePipeline(expandedYaml);
+                } catch (error) {
+                    const errorMessage = error.message || 'An error occurred while analyzing pipeline dependencies';
+                    const enhancedMessage =
+                        `Error in Show Dependencies:\n\n${errorMessage}\n\n` +
+                        `💡 Tip: It's often easier to identify and fix issues using "Expand Pipeline" first. ` +
+                        `This will show you the full expanded YAML with all template variables and references resolved.`;
+                    const enhancedError = new Error(enhancedMessage);
+                    enhancedError.stack = error.stack;
+                    showErrorWebview(enhancedError, context, 'dependency');
+                    return;
+                }
 
                 // Create webview panel to display diagram
                 const panel = vscode.window.createWebviewPanel(
@@ -991,28 +1415,28 @@ ${mermaidDiagram
                 panel.webview.html = htmlContent;
 
                 // Handle messages from webview
-                panel.webview.onDidReceiveMessage(
-                    async (message) => {
-                        if (message.command === 'openInBrowser') {
-                            try {
-                                const os = require('os');
-                                const tempFile = path.join(os.tmpdir(), `pipeline-dependencies-${Date.now()}.html`);
-                                fs.writeFileSync(tempFile, htmlContent);
-                                await vscode.env.openExternal(vscode.Uri.file(tempFile));
-                                vscode.window.showInformationMessage('Opened dependencies in browser');
-                            } catch (err) {
-                                vscode.window.showErrorMessage(`Failed to open in browser: ${err.message}`);
-                            }
+                // Handle messages from webview (panel-specific, not added to context subscriptions)
+                panel.webview.onDidReceiveMessage(async (message) => {
+                    if (message.command === 'openInBrowser') {
+                        try {
+                            const os = require('os');
+                            const tempFile = path.join(os.tmpdir(), `pipeline-dependencies-${Date.now()}.html`);
+                            fs.writeFileSync(tempFile, htmlContent);
+                            await vscode.env.openExternal(vscode.Uri.file(tempFile));
+                            vscode.window.showInformationMessage('Opened dependencies in browser');
+                        } catch (err) {
+                            vscode.window.showErrorMessage(`Failed to open in browser: ${err.message}`);
                         }
-                    },
-                    undefined,
-                    context.subscriptions
-                );
+                    }
+                });
+
+                // Close error panel on successful dependency analysis
+                closeErrorPanel();
 
                 vscode.window.setStatusBarMessage('Pipeline dependencies analyzed.', 3000);
             } catch (error) {
                 console.error('Error analyzing dependencies:', error);
-                vscode.window.showErrorMessage(`Failed to analyze dependencies: ${error.message}`);
+                showErrorWebview(error, context, 'dependency');
             }
         }
     );
