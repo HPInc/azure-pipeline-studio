@@ -1339,7 +1339,7 @@ function compactBlankLines(pass1, newline) {
 /**
  * Insert blank lines between step items if stepSpacing is enabled
  */
-function insertStepSpacing(lines, conditionalDirectiveExpressions = new Set()) {
+function insertStepSpacing(lines) {
     const insertPositions = [];
     const removePositions = []; // Track blanks to remove (between parent and child)
     const sectionStack = [];
@@ -1861,10 +1861,7 @@ function applyPipelineFormatting(text, newline, options) {
     // here because expansion-formatting follows a different path (handled elsewhere
     // or intentionally preserved). Respect the wasExpanded flag to prevent adding
     // extra blank lines for expanded output.
-    const finalLines =
-        options?.stepSpacing && !options?.wasExpanded
-            ? insertStepSpacing(compacted, options?.conditionalDirectiveExpressions)
-            : compacted;
+    const finalLines = options?.stepSpacing && !options?.wasExpanded ? insertStepSpacing(compacted) : compacted;
 
     return finalLines.join(newline);
 }
@@ -2052,15 +2049,6 @@ function formatYaml(content, options = {}) {
 
         const newline = effective.newlineFormat;
         let normalized = result.replace(/\r?\n/g, newline);
-
-        // Build a set of actual conditional directive expressions for use in formatting
-        const conditionalDirectiveExpressions = new Set();
-        for (const [placeholder, expression] of placeholderMap) {
-            if (conditionalDirectives.has(placeholder)) {
-                conditionalDirectiveExpressions.add(expression);
-            }
-        }
-        effective.conditionalDirectiveExpressions = conditionalDirectiveExpressions;
 
         normalized = applyPipelineFormatting(normalized, newline, effective);
         normalized = normalized
