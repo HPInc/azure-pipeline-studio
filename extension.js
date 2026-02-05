@@ -184,6 +184,8 @@ function activate(context) {
     );
 
     const showErrorWebview = (error, context, errorType = 'expansion') => {
+        const normalizedError = error instanceof Error ? error : new Error(String(error));
+        const errorStackText = normalizedError.stack || '';
         // Dispose of existing error panel before creating a new one
         if (currentErrorPanel) {
             try {
@@ -267,6 +269,123 @@ function activate(context) {
                 .map((line) => line.replace(/^( +)/, (match) => '&nbsp;'.repeat(match.length)))
                 .join('<br>');
         };
+
+        const parseErrorSections = (text) => {
+            const lines = String(text || '').split('\n');
+            const messageLines = [];
+            const templateLines = [];
+            const tipLines = [];
+
+            let i = 0;
+            while (i < lines.length) {
+                const trimmed = lines[i].trim();
+                const tipHeaderMatch = /^.*tips?:/i.exec(trimmed);
+                if (trimmed.toLowerCase() === 'template call stack:') {
+                    i++;
+                    while (i < lines.length && lines[i].trim()) {
+                        templateLines.push(lines[i].trim());
+                        i++;
+                    }
+                    continue;
+                }
+                if (tipHeaderMatch) {
+                    const afterColon = trimmed.split(':').slice(1).join(':').trim();
+                    if (afterColon) {
+                        tipLines.push(afterColon);
+                    }
+                    i++;
+                    while (i < lines.length && lines[i].trim()) {
+                        tipLines.push(lines[i].trim());
+                        i++;
+                    }
+                    continue;
+                }
+
+                messageLines.push(lines[i]);
+                i++;
+            }
+
+            return { messageLines, templateLines, tipLines };
+        };
+
+        const extractTemplateCallStackFromText = (text) => {
+            const match = /Template call stack:\s*([\s\S]*?)(?:\n\s*\n|$)/i.exec(String(text || ''));
+            if (!match || !match[1]) {
+                return [];
+            }
+
+            return match[1]
+                .split('\n')
+                .map((line) => line.trim())
+                .filter((line) => line.length > 0);
+        };
+
+        const rawErrorText = normalizedError.message || String(normalizedError);
+        const undefinedParamMatch = /Undefined template parameter '([^']+)'/.exec(rawErrorText);
+        const parsedSections = parseErrorSections(rawErrorText);
+        let messageLines = parsedSections.messageLines.filter((line) => line.trim().length);
+        let templateLines = parsedSections.templateLines;
+        let tipLines = parsedSections.tipLines;
+
+        if (!templateLines.length) {
+            templateLines = extractTemplateCallStackFromText(rawErrorText);
+        }
+
+        if (!templateLines.length && errorStackText) {
+            templateLines = extractTemplateCallStackFromText(errorStackText);
+        }
+
+        if (undefinedParamMatch) {
+            const paramName = undefinedParamMatch[1];
+            messageLines = [`Undefined template parameter '${paramName}'.`];
+            tipLines = [
+                `- Ensure '${paramName}' is declared in the 'parameters' section`,
+                '- Check if the reference should use a loop object instead of parameters (For e.g. {{ each cfg in configurations }}:, properties inside cfg should be referred with cfg.name)',
+            ];
+            if (!templateLines.length && errorStackText) {
+                templateLines = extractTemplateCallStackFromText(errorStackText);
+            }
+        }
+
+        if (tipLines.length === 0 && errorType === 'expansion') {
+            tipLines = [
+                '- Undefined or circular template references',
+                '- Missing or incorrect parameter values',
+                '- Malformed YAML structure in referenced templates',
+                '- Use "Show Dependencies" to see the complete dependency graph and identify the root cause.',
+            ];
+        }
+
+        const detailsLines = [];
+        if (messageLines.length) {
+            detailsLines.push(...messageLines);
+        }
+
+        if (templateLines.length) {
+            detailsLines.push('Template call stack:');
+            templateLines.forEach((line) => {
+                detailsLines.push(`    ${line}`);
+            });
+        }
+
+        const errorDetailsText = detailsLines.join('\n');
+
+        const tipLinesNormalized = tipLines.map((line) =>
+            line.startsWith('-') || line.startsWith('•') ? line : `- ${line}`
+        );
+        const tipsHtml = tipLinesNormalized.length
+            ? `
+                    <h2>Tips</h2>
+                    <div class="error-details">
+                        <code>${formatErrorMessage(tipLinesNormalized.join('\n'))}</code>
+                    </div>
+            `
+            : '';
+
+        const stackLines = errorStackText
+            .split('\n')
+            .filter((line, index) => index === 0 || line.trim().startsWith('at '));
+        const sanitizedStackText = stackLines.length > 1 ? stackLines.slice(1).join('\n') : '';
 
         // Build HTML content with proper styling
         let htmlContent = `
@@ -375,22 +494,14 @@ function activate(context) {
                     
                     <h2>Error Details</h2>
                     <div class="error-details">
-                        <code>${formatErrorMessage(error.message || String(error))}</code>
+                        <code>${formatErrorMessage(errorDetailsText)}</code>
                     </div>
 
-                    <div class="hr"></div>
-                    <div class="tip-box">
-                        <div class="tip-label">💡 Tip: Common Issues</div>
-                        <ul>
-                            <li><code>steps:</code> not properly indented under <code>job:</code></li>
-                            <li>Missing or extra spaces in YAML structure</li>
-                            <li>Template expressions that are malformed</li>
-                        </ul>
-                    </div>
+                    ${tipsHtml}
 
                     <h2>Stack Trace</h2>
                     <div class="stack-trace">
-                        <pre>${makePathsClickable(escapeHtml(error.stack || 'No stack trace available'))}</pre>
+                        <pre>${makePathsClickable(escapeHtml(sanitizedStackText || 'No stack trace available'))}</pre>
                     </div>
                 </div>
 
@@ -546,14 +657,7 @@ function activate(context) {
         } catch (error) {
             console.error('Error expanding pipeline:', error);
             const errorMessage = error.message || String(error);
-            const enhancedError = new Error(
-                `Error Expanding Azure Pipeline:\n\n${errorMessage}\n\n` +
-                    `💡 Tip: Pipeline expansion errors often occur due to:\n` +
-                    `• Undefined or circular template references\n` +
-                    `• Missing or incorrect parameter values\n` +
-                    `• Malformed YAML structure in referenced templates\n\n` +
-                    `Use "Show Dependencies" to see the complete dependency graph and identify the root cause.`
-            );
+            const enhancedError = new Error(`Error Expanding Azure Pipeline:\n\n${errorMessage}`);
             enhancedError.stack = error.stack;
             showErrorWebview(enhancedError, context, 'expansion');
         } finally {
@@ -714,7 +818,9 @@ function activate(context) {
                         `Error in Show Dependencies:\n\n${errorMessage}\n\n` +
                         `💡 Tip: It's often easier to identify and fix issues using "Expand Pipeline" first. ` +
                         `This will show you the full expanded YAML with all template variables and references resolved.`;
-                    showErrorWebview(enhancedMessage, context, 'dependency');
+                    const enhancedError = new Error(enhancedMessage);
+                    enhancedError.stack = error.stack;
+                    showErrorWebview(enhancedError, context, 'dependency');
                     return;
                 }
 
@@ -1330,11 +1436,7 @@ ${mermaidDiagram
                 vscode.window.setStatusBarMessage('Pipeline dependencies analyzed.', 3000);
             } catch (error) {
                 console.error('Error analyzing dependencies:', error);
-                showErrorWebview(
-                    error.message || 'An unexpected error occurred while analyzing pipeline dependencies',
-                    context,
-                    'dependency'
-                );
+                showErrorWebview(error, context, 'dependency');
             }
         }
     );
