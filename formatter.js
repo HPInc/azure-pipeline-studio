@@ -459,6 +459,31 @@ function validateTemplateExpressions(line, lineNumber) {
 }
 
 /**
+ * Check if we've exited the jobs block
+ */
+function hasExitedJobsBlock(isTemplateExpr, indent, jobsIndent, trimmed) {
+    return (
+        !isTemplateExpr &&
+        indent <= jobsIndent &&
+        trimmed.includes(':') &&
+        !trimmed.startsWith('-') &&
+        !trimmed.startsWith('${{') &&
+        !trimmed.startsWith('jobs:')
+    );
+}
+
+/**
+ * Check if we're starting a new job
+ */
+function isStartingNewJob(inJobObject, trimmed, jobPropertiesIndent, indent) {
+    return (
+        inJobObject &&
+        (trimmed.match(/^-\s+job:/) ||
+            (trimmed.startsWith('job:') && jobPropertiesIndent !== -1 && indent <= jobPropertiesIndent))
+    );
+}
+
+/**
  * Describe YAML syntax errors in a user-friendly way
  * @param {Error} error - The error object
  * @returns {string|undefined} A formatted error message or undefined
@@ -507,14 +532,7 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
                 const isTemplateExpr = trimmed.match(/^\$\{\{/) || trimmed.match(/^\$\[/);
 
                 // Check if we've exited the jobs block (but exclude "jobs:" itself)
-                if (
-                    !isTemplateExpr &&
-                    indent <= jobsIndent &&
-                    trimmed.includes(':') &&
-                    !trimmed.startsWith('-') &&
-                    !trimmed.startsWith('${{') &&
-                    !trimmed.startsWith('jobs:')
-                ) {
+                if (hasExitedJobsBlock(isTemplateExpr, indent, jobsIndent, trimmed)) {
                     inJobsArray = false;
                     inJobObject = false;
                 }
@@ -565,11 +583,7 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
 
                     // Detect if we're starting a new job (end of current job tracking)
                     // Only reset if we're currently tracking a job and see another job start
-                    if (
-                        inJobObject &&
-                        (trimmed.match(/^-\s+job:/) ||
-                            (trimmed.startsWith('job:') && jobPropertiesIndent !== -1 && indent <= jobPropertiesIndent))
-                    ) {
+                    if (isStartingNewJob(inJobObject, trimmed, jobPropertiesIndent, indent)) {
                         // Check if this is a NEW job (not the one we just detected on line 342-346)
                         // by checking if we already have jobPropertiesIndent set
                         if (jobPropertiesIndent !== -1) {
@@ -960,10 +974,7 @@ function handleCommentLine(state) {
         }
 
         if (
-            inNestedSteps ||
-            currentSection === 'steps' ||
-            stepSpacingSections.includes(currentSection) ||
-            (foundFirstMainSection && getIndent(line) === 0)
+            shouldAddBlankBeforeComment(inNestedSteps, currentSection, stepSpacingSections, foundFirstMainSection, line)
         ) {
             const lastLine = pass1.length > 0 ? pass1[pass1.length - 1] : null;
             const lastTrimmed = lastLine ? lastLine.trim() : '';
@@ -977,6 +988,18 @@ function handleCommentLine(state) {
 
     pass1.push(line);
     return true;
+}
+
+/**
+ * Check if should add blank line before comment
+ */
+function shouldAddBlankBeforeComment(inNestedSteps, currentSection, stepSpacingSections, foundFirstMainSection, line) {
+    return (
+        inNestedSteps ||
+        currentSection === 'steps' ||
+        stepSpacingSections.includes(currentSection) ||
+        (foundFirstMainSection && getIndent(line) === 0)
+    );
 }
 
 // Find previous non-blank line in an array
@@ -1096,16 +1119,7 @@ function handleBlankLine(state) {
  * Handle step spacing logic for pipeline items
  */
 function handleStepSpacing(state) {
-    const {
-        pass1,
-        lastStepInStepsSection,
-        inMultiLineBlock,
-        variablesIndent,
-        startsMultiLineBlock,
-        lineIndent,
-        lineNum,
-        lines,
-    } = state;
+    const { pass1, lineIndent, lineNum, lines } = state;
     const line = lines[lineNum];
     const trimmed = line.trim();
 
@@ -1127,33 +1141,40 @@ function handleStepSpacing(state) {
     const isListEntry = isListItem(line);
     const isConditional = isConditionalListItem(line);
     const isPipelineItem = isListEntry && !isConditional && isStepOrExpressionListItem(line);
-    const isRootLevelConditional = isConditional && lastStepInStepsSection >= 0;
-
-    // Items in variables section are list items (starting with -) at the same indent as variables:
-    const inVariablesSection = variablesIndent >= 0 && lineIndent === variablesIndent && isListEntry;
-
-    // Check if previous line was a conditional or section header
-    const prevLine = pass1.length > 0 ? pass1[pass1.length - 1].trim() : '';
-    const prevIsConditional = isConditionalListItem(prevLine);
-    const prevIsSectionHeader = isMainSectionKey(prevLine);
 
     // Add blank line before pipeline items OR root-level conditionals if appropriate
-    const wasAlreadyInMultiLineBlock = inMultiLineBlock && !startsMultiLineBlock;
-
-    if (
-        (isPipelineItem || isRootLevelConditional) &&
-        lastStepInStepsSection >= 0 &&
-        !prevIsSectionHeader &&
-        !prevIsConditional &&
-        !wasAlreadyInMultiLineBlock &&
-        !inVariablesSection
-    ) {
+    if (shouldAddBlankBeforePipelineItem(state, line, isListEntry, isPipelineItem, isConditional)) {
         if (pass1.length > 0 && !isBlank(pass1[pass1.length - 1])) {
             pass1.push('');
         }
     }
 
     return { isPipelineItem };
+}
+
+/**
+ * Check if should add blank line before pipeline item
+ */
+function shouldAddBlankBeforePipelineItem(state, line, isListEntry, isPipelineItem, isConditional) {
+    const { pass1, lastStepInStepsSection, inMultiLineBlock, variablesIndent, startsMultiLineBlock, lineIndent } =
+        state;
+
+    // Calculate derived values
+    const isRootLevelConditional = isConditional && lastStepInStepsSection >= 0;
+    const inVariablesSection = variablesIndent >= 0 && lineIndent === variablesIndent && isListEntry;
+    const prevLine = pass1.length > 0 ? pass1[pass1.length - 1].trim() : '';
+    const prevIsConditional = isConditionalListItem(prevLine);
+    const prevIsSectionHeader = isMainSectionKey(prevLine);
+    const wasAlreadyInMultiLineBlock = inMultiLineBlock && !startsMultiLineBlock;
+
+    return (
+        (isPipelineItem || isRootLevelConditional) &&
+        lastStepInStepsSection >= 0 &&
+        !prevIsSectionHeader &&
+        !prevIsConditional &&
+        !wasAlreadyInMultiLineBlock &&
+        !inVariablesSection
+    );
 }
 
 /**
@@ -1351,6 +1372,13 @@ function updateMultiLineBlockStateForSpacing(state) {
 }
 
 /**
+ * Check if should exit variables or parameters section
+ */
+function shouldExitVariablesOrParametersSection(sectionName, indent, entryIndent) {
+    return sectionName !== 'variables' && sectionName !== 'parameters' && indent === entryIndent;
+}
+
+/**
  * Update section context tracking (nested mappings, variables, parameters)
  */
 function updateSectionContextForSpacing(state) {
@@ -1377,11 +1405,7 @@ function updateSectionContextForSpacing(state) {
     // Also exit when we encounter a sibling mapping key at same indent as entry point
     if (state.insideVariablesOrParameters && !isBlank(line) && !isListItem(line) && isMappingKey(trimmed)) {
         const sectionName = trimmed.slice(0, -1);
-        if (
-            sectionName !== 'variables' &&
-            sectionName !== 'parameters' &&
-            indent === state.variablesOrParametersIndent
-        ) {
+        if (shouldExitVariablesOrParametersSection(sectionName, indent, state.variablesOrParametersIndent)) {
             state.insideVariablesOrParameters = false;
             state.variablesOrParametersIndent = -1;
         }
@@ -1389,18 +1413,26 @@ function updateSectionContextForSpacing(state) {
 }
 
 /**
+ * Check if we should enter a nested mapping context
+ */
+function shouldEnterNestedMappingForSpacing(state) {
+    const { line, effectivelyInMultiLineBlock, sectionStack, insideNestedMapping } = state;
+    return (
+        !effectivelyInMultiLineBlock &&
+        !isListItem(line) &&
+        !isComment(line) &&
+        isMappingKey(line) &&
+        sectionStack.length > 0 &&
+        !containsTemplateExpression(line) &&
+        !insideNestedMapping
+    );
+}
+
+/**
  * Update nested mapping context (mappings with child lists like dependsOn:, parameters:)
  */
 function updateNestedMappingContextForSpacing(state) {
-    const {
-        line,
-        indent,
-        trimmed,
-        sectionStack,
-        effectivelyInMultiLineBlock,
-        insideNestedMapping,
-        nestedMappingIndent,
-    } = state;
+    const { line, indent, trimmed, insideNestedMapping, nestedMappingIndent } = state;
 
     // Exit nested mapping context if at lower indent or at same indent but not a list item
     if (insideNestedMapping && !isBlank(line)) {
@@ -1411,15 +1443,7 @@ function updateNestedMappingContextForSpacing(state) {
     }
 
     // Enter nested mapping context for regular mapping keys inside main sections
-    if (
-        !effectivelyInMultiLineBlock &&
-        !isListItem(line) &&
-        !isComment(line) &&
-        isMappingKey(line) &&
-        sectionStack.length > 0 &&
-        !containsTemplateExpression(line) &&
-        !insideNestedMapping
-    ) {
+    if (shouldEnterNestedMappingForSpacing(state)) {
         const sectionName = trimmed.slice(0, -1);
         const mainListSections = new Set(['steps', 'jobs', 'stages']);
         if (!mainListSections.has(sectionName)) {
@@ -1501,18 +1525,24 @@ function isInsideMainListSectionForSpacing(state) {
 }
 
 /**
- * Check if this list item should have an implicit main section and add it if needed
+ * Check if at root level and not in variables or parameters section
  */
-function checkAndAddImplicitSectionForSpacing(state) {
-    const { sectionStack, currentLineIdx, lines, trimmed, indent, currentSection } = state;
-    const mainListSections = new Set(['steps', 'jobs', 'stages']);
-
-    if (
+function isRootLevelAndNotInVariablesOrParameters(state, indent, currentSection) {
+    return (
         !isInsideMainListSectionForSpacing(state) &&
         indent === 0 &&
         currentSection !== 'variables' &&
         currentSection !== 'parameters'
-    ) {
+    );
+}
+
+/**
+ * Check if this list item should have an implicit main section and add it if needed
+ */
+function checkAndAddImplicitSectionForSpacing(state) {
+    const { sectionStack, currentLineIdx, lines, trimmed, indent, currentSection } = state;
+
+    if (isRootLevelAndNotInVariablesOrParameters(state, indent, currentSection)) {
         let shouldAddImplicitSection = false;
 
         if (containsTemplateExpression(trimmed)) {
@@ -1546,7 +1576,7 @@ function checkAndAddImplicitSectionForSpacing(state) {
  * Process and remove blanks between comments and current task
  */
 function processCommentsBeforeItemForSpacing(state) {
-    const { lines, currentLineIdx, listItemIndent, removePositions } = state;
+    const { lines, currentLineIdx, removePositions } = state;
 
     for (let k = currentLineIdx - 1; k >= 0; k--) {
         const checkLine = lines[k];
@@ -1678,7 +1708,7 @@ function processSiblingSpacingForSpacing(state, nextItemIdx) {
  * Process list item for spacing (handles blank removal and insertion)
  */
 function processListItemSpacingForSpacing(state) {
-    const { listItemIndent, insideNestedMapping, insideVariablesOrParameters, currentLineIdx } = state;
+    const { insideNestedMapping, insideVariablesOrParameters } = state;
 
     // Always handle blanks between parent and child, regardless of context
     handleBlanksBetweenParentAndChildForSpacing(state);
