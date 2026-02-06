@@ -21,7 +21,7 @@ jobs:
   timeoutInMinutes: ${{ parameters.timeoutInMinutes }}
 
   steps:
-  - script: echo Building ${{ parameters.projectPathValue }} in ${{ parameters.buildConfiguration }} mode
+  - script: echo Building ${{ parameters.projectPath }} in ${{ parameters.buildConfiguration }} mode
     displayName: Run Build
 
   - ${{ if eq(parameters.runTests, true) }}:
