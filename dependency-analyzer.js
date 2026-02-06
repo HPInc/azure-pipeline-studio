@@ -68,8 +68,8 @@ class DependencyAnalyzer {
                 stageInfo.dependsOn.forEach((dep) => {
                     dependencies.dependencyGraph.push({
                         type: 'stage',
-                        from: stageInfo.name,
-                        to: dep,
+                        from: dep,
+                        to: stageInfo.name,
                     });
                 });
             }
@@ -111,8 +111,8 @@ class DependencyAnalyzer {
                 jobInfo.dependsOn.forEach((dep) => {
                     dependencies.dependencyGraph.push({
                         type: 'job',
-                        from: jobInfo.name,
-                        to: dep,
+                        from: dep,
+                        to: jobInfo.name,
                         stage: jobInfo.stage,
                     });
                 });
@@ -189,7 +189,24 @@ class DependencyAnalyzer {
     }
 
     generateMermaidDiagram(dependencies) {
-        const lines = ['graph LR'];
+        const lines = [
+            '%%{init: {',
+            '  "theme": "base",',
+            '  "themeVariables": {',
+            '    "primaryColor": "#374151",',
+            '    "primaryBorderColor": "#1F2937",',
+            '    "background": "#1F2937",',
+            '    "mainBkg": "#374151",',
+            '    "secondBkg": "#4B5563",',
+            '    "tertiaryColor": "#F3F4F6",',
+            '    "lineColor": "#9CA3AF",',
+            '    "primaryTextColor": "#FFFFFF",',
+            '    "edgeLabelBackground": "#1F2937"',
+            '  }',
+            '}}%%',
+            '',
+            'flowchart LR',
+        ];
 
         const criticalPath = this._calculateCriticalPath(dependencies);
         const criticalPathSet = new Set(criticalPath);
@@ -210,8 +227,8 @@ class DependencyAnalyzer {
             signing: '🔐',
             package: '📦',
             release: '🚀',
-            scan: '📋',
-            artifact: '📦',
+            scan: '🔧',
+            artifact: '🔧',
             unit: '🧪',
             system: '🧪',
         };
@@ -221,7 +238,7 @@ class DependencyAnalyzer {
             if (lower.includes('configure')) return 'configure';
             if (lower.includes('lint')) return 'lint';
             if (lower.includes('build')) return 'build';
-            if (lower.includes('test') || lower.includes('unit')) return 'test';
+            if (lower.includes('test') || lower.includes('unit') || lower.includes('unittests')) return 'test';
             if (lower.includes('artifact') || lower.includes('scan')) return 'artifactScan';
             if (lower.includes('sign')) return 'signing';
             if (lower.includes('package') || lower.includes('publish')) return 'package';
@@ -231,7 +248,17 @@ class DependencyAnalyzer {
 
         const getEmoji = (name) => {
             const type = getStageType(name);
-            return stageEmojis[type] || '🔧';
+            const emojiMap = {
+                configure: '⚙️',
+                lint: '✨',
+                build: '🔨',
+                test: '🧪',
+                artifactScan: '🔧',
+                signing: '🔐',
+                package: '📦',
+                release: '🚀',
+            };
+            return emojiMap[type] || '🔧';
         };
 
         const criticalEdges = [];
@@ -242,10 +269,17 @@ class DependencyAnalyzer {
                 const nodeId = `stage_${this._sanitizeId(stage.name)}`;
                 const emoji = getEmoji(stage.displayName);
                 const isOnCriticalPath = criticalPathSet.has(stage.name);
-                const styleClass = isOnCriticalPath ? 'stageCritical' : getStageType(stage.displayName);
+                const styleClass = isOnCriticalPath ? 'critical' : getStageType(stage.displayName);
                 const displayText = stage.displayName || stage.name;
 
-                lines.push(`    ${nodeId}["${emoji} ${displayText}"]:::${styleClass}`);
+                // Add job names as bullet points if they exist
+                let nodeLabel = `${emoji} ${displayText}`;
+                if (stage.jobs && stage.jobs.length > 0) {
+                    const jobBullets = stage.jobs.map((job) => `&nbsp;&nbsp;&nbsp;&nbsp;• ${job}`).join('<br/>');
+                    nodeLabel += `<br/><span style='font-size: 0.85em; opacity: 0.8;'>${jobBullets}</span>`;
+                }
+
+                lines.push(`    ${nodeId}["${nodeLabel}"]:::${styleClass}`);
             });
 
             dependencies.dependencyGraph
@@ -257,7 +291,7 @@ class DependencyAnalyzer {
                     const edgeKey = `${dep.from}->${dep.to}`;
                     const isOnCriticalPath = criticalEdgeMap.has(edgeKey);
                     const edgeStyle = isOnCriticalPath ? '==>' : '-->';
-                    lines.push(`    ${toId} ${edgeStyle} ${fromId}`);
+                    lines.push(`    ${fromId} ${edgeStyle} ${toId}`);
 
                     if (isOnCriticalPath) {
                         criticalEdges.push(edgeIndex);
@@ -271,7 +305,7 @@ class DependencyAnalyzer {
                 const nodeId = `job_${this._sanitizeId(job.name)}`;
                 const emoji = getEmoji(job.displayName);
                 const isOnCriticalPath = criticalPathSet.has(job.name);
-                const styleClass = isOnCriticalPath ? 'jobCritical' : getStageType(job.displayName);
+                const styleClass = isOnCriticalPath ? 'critical' : getStageType(job.displayName);
                 const displayText = job.displayName || job.name;
                 lines.push(`    ${nodeId}["${emoji} ${displayText}"]:::${styleClass}`);
             });
@@ -285,7 +319,7 @@ class DependencyAnalyzer {
                     const edgeKey = `${dep.from}->${dep.to}`;
                     const isOnCriticalPath = criticalEdgeMap.has(edgeKey);
                     const edgeStyle = isOnCriticalPath ? '==>' : '-->';
-                    lines.push(`    ${toId} ${edgeStyle} ${fromId}`);
+                    lines.push(`    ${fromId} ${edgeStyle} ${toId}`);
 
                     if (isOnCriticalPath) {
                         criticalEdges.push(edgeIndex);
@@ -294,23 +328,49 @@ class DependencyAnalyzer {
                 });
         }
 
-        // Define styles for different stage types - matching pipeline-dependencies.html
-        lines.push('    classDef configure fill:#e0f2fe,stroke:#0369a1,stroke-width:3px,color:#0c4a6e');
-        lines.push('    classDef lint fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a8a');
-        lines.push('    classDef build fill:#bfdbfe,stroke:#1d4ed8,stroke-width:3px,color:#1e3a8a');
-        lines.push('    classDef test fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a8a');
-        lines.push('    classDef artifactScan fill:#bbf7d0,stroke:#16a34a,stroke-width:3px,color:#14532d');
-        lines.push('    classDef signing fill:#fed7aa,stroke:#ea580c,stroke-width:3px,color:#7c2d12');
-        lines.push('    classDef package fill:#e0f2fe,stroke:#0369a1,stroke-width:3px,color:#0c4a6e');
-        lines.push('    classDef release fill:#bbf7d0,stroke:#16a34a,stroke-width:3px,color:#14532d');
-
-        // Critical path styling - bright red/orange as specified
-        lines.push('    classDef stageCritical fill:#fecaca,stroke:#D13438,stroke-width:5px,color:#7f1d1d');
-        lines.push('    classDef jobCritical fill:#fecaca,stroke:#D13438,stroke-width:5px,color:#7f1d1d');
+        // Define styles for different stage types - minimalist outline style
+        lines.push('');
+        lines.push('    %% Minimalist outline style - clean, modern aesthetic');
+        lines.push(
+            '    classDef critical stroke:#DC2626,stroke-width:2px,color:#FFFFFF,font-weight:600,rx:5,ry:5,fill:#374151'
+        );
+        lines.push(
+            '    classDef configure stroke:#60A5FA,stroke-width:1.5px,color:#FFFFFF,font-weight:500,rx:5,ry:5,fill:#4B5563'
+        );
+        lines.push(
+            '    classDef lint stroke:#60A5FA,stroke-width:1.5px,color:#FFFFFF,font-weight:500,rx:5,ry:5,fill:#4B5563'
+        );
+        lines.push(
+            '    classDef build stroke:#60A5FA,stroke-width:1.5px,color:#FFFFFF,font-weight:500,rx:5,ry:5,fill:#4B5563'
+        );
+        lines.push(
+            '    classDef test stroke:#60A5FA,stroke-width:1.5px,color:#FFFFFF,font-weight:500,rx:5,ry:5,fill:#4B5563'
+        );
+        lines.push(
+            '    classDef artifactScan stroke:#60A5FA,stroke-width:1.5px,color:#FFFFFF,font-weight:500,rx:5,ry:5,fill:#4B5563'
+        );
+        lines.push(
+            '    classDef signing stroke:#60A5FA,stroke-width:1.75px,color:#FFFFFF,font-weight:600,rx:5,ry:5,fill:#4B5563'
+        );
+        lines.push(
+            '    classDef package stroke:#60A5FA,stroke-width:1.5px,color:#FFFFFF,font-weight:500,rx:5,ry:5,fill:#4B5563'
+        );
+        lines.push(
+            '    classDef publish stroke:#60A5FA,stroke-width:1.5px,color:#FFFFFF,font-weight:500,rx:5,ry:5,fill:#4B5563'
+        );
+        lines.push(
+            '    classDef release stroke:#60A5FA,stroke-width:1.5px,color:#FFFFFF,font-weight:500,rx:5,ry:5,fill:#4B5563'
+        );
+        lines.push(
+            '    classDef report stroke:#60A5FA,stroke-width:1.5px,color:#FFFFFF,font-weight:500,rx:5,ry:5,fill:#4B5563'
+        );
+        lines.push('');
+        lines.push('    %% Link styling');
+        lines.push('    linkStyle default stroke:#9CA3AF,stroke-width:2px');
 
         // Apply red color to critical path arrows
         criticalEdges.forEach((index) => {
-            lines.push(`    linkStyle ${index} stroke:#D13438,stroke-width:3px`);
+            lines.push(`    linkStyle ${index} stroke:#F87171,stroke-width:2.5px`);
         });
 
         return lines.join('\n');
