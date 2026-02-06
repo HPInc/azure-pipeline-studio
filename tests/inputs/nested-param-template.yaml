@@ -1,0 +1,4 @@
+steps:
+- script: echo "Hello"
+
+- script: echo ${{ parameters.thisDoesNotExist }}

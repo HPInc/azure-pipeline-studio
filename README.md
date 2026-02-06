@@ -1,52 +1,16 @@
 # Azure Pipeline Studio
 
-![Menu](images/menu.png)
-![Error](images/error.png)
+![Menu](images/menu.png "Context Menu")
+![Error](images/error.png "Error Validation")
 
 VS Code extension and CLI tool for formatting and expanding Azure DevOps YAML pipelines with complete expression support.
-
-## Features
-
-- **Template Expansion**: Expand pipelines with shared templates and repository resources
-- **Compile-Time Variables**: Set Azure Pipeline variables (Build.Reason, Build.SourceBranch, etc.) to test different build scenarios (see [docs/COMPILE_TIME_VARIABLES.md](docs/COMPILE_TIME_VARIABLES.md))
-- **Dependency Visualization**: View stage and job dependencies in a clear, structured format
-- **Parameter Validation**: Automatic validation ensures all required template parameters are provided
-- **Expression Evaluation**: All 33 Azure DevOps expression functions (`${{ }}`, `$[]`, `$()`)
-- **Advanced Formatting**: Customizable indentation, line width, array formatting, native comment preservation
-- **Modern YAML Parser**: Uses `yaml` package (v2.x) with full comment support
-- **CLI & Pre-commit**: Batch processing, recursive formatting, git hook integration
-- **Side-by-Side View**: Inspect rendered YAML while editing source
-- **Repository Mapping**: Configure local paths for template resolution
-
-## Installation
-
-**VS Code Extension:**
-```bash
-code --install-extension azure-pipeline-studio-1.0.0.vsix
-```
-
-**CLI (Standalone):**
-```bash
-# Already bundled - use extension-bundle.js directly
-node extension-bundle.js --help
-```
-
-**Pre-commit Hook:**
-```yaml
-# .pre-commit-config.yaml
-repos:
-  - repo: https://github.com/HPInc/azure-pipeline-studio.git
-    rev: v1.0.10
-    hooks:
-      - id: azure-pipeline-formatter
-```
 
 ## Quick Start
 
 ### VS Code
 1. Open a `.yml`/`.yaml` pipeline file
 2. Right-click → **Azure Pipeline Studio** → **Format YAML** or **Expand Pipeline**
-3. Configure repository paths via **Configure Resource Locations**
+3. Configure repository paths via **Configure Resource Locations** if templates are referred in the pipeline
 4. Use **Expand Pipeline (Azure Compatible)** for Azure DevOps-compatible output
 
 ### CLI
@@ -73,6 +37,16 @@ node extension-bundle.js pipeline.yml -o formatted.yml
 node extension-bundle.js pipeline.yml -x -r templates=../shared-templates
 ```
 
+**Pre-commit Hook:**
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/HPInc/azure-pipeline-studio.git
+    rev: v1.0.14
+    hooks:
+      - id: azure-pipeline-formatter
+```
+
 ### Pre-commit
 ```bash
 pip install pre-commit
@@ -80,22 +54,12 @@ pre-commit install
 pre-commit run azure-pipeline-formatter --all-files
 ```
 
-## VS Code Configuration
+### Resource Locations
 
-**Format Settings:**
-- `azurePipelineStudio.format.indent` (1-8, default: 2)
-- `azurePipelineStudio.format.noArrayIndent` (boolean, default: true)
-- `azurePipelineStudio.format.lineWidth` (number, default: 0)
-- `azurePipelineStudio.format.stepSpacing` (boolean, default: true)
-- `azurePipelineStudio.format.firstBlockBlankLines` (0-4, default: 2)
-- `azurePipelineStudio.format.blankLinesBetweenSections` (0-4, default: 1)
-- `azurePipelineStudio.format.azureCompatible` (boolean, default: false)
+- `azurePipelineStudio.resourceLocations` - Array of repository mappings with `repository`, `location`, and optional match criteria (`name`, `endpoint`, `ref`, `type`)
+- Use `@self` to reference templates in the current repository (for example `templates/build.yml@self`), resolving paths relative to the pipeline file's repository.
 
-**Expansion Settings:**
-- `azurePipelineStudio.expansion.expandTemplates` (boolean, default: true)
-- `azurePipelineStudio.expansion.variables` (object, default: {})
-
-**Repository Locations:**
+**Example `settings.json`:**
 ```json
 {
   "azurePipelineStudio.resourceLocations": [
@@ -108,6 +72,19 @@ pre-commit run azure-pipeline-formatter --all-files
 }
 ```
 
+## Features
+
+- **Template Expansion**: Expand pipelines with shared templates and repository resources
+- **Compile-Time Variables**: Set Azure Pipeline variables (Build.Reason, Build.SourceBranch, etc.) to test different build scenarios (see [docs/COMPILE_TIME_VARIABLES.md](docs/COMPILE_TIME_VARIABLES.md))
+- **Dependency Visualization**: View stage and job dependencies in a clear, structured format
+- **Parameter Validation**: Automatic validation ensures all required template parameters are provided
+- **Expression Evaluation**: All 33 Azure DevOps expression functions (`${{ }}`, `$[]`, `$()`)
+- **Advanced Formatting**: Customizable indentation, line width, array formatting, native comment preservation
+- **Modern YAML Parser**: Uses `yaml` package (v2.x) with full comment support
+- **CLI & Pre-commit**: Batch processing, recursive formatting, git hook integration
+- **Side-by-Side View**: Inspect rendered YAML while editing source
+- **Repository Mapping**: Configure local paths for template resolution
+
 ## Commands
 
 All commands are available via:
@@ -118,8 +95,8 @@ Available commands:
 - **Format YAML** - Format the current file in-place
 - **Expand Pipeline (Standard)** - Expand templates and expressions with user settings
 - **Expand Pipeline (Azure Compatible)** - Expand with Azure DevOps-compatible formatting (literal blocks, capitalized booleans)
-- **Show Dependencies** - Analyze and display pipeline dependencies (stages, jobs, templates, resources)
-- **Configure Resource Locations** - Set up repository paths for template resolution
+- **Pipeline Diagram** - Analyze and display pipeline dependencies (stages, jobs, templates, resources)
+- **Configure Resource Locations** - Set up repository paths for if templates are referred in the pipeline
 
 ## Configuration
 
@@ -138,46 +115,14 @@ Configure YAML formatting via VS Code settings (File → Preferences → Setting
 - `azurePipelineStudio.format.azureCompatible` - Use Azure DevOps-compatible formatting: literal block scalars (|), capitalized booleans, trailing blank lines (default: `false`)
 - `azurePipelineStudio.refreshOnSave` - Auto-refresh rendered YAML view when source file is saved (default: `true`)
 
-### Resource Locations
+### Expansion Options
 
-- `azurePipelineStudio.resourceLocations` - Array of repository mappings with `repository`, `location`, and optional match criteria (`name`, `endpoint`, `ref`, `type`)
-- Use `@self` to reference templates in the current repository (for example `templates/build.yml@self`), resolving paths relative to the pipeline file's repository.
+- `azurePipelineStudio.expansion.expandTemplates` - Enable/disable template expansion (default: `true`)
+- `azurePipelineStudio.expansion.variables` - Map of variable names to values for expression evaluation (default: `{}`)
 
 ## Command Line Interface
 
 Format and expand pipelines from the command line:
-
-```bash
-## CLI Options
-
-**Help:** `-h, --help`
-
-**Output:** `-o, --output <file>` (single file only)
-
-**Repository:** `-r, --repo <alias=path>`
-
-**Format:** `-f, --format-option <key=value>` (repeatable)
-- `indent=<1-8>` (default: 2)
-- `noArrayIndent=<true|false>` (default: true)
-- `lineWidth=<number>` (default: 0)
-- `stepSpacing=<true|false>` (default: true)
-- `firstBlockBlankLines=<0-4>` (default: 2)
-- `blankLinesBetweenSections=<0-4>` (default: 1)
-- `forceQuotes=<true|false>` (default: false)
-- `sortKeys=<true|false>` (default: false)
-
-**Recursive:** `-R, --format-recursive <path>`, `-e, --extension <ext>`
-
-### Examples
-
-```bash
-# Multiple options
-node extension-bundle.js pipeline.yml -f indent=4 -f lineWidth=120
-
-# Recursive with custom extensions
-node extension-bundle.js -R ./ci -e .azure -e .ado -f indent=4
-```
-```
 
 ### CLI Options
 
@@ -239,7 +184,7 @@ Automatically format YAML files before commit. Uses 282KB standalone bundle with
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/HPInc/azure-pipeline-studio.git
-    rev: v1.0.7
+    rev: v1.0.14
     hooks:
       - id: azure-pipeline-formatter
         args: [-R, ., -f, indent=4]  # Optional: customize format
@@ -335,3 +280,4 @@ MIT
 Built with:
 - [yaml](https://github.com/eemeli/yaml) - Modern YAML parser with comment preservation
 - [jsep](https://github.com/EricSmekens/jsep) - JavaScript expression parser
+- [mermaid](https://mermaid.js.org/) - Diagramming and charting tool

@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 .html).
 
+## [1.0.14] - 2026-02-06
+
+### Changed
+- Modernized pipeline diagram UI with blue accent color and refined button styling
+- Improved header layout with "View Source" button repositioned first
+- Renamed "Show Dependencies" command to "Pipeline Diagram" for clarity
+
+### Fixed
+- Dependency diagram now auto-refreshes on YAML file edits
+- Error panel now properly opens when pipeline diagram analysis fails
+
+[1.0.14]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.0.14
+
 ## [1.0.13] - 2026-02-06
 
 ### Fixed

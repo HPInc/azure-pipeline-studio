@@ -16,6 +16,12 @@ try {
 const { AzurePipelineParser } = require('./parser');
 const { NONAME } = require('dns');
 
+// Module-level state for cleanup
+let activeDebounceTimer;
+let activeErrorDebounceTimer;
+let activeDependenciesDebounceTimer;
+let activeDependenciesPanel;
+
 function activate(context) {
     if (!vscode) {
         console.warn('VS Code API unavailable; activate() skipped (CLI execution detected).');
@@ -36,6 +42,12 @@ function activate(context) {
     const renderedScheme = 'ado-pipeline-expanded';
     const renderedContent = new Map();
     const renderedEmitter = new vscode.EventEmitter();
+    let dependenciesPanel;
+    let dependenciesPanelHtml = '';
+    let dependenciesDocumentUri;
+    let dependenciesDebounceTimer;
+    let isDependenciesRendering = false;
+    let pendingDependenciesDocument = null;
 
     context.subscriptions.push(renderedEmitter);
     context.subscriptions.push(
@@ -208,12 +220,15 @@ function activate(context) {
         const title = titles[errorType] || '❌ Pipeline Error';
 
         // Create webview panel
-        const panel = vscode.window.createWebviewPanel('azurePipelineError', title, vscode.ViewColumn.Beside, {
+        const panel = vscode.window.createWebviewPanel('azurePipelineError', title, vscode.ViewColumn.Two, {
             enableScripts: true,
         });
 
         // Store reference to current error panel
         currentErrorPanel = panel;
+
+        // Explicitly reveal the panel to ensure it's visible
+        panel.reveal(vscode.ViewColumn.Two);
 
         // Mark error panel as open
         errorPanelOpen = true;
@@ -235,11 +250,39 @@ function activate(context) {
 
         // Convert file paths in text to clickable links
         const makePathsClickable = (text) => {
-            // Match UNC, Windows, and Unix paths with optional line numbers
+            const placeholders = [];
+            let placeholderIndex = 0;
+
+            // First handle template stack format with repository references:
+            // Format: /templates/file.yaml@repo:46 (\\actual\path\file.yaml)
+            // or: /templates/file.yaml:46 (\\actual\path\file.yaml)
+            // Also handle format without line number: /templates/file.yaml@repo (\\actual\path\file.yaml)
+            // Extract line number and actual path, make the template reference clickable, hide UNC path
+            const templateStackRegex =
+                /([^\s\(]+\.ya?ml(?:@[^:]+)?)(?::(\d+))?\s+\((\\\\[^\)]+\.ya?ml|[A-Za-z]:[^\)]+\.ya?ml|\/[^\)]+\.ya?ml)\)/g;
+            text = text.replace(templateStackRegex, (match, templatePath, lineNumber, actualPath) => {
+                // Skip extension bundle paths
+                if (actualPath && actualPath.includes('extension-bundle.js')) {
+                    return match;
+                }
+
+                if (actualPath) {
+                    const escapedPath = actualPath.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                    const displayText = lineNumber ? `${templatePath}:${lineNumber}` : templatePath;
+                    const link = `<a class="file-link" href="#" title="${escapeHtml(actualPath)}" onclick="openFile('${escapedPath}', ${lineNumber || 'null'}); return false;">${escapeHtml(displayText)}</a>`;
+                    const placeholder = `___PLACEHOLDER_${placeholderIndex}___`;
+                    placeholders.push(link);
+                    placeholderIndex++;
+                    return placeholder;
+                }
+                return match;
+            });
+
+            // Then handle standard format: path/file.yaml:LINE
             const pathRegex =
                 /(\\\\[^\s\n:]+\.(?:ya?ml|js|ts))(?::(\d+))?(?::(\d+))?|([A-Za-z]:\\[^\s\n:]+\.(?:ya?ml|js|ts))(?::(\d+))?(?::(\d+))?|(\/[^\s\n:]+\.(?:ya?ml|js|ts))(?::(\d+))?(?::(\d+))?/g;
 
-            return text.replace(
+            text = text.replace(
                 pathRegex,
                 (match, uncPath, uncLine, uncCol, winPath, winLine, winCol, unixPath, unixLine, unixCol) => {
                     const filePath = uncPath || winPath || unixPath;
@@ -253,11 +296,18 @@ function activate(context) {
                     if (filePath) {
                         const escapedPath = filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
                         const lineParam = lineNumber ? lineNumber : 'null';
-                        return `<a class="file-link" href="#" onclick="openFile('${escapedPath}', ${lineParam}); return false;">${escapeHtml(match)}</a>`;
+                        return `<a class="file-link" href="#" title="${escapeHtml(filePath)}" onclick="openFile('${escapedPath}', ${lineParam}); return false;">${escapeHtml(match)}</a>`;
                     }
                     return match;
                 }
             );
+
+            // Restore placeholders
+            placeholders.forEach((link, index) => {
+                text = text.replace(`___PLACEHOLDER_${index}___`, link);
+            });
+
+            return text;
         };
 
         // Format error message with line breaks and proper indentation
@@ -355,7 +405,7 @@ function activate(context) {
                 '- Undefined or circular template references',
                 '- Missing or incorrect parameter values',
                 '- Malformed YAML structure in referenced templates',
-                '- Use "Show Dependencies" to see the complete dependency graph and identify the root cause.',
+                '- Use "Pipeline Diagram" to see the complete dependency graph and identify the root cause.',
             ];
         }
 
@@ -367,7 +417,7 @@ function activate(context) {
         if (templateLines.length) {
             detailsLines.push('Template call stack:');
             templateLines.forEach((line) => {
-                detailsLines.push(`    ${line}`);
+                detailsLines.push(`  ${line}`);
             });
         }
 
@@ -388,7 +438,16 @@ function activate(context) {
         const stackLines = errorStackText
             .split('\n')
             .filter((line, index) => index === 0 || line.trim().startsWith('at '));
-        const sanitizedStackText = stackLines.length > 1 ? stackLines.slice(1).join('\n') : '';
+        // Keep first line (error location), add indentation to 'at' lines
+        const sanitizedStackText =
+            stackLines.length > 0
+                ? stackLines
+                      .map((line, index) => {
+                          if (index === 0) return line; // Keep first line as is
+                          return line.trim().startsWith('at ') ? `  ${line.trim()}` : line;
+                      })
+                      .join('\n')
+                : '';
 
         // Build HTML content with proper styling
         let htmlContent = `
@@ -538,7 +597,8 @@ function activate(context) {
 
     const scheduleErrorDisplay = (delayMs = errorDebounceDelayMs) => {
         clearTimeout(errorDebounceTimer);
-        errorDebounceTimer = setTimeout(() => {
+        clearTimeout(activeErrorDebounceTimer);
+        errorDebounceTimer = activeErrorDebounceTimer = setTimeout(() => {
             if (!pendingError) return;
             if (isRendering) {
                 scheduleErrorDisplay(delayMs);
@@ -546,7 +606,7 @@ function activate(context) {
             }
             const { error: err, context: ctx, errorType: type } = pendingError;
             pendingError = null;
-            errorDebounceTimer = undefined;
+            errorDebounceTimer = activeErrorDebounceTimer = undefined;
             showErrorWebviewNow(err, ctx, type);
         }, delayMs);
     };
@@ -572,7 +632,8 @@ function activate(context) {
         if (!shouldRenderDocument(document)) return;
         pendingDocument = document;
         clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => {
+        clearTimeout(activeDebounceTimer);
+        debounceTimer = activeDebounceTimer = setTimeout(() => {
             if (isRendering) return;
             const doc = pendingDocument;
             pendingDocument = null;
@@ -667,7 +728,8 @@ function activate(context) {
             renderedEmitter.fire(targetUri);
 
             clearTimeout(errorDebounceTimer);
-            errorDebounceTimer = undefined;
+            clearTimeout(activeErrorDebounceTimer);
+            errorDebounceTimer = activeErrorDebounceTimer = undefined;
             pendingError = null;
 
             // Close error panel on successful expansion
@@ -676,7 +738,7 @@ function activate(context) {
             if (!options.silent) {
                 const targetDoc = await vscode.workspace.openTextDocument(targetUri);
                 await vscode.window.showTextDocument(targetDoc, {
-                    viewColumn: vscode.ViewColumn.Beside,
+                    viewColumn: vscode.ViewColumn.Two,
                     preview: false,
                     preserveFocus: true,
                 });
@@ -803,79 +865,132 @@ function activate(context) {
     );
     context.subscriptions.push(configureCommandDisposable);
 
-    const showDependenciesCommandDisposable = vscode.commands.registerCommand(
-        'azurePipelineStudio.showDependencies',
-        async () => {
-            const editor = vscode.window.activeTextEditor;
-            if (!editor || !shouldRenderDocument(editor.document)) {
-                vscode.window.showInformationMessage('Open an Azure Pipeline YAML file to view dependencies.');
+    const ensureDependenciesPanel = () => {
+        if (dependenciesPanel) {
+            return dependenciesPanel;
+        }
+
+        dependenciesPanel = vscode.window.createWebviewPanel(
+            'pipelineDependencies',
+            'Pipeline Dependencies',
+            vscode.ViewColumn.Two,
+            { enableScripts: true }
+        );
+
+        dependenciesPanel.onDidDispose(() => {
+            dependenciesPanel = activeDependenciesPanel = null;
+            dependenciesDocumentUri = undefined;
+        });
+
+        dependenciesPanel.webview.onDidReceiveMessage(async (message) => {
+            if (message.command === 'openInBrowser') {
+                try {
+                    const os = require('os');
+                    const tempFile = path.join(os.tmpdir(), `pipeline-dependencies-${Date.now()}.html`);
+                    fs.writeFileSync(tempFile, dependenciesPanelHtml);
+                    await vscode.env.openExternal(vscode.Uri.file(tempFile));
+                    vscode.window.showInformationMessage('Opened dependencies in browser');
+                } catch (err) {
+                    vscode.window.showErrorMessage(`Failed to open in browser: ${err.message}`);
+                }
+            } else if (message.command === 'openFile') {
+                try {
+                    const fileUri = vscode.Uri.file(message.file);
+                    await vscode.window.showTextDocument(fileUri);
+                } catch (err) {
+                    vscode.window.showErrorMessage(`Failed to open file: ${err.message}`);
+                }
+            }
+        });
+
+        return dependenciesPanel;
+    };
+
+    const renderDependenciesPanel = async (document, options = {}) => {
+        if (!document || !shouldRenderDocument(document)) {
+            vscode.window.showInformationMessage('Open an Azure Pipeline YAML file to view dependencies.');
+            return;
+        }
+
+        const { reveal = false, silent = false } = options;
+
+        closeErrorPanel();
+        dependenciesDocumentUri = document.uri;
+
+        if (isDependenciesRendering) {
+            pendingDependenciesDocument = document;
+            return;
+        }
+
+        isDependenciesRendering = true;
+        try {
+            const sourceText = document.getText();
+
+            const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
+            const compileTimeVariables = config.get('expansion.variables', {});
+            const skipSyntaxCheck = config.get('expansion.skipSyntaxCheck', false);
+            const resourceOverrides = buildResourceOverridesForDocument(document);
+
+            const parserOverrides = {
+                fileName: document.fileName,
+                azureCompatible: false,
+                skipSyntaxCheck,
+                ...(resourceOverrides && { resources: resourceOverrides }),
+                ...(Object.keys(compileTimeVariables).length && { variables: compileTimeVariables }),
+            };
+
+            if (!silent) {
+                vscode.window.setStatusBarMessage('Expanding pipeline templates...', 2000);
+            }
+
+            let expandedYaml;
+            try {
+                expandedYaml = parser.expandPipelineFromString(sourceText, parserOverrides);
+            } catch (error) {
+                const errorMessage = error.message || 'An error occurred while expanding pipeline templates';
+                const enhancedMessage =
+                    `Error in Pipeline Diagram:\n\n${errorMessage}\n\n` +
+                    `💡 Tip: Check your YAML syntax and template references. ` +
+                    `You can also use "Expand Pipeline" to debug template expansion issues.`;
+                const enhancedError = new Error(enhancedMessage);
+                enhancedError.stack = error.stack;
+                showErrorWebviewNow(enhancedError, context, 'dependency');
                 return;
             }
 
-            closeErrorPanel();
-            try {
-                const sourceText = editor.document.getText();
-                const document = editor.document;
-
-                // Expand the template first (similar to showRenderedYaml)
-                const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
-                const compileTimeVariables = config.get('expansion.variables', {});
-                const skipSyntaxCheck = config.get('expansion.skipSyntaxCheck', false);
-                const resourceOverrides = buildResourceOverridesForDocument(document);
-
-                const parserOverrides = {
-                    fileName: document.fileName,
-                    azureCompatible: false,
-                    skipSyntaxCheck,
-                    ...(resourceOverrides && { resources: resourceOverrides }),
-                    ...(Object.keys(compileTimeVariables).length && { variables: compileTimeVariables }),
-                };
-
-                vscode.window.setStatusBarMessage('Expanding pipeline templates...', 2000);
-                const expandedYaml = parser.expandPipelineFromString(sourceText, parserOverrides);
-
-                // Analyze the expanded pipeline
+            if (!silent) {
                 vscode.window.setStatusBarMessage('Analyzing dependencies...', 2000);
-                let dependencies;
-                try {
-                    dependencies = dependencyAnalyzer.analyzePipeline(expandedYaml);
-                } catch (error) {
-                    const errorMessage = error.message || 'An error occurred while analyzing pipeline dependencies';
-                    const enhancedMessage =
-                        `Error in Show Dependencies:\n\n${errorMessage}\n\n` +
-                        `💡 Tip: It's often easier to identify and fix issues using "Expand Pipeline" first. ` +
-                        `This will show you the full expanded YAML with all template variables and references resolved.`;
-                    const enhancedError = new Error(enhancedMessage);
-                    enhancedError.stack = error.stack;
-                    showErrorWebview(enhancedError, context, 'dependency');
-                    return;
-                }
+            }
 
-                // Create webview panel to display diagram
-                const panel = vscode.window.createWebviewPanel(
-                    'pipelineDependencies',
-                    'Pipeline Dependencies',
-                    vscode.ViewColumn.Beside,
-                    { enableScripts: true }
-                );
+            let dependencies;
+            try {
+                dependencies = dependencyAnalyzer.analyzePipeline(expandedYaml);
+            } catch (error) {
+                const errorMessage = error.message || 'An error occurred while analyzing pipeline dependencies';
+                const enhancedMessage =
+                    `Error in Pipeline Diagram:\n\n${errorMessage}\n\n` +
+                    `💡 Tip: It's often easier to identify and fix issues using "Expand Pipeline" first. ` +
+                    `This will show you the full expanded YAML with all template variables and references resolved.`;
+                const enhancedError = new Error(enhancedMessage);
+                enhancedError.stack = error.stack;
+                showErrorWebviewNow(enhancedError, context, 'dependency');
+                return;
+            }
 
-                // Generate Mermaid diagram
-                const mermaidDiagram =
-                    dependencies.stages.length > 0 || dependencies.jobs.length > 0
-                        ? dependencyAnalyzer.generateMermaidDiagram(dependencies)
-                        : '';
+            const mermaidDiagram =
+                dependencies.stages.length > 0 || dependencies.jobs.length > 0
+                    ? dependencyAnalyzer.generateMermaidDiagram(dependencies)
+                    : '';
 
-                // Create HTML content with professional styling
-                const projectName =
-                    lastRenderedDocument?.fileName?.split('/').pop()?.replace('.yaml', '') || 'Pipeline';
-                const stageCount = dependencies.stages.length || dependencies.jobs.length || 0;
+            const projectName = document?.fileName || 'Pipeline';
+            const stageCount = dependencies.stages.length || dependencies.jobs.length || 0;
 
-                const htmlContent = `<!DOCTYPE html>
+            const htmlContent = `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pipeline Dependencies</title>
+    <title>Pipeline Diagram</title>
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <style>
         * {
@@ -902,8 +1017,8 @@ function activate(context) {
         .header {
             background: linear-gradient(135deg, #1a1a1a 0%, #0d0d0d 100%);
             color: white;
-            padding: 30px;
-            border-bottom: 4px solid #D13438;
+            padding: 20px;
+            border-bottom: 4px solid #0078d4;
         }
 
         .header h1 {
@@ -932,50 +1047,10 @@ function activate(context) {
             gap: 8px;
         }
 
-        .tabs {
-            display: flex;
-            background: #2d2d2d;
-            border-bottom: 2px solid #3e3e42;
-        }
-
-        .tab {
-            padding: 15px 30px;
-            cursor: pointer;
-            transition: all 0.3s;
-            border-bottom: 3px solid transparent;
-            font-weight: 500;
-            color: #cccccc;
-        }
-
-        .tab:hover {
-            background: #3e3e42;
-            color: #ffffff;
-        }
-
-        .tab.active {
-            background: #252526;
-            border-bottom-color: #D13438;
-            color: #ffffff;
-        }
-
         .content {
             padding: 20px;
             min-height: calc(100vh - 200px);
             background: #252526;
-        }
-
-        .tab-content {
-            display: none;
-        }
-
-        .tab-content.active {
-            display: block;
-            animation: fadeIn 0.3s;
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
         }
 
         .diagram-container {
@@ -983,7 +1058,9 @@ function activate(context) {
             border-radius: 0;
             padding: 20px;
             margin-bottom: 0;
-            overflow-x: auto;
+            overflow: hidden;
+            height: calc(100vh - 250px);
+            position: relative;
         }
 
         .mermaid {
@@ -992,25 +1069,7 @@ function activate(context) {
             background: #1e1e1e;
             border-radius: 0;
             min-height: 400px;
-            overflow: auto;
-        }
-
-        .legend {
-            display: flex;
-            gap: 20px;
-            padding: 10px 20px;
-            background: #2d2d2d;
-            border-radius: 0;
-            margin-bottom: 10px;
-            flex-wrap: wrap;
-        }
-
-        .legend-item {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 0.9em;
-            color: #cccccc;
+            transition: transform 0.1s ease-out;
         }
 
         .legend-color {
@@ -1212,13 +1271,6 @@ function activate(context) {
             .header h1 {
                 font-size: 1.5em;
             }
-            .tabs {
-                overflow-x: auto;
-            }
-            .tab {
-                padding: 12px 20px;
-                white-space: nowrap;
-            }
         }
         
         h2 {
@@ -1228,62 +1280,78 @@ function activate(context) {
         p {
             color: #cccccc;
         }
+        
+        a:hover {
+            text-decoration: underline !important;
+            opacity: 0.8;
+        }
+        
+        .btn {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+        
+        .btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+        
+        .btn-primary {
+            background: #0078d4;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #106ebe;
+        }
+        
+        .btn-secondary {
+            background: #3e3e42;
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background: #4e4e52;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <div style="display: flex; align-items: center; gap: 12px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
                 <h1 style="margin: 0;">
-                    <span class="header-icon">🔄</span>
-                    Pipeline Dependencies
+                    Pipeline Diagram
                 </h1>
-                <button onclick="openInBrowser()" style="padding: 8px 16px; background: #0078d4; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 500;">🌐 Open in Browser</button>
+                <button onclick="openInBrowser()" class="btn btn-primary">🌐 Open in Browser</button>
             </div>
             <div class="header-info">
                 <div class="header-info-item">
-                    <span>📄</span>
-                    <span>File: ${projectName}</span>
+                    <button onclick="toggleDiagramSource()" id="source-toggle-btn" class="btn btn-secondary">📝 View Source</button>
                 </div>
                 <div class="header-info-item">
                     <span>🏗️</span>
                     <span>${stageCount} Stage${stageCount !== 1 ? 's' : ''}</span>
                 </div>
+                <div class="header-info-item" style="display: flex; align-items: center; gap: 8px;">
+                    <div class="legend-color" style="width: 16px; height: 16px; background: #F87171; border-radius: 2px;"></div>
+                    <span style="font-size: 0.9em; color: #F87171;">Longest path</span>
+                </div>
+            </div>
+            <div style="margin-top: 8px; font-size: 0.85em; opacity: 0.7;">
+                <span>📄 </span>
+                <a href="#" onclick="event.preventDefault(); const vscode = acquireVsCodeApi(); vscode.postMessage({ command: 'openFile', file: '${projectName}' });" style="color: #569cd6; text-decoration: none; cursor: pointer;" title="${projectName}">${projectName}</a>
             </div>
         </div>
 
-        <div class="tabs">
-            <div class="tab active" data-tab="diagram" onclick="switchTab('diagram')">📊 Diagram</div>
-            <div class="tab" data-tab="stages" onclick="switchTab('stages')">🎯 Details</div>
-            ${dependencies.resources.length > 0 ? '<div class="tab" data-tab="resources" onclick="switchTab(\'resources\')">📚 Resources</div>' : ''}
-        </div>
-
         <div class="content">
-            <!-- Diagram Tab -->
-            <div class="tab-content active" id="diagram">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                    <div class="legend" style="margin-bottom: 0; flex: 1;">
-                        <div class="legend-item">
-                            <div class="legend-color" style="background: #D13438;"></div>
-                            <span>🔴 Critical Path</span>
-                        </div>
-                        <div class="legend-item">
-                            <div class="legend-color" style="background: #1d4ed8;"></div>
-                            <span>Build Stages</span>
-                        </div>
-                        <div class="legend-item">
-                            <div class="legend-color" style="background: #16a34a;"></div>
-                            <span>Release Stages</span>
-                        </div>
-                        <div class="legend-item">
-                            <div class="legend-color" style="background: #ea580c;"></div>
-                            <span>Security/Signing</span>
-                        </div>
-                    </div>
-                    <button onclick="toggleDiagramSource()" id="source-toggle-btn" style="padding: 8px 16px; background: #3e3e42; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 500; white-space: nowrap;">📝 View Source</button>
-                </div>
-
-                <div class="diagram-container">
+            <div>
+                <div class="diagram-container" id="diagram-container" style="cursor: grab; overflow: hidden; position: relative;">
                     <div class="mermaid" id="mermaid-diagram">
 ${mermaidDiagram
     .split('\n')
@@ -1318,137 +1386,67 @@ ${mermaidDiagram
                     </div>
                 </div>
             </div>
-
-            <!-- Details Tab -->
-            <div class="tab-content" id="stages">
-                <div class="stage-list" id="stageList">
-                    <!-- Stages will be populated dynamically -->
-                </div>
-            </div>
-
-            <!-- Resources Tab -->
-            ${
-                dependencies.resources.length > 0
-                    ? `
-            <div class="tab-content" id="resources">
-                <h2 style="margin-bottom: 20px; color: #2d3748;">Pipeline Resources</h2>
-                <div class="resources-grid">
-                    ${dependencies.resources
-                        .map(
-                            (resource) => `
-                        <div class="resource-card">
-                            <h3>
-                                <span class="resource-type">${resource.type}</span>
-                                ${resource.name}
-                            </h3>
-                            <div class="resource-details">
-                                <div><strong>Type:</strong> ${resource.type}</div>
-                                ${resource.source ? '<div><strong>Source:</strong> ' + resource.source + '</div>' : ''}
-                            </div>
-                        </div>
-                    `
-                        )
-                        .join('')}
-                </div>
-            </div>
-            `
-                    : ''
-            }
         </div>
     </div>
 
     <script>
-        const stagesData = ${JSON.stringify(dependencies.stages.map((s, i) => ({ ...s, number: i + 1 })))};
-        
         // Open in browser function
         window.openInBrowser = function() {
             const vscode = acquireVsCodeApi();
             vscode.postMessage({ command: 'openInBrowser' });
         };
         
-        // Global tab switching function
-        window.switchTab = function(tabName) {
-            // Hide all tab contents
-            const allContents = document.querySelectorAll('.tab-content');
-            for (let i = 0; i < allContents.length; i++) {
-                allContents[i].classList.remove('active');
-            }
+        // Pan and zoom functionality for diagram
+        (function() {
+            const container = document.getElementById('diagram-container');
+            if (!container) return;
             
-            // Remove active class from all tabs
-            const allTabs = document.querySelectorAll('.tab');
-            for (let i = 0; i < allTabs.length; i++) {
-                allTabs[i].classList.remove('active');
-            }
+            let scale = 1;
+            let translateX = 0;
+            let translateY = 0;
+            let isDragging = false;
+            let startX = 0;
+            let startY = 0;
             
-            // Show the selected tab content
-            const selectedContent = document.getElementById(tabName);
-            if (selectedContent) {
-                selectedContent.classList.add('active');
-            }
-            
-            // Mark the clicked tab as active
-            const selectedTab = document.querySelector('.tab[data-tab="' + tabName + '"]');
-            if (selectedTab) {
-                selectedTab.classList.add('active');
-            }
-            
-            // Render stages when Details tab is opened
-            if (tabName === 'stages') {
-                renderStages();
-            }
-        };
-        
-        window.renderStages = function() {
-            const stageList = document.getElementById('stageList');
-            if (!stageList) return;
-            
-            let html = '';
-            for (let i = 0; i < stagesData.length; i++) {
-                const stage = stagesData[i];
-                let depsHtml = '';
-                
-                if (stage.dependsOn && stage.dependsOn.length > 0) {
-                    depsHtml = '<div class="stage-deps"><div class="stage-deps-title">Dependencies:</div>';
-                    for (let j = 0; j < stage.dependsOn.length; j++) {
-                        depsHtml += '<span class="dep-badge">' + stage.dependsOn[j] + '</span>';
-                    }
-                    depsHtml += '</div>';
-                } else {
-                    depsHtml = '<div class="stage-deps"><div class="stage-deps-title">Entry stage (no dependencies)</div></div>';
+            const updateTransform = function() {
+                const diagram = container.querySelector('.mermaid');
+                if (diagram) {
+                    diagram.style.transform = 'translate(' + translateX + 'px, ' + translateY + 'px) scale(' + scale + ')';
+                    diagram.style.transformOrigin = '0 0';
                 }
-                
-                html += '<div class="stage-card" data-stage="' + stage.name + '">';
-                html += '<h3>';
-                html += '<span>';
-                html += '<span class="stage-number">' + stage.number + '</span>';
-                html += (stage.displayName || stage.name);
-                html += '</span>';
-                html += '<span class="expand-icon">▼</span>';
-                html += '</h3>';
-                html += depsHtml;
-                html += '<div class="stage-details">';
-                html += '<p style="color: #4a5568; margin-bottom: 10px;">';
-                html += (stage.jobs ? 'Jobs: ' + stage.jobs.length : 'Stage');
-                html += '</p>';
-                html += '</div>';
-                html += '</div>';
-                
-                // Add divider between stages
-                if (i < stagesData.length - 1) {
-                    html += '<div class="stage-divider"></div>';
+            };
+            
+            // Mouse wheel zoom
+            container.addEventListener('wheel', function(e) {
+                e.preventDefault();
+                const delta = e.deltaY > 0 ? 0.9 : 1.1;
+                const newScale = scale * delta;
+                if (newScale >= 0.1 && newScale <= 5) {
+                    scale = newScale;
+                    updateTransform();
                 }
-            }
+            });
             
-            stageList.innerHTML = html;
+            // Mouse drag pan
+            container.addEventListener('mousedown', function(e) {
+                isDragging = true;
+                startX = e.clientX - translateX;
+                startY = e.clientY - translateY;
+                container.style.cursor = 'grabbing';
+            });
             
-            // Add click handlers to stage cards
-            const stageCards = document.querySelectorAll('.stage-card');
-            for (let i = 0; i < stageCards.length; i++) {
-                stageCards[i].addEventListener('click', function() {
-                    this.classList.toggle('expanded');
-                });
-            }
-        };
+            document.addEventListener('mousemove', function(e) {
+                if (!isDragging) return;
+                translateX = e.clientX - startX;
+                translateY = e.clientY - startY;
+                updateTransform();
+            });
+            
+            document.addEventListener('mouseup', function() {
+                isDragging = false;
+                container.style.cursor = 'grab';
+            });
+        })();
         
         // Toggle diagram source visibility
         window.toggleDiagramSource = function() {
@@ -1516,38 +1514,96 @@ ${mermaidDiagram
             }
         }
         
-        // Initial render
-        renderStages();
+        // Initial diagram is already rendered
     </script>
 </body>
 </html>`;
 
-                panel.webview.html = htmlContent;
-
-                // Handle messages from webview
-                // Handle messages from webview (panel-specific, not added to context subscriptions)
-                panel.webview.onDidReceiveMessage(async (message) => {
-                    if (message.command === 'openInBrowser') {
-                        try {
-                            const os = require('os');
-                            const tempFile = path.join(os.tmpdir(), `pipeline-dependencies-${Date.now()}.html`);
-                            fs.writeFileSync(tempFile, htmlContent);
-                            await vscode.env.openExternal(vscode.Uri.file(tempFile));
-                            vscode.window.showInformationMessage('Opened dependencies in browser');
-                        } catch (err) {
-                            vscode.window.showErrorMessage(`Failed to open in browser: ${err.message}`);
-                        }
-                    }
-                });
-
-                // Close error panel on successful dependency analysis
-                closeErrorPanel();
-
-                vscode.window.setStatusBarMessage('Pipeline dependencies analyzed.', 3000);
-            } catch (error) {
-                console.error('Error analyzing dependencies:', error);
-                showErrorWebview(error, context, 'dependency');
+            const panel = ensureDependenciesPanel();
+            if (!panel) {
+                return;
             }
+
+            activeDependenciesPanel = dependenciesPanel = panel;
+            dependenciesPanelHtml = htmlContent;
+
+            try {
+                panel.webview.html = htmlContent;
+            } catch (panelError) {
+                // Panel might be disposed, ignore
+                dependenciesPanel = null;
+                activeDependenciesPanel = null;
+                return;
+            }
+
+            if (reveal) {
+                try {
+                    panel.reveal(vscode.ViewColumn.Two, true);
+                } catch (revealError) {
+                    // Panel reveal failed, ignore
+                }
+            }
+
+            closeErrorPanel();
+
+            if (!silent) {
+                vscode.window.setStatusBarMessage('Pipeline dependencies analyzed.', 3000);
+            }
+        } catch (error) {
+            // This catch block handles unexpected errors that weren't caught by inner try-catch blocks
+            const errorMessage = error.message || 'An unexpected error occurred while analyzing dependencies';
+            const enhancedMessage =
+                `Error in Pipeline Diagram:\n\n${errorMessage}\n\n` +
+                `💡 Tip: This is an unexpected error. Please check the error details below.`;
+            const enhancedError = new Error(enhancedMessage);
+            enhancedError.stack = error.stack;
+            showErrorWebviewNow(enhancedError, context, 'dependency');
+        } finally {
+            isDependenciesRendering = false;
+            if (pendingDependenciesDocument) {
+                const queuedDocument = pendingDependenciesDocument;
+                pendingDependenciesDocument = null;
+                void renderDependenciesPanel(queuedDocument, { silent: true });
+            }
+        }
+    };
+
+    const scheduleDependenciesRefresh = (document, delayMs = 500) => {
+        if (!dependenciesPanel || !dependenciesDocumentUri) {
+            return;
+        }
+
+        if (document.uri.toString() !== dependenciesDocumentUri.toString()) {
+            return;
+        }
+
+        pendingDependenciesDocument = document;
+        clearTimeout(dependenciesDebounceTimer);
+        clearTimeout(activeDependenciesDebounceTimer);
+        dependenciesDebounceTimer = activeDependenciesDebounceTimer = setTimeout(() => {
+            // Check again if panel is still valid (might have been disposed)
+            if (!dependenciesPanel || isDependenciesRendering) {
+                return;
+            }
+
+            const queuedDocument = pendingDependenciesDocument;
+            pendingDependenciesDocument = null;
+            if (queuedDocument) {
+                void renderDependenciesPanel(queuedDocument, { silent: true });
+            }
+        }, delayMs);
+    };
+
+    const showDependenciesCommandDisposable = vscode.commands.registerCommand(
+        'azurePipelineStudio.showDependencies',
+        async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor || !shouldRenderDocument(editor.document)) {
+                vscode.window.showInformationMessage('Open an Azure Pipeline YAML file to view dependencies.');
+                return;
+            }
+
+            await renderDependenciesPanel(editor.document, { reveal: true });
         }
     );
     context.subscriptions.push(showDependenciesCommandDisposable);
@@ -1630,7 +1686,7 @@ ${mermaidDiagram
             if (selection.newEntry) {
                 const inputAlias = await vscode.window.showInputBox({
                     prompt: 'Repository alias or name',
-                    placeHolder: 'templatesRepo',
+                    placeHolder: 'Name given under resources.repositories[].repository',
                     ignoreFocusOut: true,
                 });
 
@@ -1763,6 +1819,9 @@ ${mermaidDiagram
                     void renderYamlDocument(document, { silent: true });
                 }
             }
+
+            // Refresh dependencies panel even if not the expanded document
+            scheduleDependenciesRefresh(document);
         })
     );
 
@@ -1777,7 +1836,27 @@ ${mermaidDiagram
     );
 }
 
-function deactivate() {}
+function deactivate() {
+    // Clear any pending timers to prevent operations after disposal
+    clearTimeout(activeDebounceTimer);
+    clearTimeout(activeErrorDebounceTimer);
+    clearTimeout(activeDependenciesDebounceTimer);
+
+    // Clear module-level state to prevent any new operations
+    activeDebounceTimer = undefined;
+    activeErrorDebounceTimer = undefined;
+    activeDependenciesDebounceTimer = undefined;
+
+    // Dispose of dependencies panel if still open
+    if (activeDependenciesPanel) {
+        try {
+            activeDependenciesPanel.dispose();
+        } catch (e) {
+            // Panel may already be disposed, ignore
+        }
+        activeDependenciesPanel = null;
+    }
+}
 
 module.exports = {
     activate,
