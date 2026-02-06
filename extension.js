@@ -16,6 +16,12 @@ try {
 const { AzurePipelineParser } = require('./parser');
 const { NONAME } = require('dns');
 
+// Module-level state for cleanup
+let activeDebounceTimer;
+let activeErrorDebounceTimer;
+let activeDependenciesDebounceTimer;
+let activeDependenciesPanel;
+
 function activate(context) {
     if (!vscode) {
         console.warn('VS Code API unavailable; activate() skipped (CLI execution detected).');
@@ -36,6 +42,12 @@ function activate(context) {
     const renderedScheme = 'ado-pipeline-expanded';
     const renderedContent = new Map();
     const renderedEmitter = new vscode.EventEmitter();
+    let dependenciesPanel;
+    let dependenciesPanelHtml = '';
+    let dependenciesDocumentUri;
+    let dependenciesDebounceTimer;
+    let isDependenciesRendering = false;
+    let pendingDependenciesDocument = null;
 
     context.subscriptions.push(renderedEmitter);
     context.subscriptions.push(
@@ -538,7 +550,8 @@ function activate(context) {
 
     const scheduleErrorDisplay = (delayMs = errorDebounceDelayMs) => {
         clearTimeout(errorDebounceTimer);
-        errorDebounceTimer = setTimeout(() => {
+        clearTimeout(activeErrorDebounceTimer);
+        errorDebounceTimer = activeErrorDebounceTimer = setTimeout(() => {
             if (!pendingError) return;
             if (isRendering) {
                 scheduleErrorDisplay(delayMs);
@@ -546,7 +559,7 @@ function activate(context) {
             }
             const { error: err, context: ctx, errorType: type } = pendingError;
             pendingError = null;
-            errorDebounceTimer = undefined;
+            errorDebounceTimer = activeErrorDebounceTimer = undefined;
             showErrorWebviewNow(err, ctx, type);
         }, delayMs);
     };
@@ -572,7 +585,8 @@ function activate(context) {
         if (!shouldRenderDocument(document)) return;
         pendingDocument = document;
         clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => {
+        clearTimeout(activeDebounceTimer);
+        debounceTimer = activeDebounceTimer = setTimeout(() => {
             if (isRendering) return;
             const doc = pendingDocument;
             pendingDocument = null;
@@ -667,7 +681,8 @@ function activate(context) {
             renderedEmitter.fire(targetUri);
 
             clearTimeout(errorDebounceTimer);
-            errorDebounceTimer = undefined;
+            clearTimeout(activeErrorDebounceTimer);
+            errorDebounceTimer = activeErrorDebounceTimer = undefined;
             pendingError = null;
 
             // Close error panel on successful expansion
@@ -803,74 +818,109 @@ function activate(context) {
     );
     context.subscriptions.push(configureCommandDisposable);
 
-    const showDependenciesCommandDisposable = vscode.commands.registerCommand(
-        'azurePipelineStudio.showDependencies',
-        async () => {
-            const editor = vscode.window.activeTextEditor;
-            if (!editor || !shouldRenderDocument(editor.document)) {
-                vscode.window.showInformationMessage('Open an Azure Pipeline YAML file to view dependencies.');
+    const ensureDependenciesPanel = () => {
+        if (dependenciesPanel) {
+            return dependenciesPanel;
+        }
+
+        dependenciesPanel = vscode.window.createWebviewPanel(
+            'pipelineDependencies',
+            'Pipeline Dependencies',
+            vscode.ViewColumn.Beside,
+            { enableScripts: true }
+        );
+
+        dependenciesPanel.onDidDispose(() => {
+            dependenciesPanel = activeDependenciesPanel = null;
+            dependenciesDocumentUri = undefined;
+        });
+
+        dependenciesPanel.webview.onDidReceiveMessage(async (message) => {
+            if (message.command !== 'openInBrowser') {
                 return;
             }
 
-            closeErrorPanel();
             try {
-                const sourceText = editor.document.getText();
-                const document = editor.document;
+                const os = require('os');
+                const tempFile = path.join(os.tmpdir(), `pipeline-dependencies-${Date.now()}.html`);
+                fs.writeFileSync(tempFile, dependenciesPanelHtml);
+                await vscode.env.openExternal(vscode.Uri.file(tempFile));
+                vscode.window.showInformationMessage('Opened dependencies in browser');
+            } catch (err) {
+                vscode.window.showErrorMessage(`Failed to open in browser: ${err.message}`);
+            }
+        });
 
-                // Expand the template first (similar to showRenderedYaml)
-                const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
-                const compileTimeVariables = config.get('expansion.variables', {});
-                const skipSyntaxCheck = config.get('expansion.skipSyntaxCheck', false);
-                const resourceOverrides = buildResourceOverridesForDocument(document);
+        return dependenciesPanel;
+    };
 
-                const parserOverrides = {
-                    fileName: document.fileName,
-                    azureCompatible: false,
-                    skipSyntaxCheck,
-                    ...(resourceOverrides && { resources: resourceOverrides }),
-                    ...(Object.keys(compileTimeVariables).length && { variables: compileTimeVariables }),
-                };
+    const renderDependenciesPanel = async (document, options = {}) => {
+        if (!document || !shouldRenderDocument(document)) {
+            vscode.window.showInformationMessage('Open an Azure Pipeline YAML file to view dependencies.');
+            return;
+        }
 
+        const { reveal = false, silent = false } = options;
+
+        closeErrorPanel();
+        dependenciesDocumentUri = document.uri;
+
+        if (isDependenciesRendering) {
+            pendingDependenciesDocument = document;
+            return;
+        }
+
+        isDependenciesRendering = true;
+        try {
+            const sourceText = document.getText();
+
+            const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
+            const compileTimeVariables = config.get('expansion.variables', {});
+            const skipSyntaxCheck = config.get('expansion.skipSyntaxCheck', false);
+            const resourceOverrides = buildResourceOverridesForDocument(document);
+
+            const parserOverrides = {
+                fileName: document.fileName,
+                azureCompatible: false,
+                skipSyntaxCheck,
+                ...(resourceOverrides && { resources: resourceOverrides }),
+                ...(Object.keys(compileTimeVariables).length && { variables: compileTimeVariables }),
+            };
+
+            if (!silent) {
                 vscode.window.setStatusBarMessage('Expanding pipeline templates...', 2000);
-                const expandedYaml = parser.expandPipelineFromString(sourceText, parserOverrides);
+            }
 
-                // Analyze the expanded pipeline
+            const expandedYaml = parser.expandPipelineFromString(sourceText, parserOverrides);
+
+            if (!silent) {
                 vscode.window.setStatusBarMessage('Analyzing dependencies...', 2000);
-                let dependencies;
-                try {
-                    dependencies = dependencyAnalyzer.analyzePipeline(expandedYaml);
-                } catch (error) {
-                    const errorMessage = error.message || 'An error occurred while analyzing pipeline dependencies';
-                    const enhancedMessage =
-                        `Error in Show Dependencies:\n\n${errorMessage}\n\n` +
-                        `💡 Tip: It's often easier to identify and fix issues using "Expand Pipeline" first. ` +
-                        `This will show you the full expanded YAML with all template variables and references resolved.`;
-                    const enhancedError = new Error(enhancedMessage);
-                    enhancedError.stack = error.stack;
-                    showErrorWebview(enhancedError, context, 'dependency');
-                    return;
-                }
+            }
 
-                // Create webview panel to display diagram
-                const panel = vscode.window.createWebviewPanel(
-                    'pipelineDependencies',
-                    'Pipeline Dependencies',
-                    vscode.ViewColumn.Beside,
-                    { enableScripts: true }
-                );
+            let dependencies;
+            try {
+                dependencies = dependencyAnalyzer.analyzePipeline(expandedYaml);
+            } catch (error) {
+                const errorMessage = error.message || 'An error occurred while analyzing pipeline dependencies';
+                const enhancedMessage =
+                    `Error in Show Dependencies:\n\n${errorMessage}\n\n` +
+                    `💡 Tip: It's often easier to identify and fix issues using "Expand Pipeline" first. ` +
+                    `This will show you the full expanded YAML with all template variables and references resolved.`;
+                const enhancedError = new Error(enhancedMessage);
+                enhancedError.stack = error.stack;
+                showErrorWebview(enhancedError, context, 'dependency');
+                return;
+            }
 
-                // Generate Mermaid diagram
-                const mermaidDiagram =
-                    dependencies.stages.length > 0 || dependencies.jobs.length > 0
-                        ? dependencyAnalyzer.generateMermaidDiagram(dependencies)
-                        : '';
+            const mermaidDiagram =
+                dependencies.stages.length > 0 || dependencies.jobs.length > 0
+                    ? dependencyAnalyzer.generateMermaidDiagram(dependencies)
+                    : '';
 
-                // Create HTML content with professional styling
-                const projectName =
-                    lastRenderedDocument?.fileName?.split('/').pop()?.replace('.yaml', '') || 'Pipeline';
-                const stageCount = dependencies.stages.length || dependencies.jobs.length || 0;
+            const projectName = lastRenderedDocument?.fileName?.split('/').pop()?.replace('.yaml', '') || 'Pipeline';
+            const stageCount = dependencies.stages.length || dependencies.jobs.length || 0;
 
-                const htmlContent = `<!DOCTYPE html>
+            const htmlContent = `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -1522,32 +1572,86 @@ ${mermaidDiagram
 </body>
 </html>`;
 
-                panel.webview.html = htmlContent;
-
-                // Handle messages from webview
-                // Handle messages from webview (panel-specific, not added to context subscriptions)
-                panel.webview.onDidReceiveMessage(async (message) => {
-                    if (message.command === 'openInBrowser') {
-                        try {
-                            const os = require('os');
-                            const tempFile = path.join(os.tmpdir(), `pipeline-dependencies-${Date.now()}.html`);
-                            fs.writeFileSync(tempFile, htmlContent);
-                            await vscode.env.openExternal(vscode.Uri.file(tempFile));
-                            vscode.window.showInformationMessage('Opened dependencies in browser');
-                        } catch (err) {
-                            vscode.window.showErrorMessage(`Failed to open in browser: ${err.message}`);
-                        }
-                    }
-                });
-
-                // Close error panel on successful dependency analysis
-                closeErrorPanel();
-
-                vscode.window.setStatusBarMessage('Pipeline dependencies analyzed.', 3000);
-            } catch (error) {
-                console.error('Error analyzing dependencies:', error);
-                showErrorWebview(error, context, 'dependency');
+            const panel = ensureDependenciesPanel();
+            if (!panel) {
+                return;
             }
+
+            activeDependenciesPanel = dependenciesPanel = panel;
+            dependenciesPanelHtml = htmlContent;
+
+            try {
+                panel.webview.html = htmlContent;
+            } catch (panelError) {
+                // Panel might be disposed, ignore
+                dependenciesPanel = null;
+                activeDependenciesPanel = null;
+                return;
+            }
+
+            if (reveal) {
+                try {
+                    panel.reveal(vscode.ViewColumn.Beside, true);
+                } catch (revealError) {
+                    // Panel reveal failed, ignore
+                }
+            }
+
+            closeErrorPanel();
+
+            if (!silent) {
+                vscode.window.setStatusBarMessage('Pipeline dependencies analyzed.', 3000);
+            }
+        } catch (error) {
+            if (!silent) {
+                vscode.window.showErrorMessage(`Failed to analyze dependencies: ${error.message}`);
+            }
+        } finally {
+            isDependenciesRendering = false;
+            if (pendingDependenciesDocument) {
+                const queuedDocument = pendingDependenciesDocument;
+                pendingDependenciesDocument = null;
+                void renderDependenciesPanel(queuedDocument, { silent: true });
+            }
+        }
+    };
+
+    const scheduleDependenciesRefresh = (document, delayMs = 500) => {
+        if (!dependenciesPanel || !dependenciesDocumentUri) {
+            return;
+        }
+
+        if (document.uri.toString() !== dependenciesDocumentUri.toString()) {
+            return;
+        }
+
+        pendingDependenciesDocument = document;
+        clearTimeout(dependenciesDebounceTimer);
+        clearTimeout(activeDependenciesDebounceTimer);
+        dependenciesDebounceTimer = activeDependenciesDebounceTimer = setTimeout(() => {
+            // Check again if panel is still valid (might have been disposed)
+            if (!dependenciesPanel || isDependenciesRendering) {
+                return;
+            }
+
+            const queuedDocument = pendingDependenciesDocument;
+            pendingDependenciesDocument = null;
+            if (queuedDocument) {
+                void renderDependenciesPanel(queuedDocument, { silent: true });
+            }
+        }, delayMs);
+    };
+
+    const showDependenciesCommandDisposable = vscode.commands.registerCommand(
+        'azurePipelineStudio.showDependencies',
+        async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor || !shouldRenderDocument(editor.document)) {
+                vscode.window.showInformationMessage('Open an Azure Pipeline YAML file to view dependencies.');
+                return;
+            }
+
+            await renderDependenciesPanel(editor.document, { reveal: true });
         }
     );
     context.subscriptions.push(showDependenciesCommandDisposable);
@@ -1630,7 +1734,7 @@ ${mermaidDiagram
             if (selection.newEntry) {
                 const inputAlias = await vscode.window.showInputBox({
                     prompt: 'Repository alias or name',
-                    placeHolder: 'templatesRepo',
+                    placeHolder: 'Name given under resources.repositories[].repository',
                     ignoreFocusOut: true,
                 });
 
@@ -1763,6 +1867,9 @@ ${mermaidDiagram
                     void renderYamlDocument(document, { silent: true });
                 }
             }
+
+            // Refresh dependencies panel even if not the expanded document
+            scheduleDependenciesRefresh(document);
         })
     );
 
@@ -1777,7 +1884,27 @@ ${mermaidDiagram
     );
 }
 
-function deactivate() {}
+function deactivate() {
+    // Clear any pending timers to prevent operations after disposal
+    clearTimeout(activeDebounceTimer);
+    clearTimeout(activeErrorDebounceTimer);
+    clearTimeout(activeDependenciesDebounceTimer);
+
+    // Clear module-level state to prevent any new operations
+    activeDebounceTimer = undefined;
+    activeErrorDebounceTimer = undefined;
+    activeDependenciesDebounceTimer = undefined;
+
+    // Dispose of dependencies panel if still open
+    if (activeDependenciesPanel) {
+        try {
+            activeDependenciesPanel.dispose();
+        } catch (e) {
+            // Panel may already be disposed, ignore
+        }
+        activeDependenciesPanel = null;
+    }
+}
 
 module.exports = {
     activate,
