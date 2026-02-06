@@ -74,11 +74,25 @@ stages:
     - script: echo "Running scan"
       displayName: Scan
 
+- stage: Signing
+  displayName: Signing
+  dependsOn: Build
+  condition: and(succeeded(), eq(variables.isMain, true))
+
+  jobs:
+  - job: Sign
+    displayName: Sign Artifacts
+
+    steps:
+    - script: echo "Signing artifacts"
+      displayName: Sign
+
 - stage: Release
   displayName: Release
   dependsOn:
   - Test
   - Scan
+  - Signing
   condition: and(succeeded(), eq(variables.isMain, true))
 
   jobs:
@@ -92,7 +106,7 @@ stages:
 - stage: Deploy
   displayName: Deploy
   dependsOn: Release
-  condition: and(succeeded(), ne('${{ parameters.environmentName }}', 'dev'))
+  condition: and(succeeded(), ne('${{ parameters.environment }}', 'dev'))
 
   jobs:
   - template: templates/deploy-job.yml

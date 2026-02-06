@@ -220,12 +220,15 @@ function activate(context) {
         const title = titles[errorType] || '❌ Pipeline Error';
 
         // Create webview panel
-        const panel = vscode.window.createWebviewPanel('azurePipelineError', title, vscode.ViewColumn.Beside, {
+        const panel = vscode.window.createWebviewPanel('azurePipelineError', title, vscode.ViewColumn.Two, {
             enableScripts: true,
         });
 
         // Store reference to current error panel
         currentErrorPanel = panel;
+
+        // Explicitly reveal the panel to ensure it's visible
+        panel.reveal(vscode.ViewColumn.Two);
 
         // Mark error panel as open
         errorPanelOpen = true;
@@ -247,11 +250,39 @@ function activate(context) {
 
         // Convert file paths in text to clickable links
         const makePathsClickable = (text) => {
-            // Match UNC, Windows, and Unix paths with optional line numbers
+            const placeholders = [];
+            let placeholderIndex = 0;
+
+            // First handle template stack format with repository references:
+            // Format: /templates/file.yaml@repo:46 (\\actual\path\file.yaml)
+            // or: /templates/file.yaml:46 (\\actual\path\file.yaml)
+            // Also handle format without line number: /templates/file.yaml@repo (\\actual\path\file.yaml)
+            // Extract line number and actual path, make the template reference clickable, hide UNC path
+            const templateStackRegex =
+                /([^\s\(]+\.ya?ml(?:@[^:]+)?)(?::(\d+))?\s+\((\\\\[^\)]+\.ya?ml|[A-Za-z]:[^\)]+\.ya?ml|\/[^\)]+\.ya?ml)\)/g;
+            text = text.replace(templateStackRegex, (match, templatePath, lineNumber, actualPath) => {
+                // Skip extension bundle paths
+                if (actualPath && actualPath.includes('extension-bundle.js')) {
+                    return match;
+                }
+
+                if (actualPath) {
+                    const escapedPath = actualPath.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                    const displayText = lineNumber ? `${templatePath}:${lineNumber}` : templatePath;
+                    const link = `<a class="file-link" href="#" title="${escapeHtml(actualPath)}" onclick="openFile('${escapedPath}', ${lineNumber || 'null'}); return false;">${escapeHtml(displayText)}</a>`;
+                    const placeholder = `___PLACEHOLDER_${placeholderIndex}___`;
+                    placeholders.push(link);
+                    placeholderIndex++;
+                    return placeholder;
+                }
+                return match;
+            });
+
+            // Then handle standard format: path/file.yaml:LINE
             const pathRegex =
                 /(\\\\[^\s\n:]+\.(?:ya?ml|js|ts))(?::(\d+))?(?::(\d+))?|([A-Za-z]:\\[^\s\n:]+\.(?:ya?ml|js|ts))(?::(\d+))?(?::(\d+))?|(\/[^\s\n:]+\.(?:ya?ml|js|ts))(?::(\d+))?(?::(\d+))?/g;
 
-            return text.replace(
+            text = text.replace(
                 pathRegex,
                 (match, uncPath, uncLine, uncCol, winPath, winLine, winCol, unixPath, unixLine, unixCol) => {
                     const filePath = uncPath || winPath || unixPath;
@@ -265,11 +296,18 @@ function activate(context) {
                     if (filePath) {
                         const escapedPath = filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
                         const lineParam = lineNumber ? lineNumber : 'null';
-                        return `<a class="file-link" href="#" onclick="openFile('${escapedPath}', ${lineParam}); return false;">${escapeHtml(match)}</a>`;
+                        return `<a class="file-link" href="#" title="${escapeHtml(filePath)}" onclick="openFile('${escapedPath}', ${lineParam}); return false;">${escapeHtml(match)}</a>`;
                     }
                     return match;
                 }
             );
+
+            // Restore placeholders
+            placeholders.forEach((link, index) => {
+                text = text.replace(`___PLACEHOLDER_${index}___`, link);
+            });
+
+            return text;
         };
 
         // Format error message with line breaks and proper indentation
@@ -367,7 +405,7 @@ function activate(context) {
                 '- Undefined or circular template references',
                 '- Missing or incorrect parameter values',
                 '- Malformed YAML structure in referenced templates',
-                '- Use "Show Dependencies" to see the complete dependency graph and identify the root cause.',
+                '- Use "Pipeline Diagram" to see the complete dependency graph and identify the root cause.',
             ];
         }
 
@@ -379,7 +417,7 @@ function activate(context) {
         if (templateLines.length) {
             detailsLines.push('Template call stack:');
             templateLines.forEach((line) => {
-                detailsLines.push(`    ${line}`);
+                detailsLines.push(`  ${line}`);
             });
         }
 
@@ -400,7 +438,16 @@ function activate(context) {
         const stackLines = errorStackText
             .split('\n')
             .filter((line, index) => index === 0 || line.trim().startsWith('at '));
-        const sanitizedStackText = stackLines.length > 1 ? stackLines.slice(1).join('\n') : '';
+        // Keep first line (error location), add indentation to 'at' lines
+        const sanitizedStackText =
+            stackLines.length > 0
+                ? stackLines
+                      .map((line, index) => {
+                          if (index === 0) return line; // Keep first line as is
+                          return line.trim().startsWith('at ') ? `  ${line.trim()}` : line;
+                      })
+                      .join('\n')
+                : '';
 
         // Build HTML content with proper styling
         let htmlContent = `
@@ -691,7 +738,7 @@ function activate(context) {
             if (!options.silent) {
                 const targetDoc = await vscode.workspace.openTextDocument(targetUri);
                 await vscode.window.showTextDocument(targetDoc, {
-                    viewColumn: vscode.ViewColumn.Beside,
+                    viewColumn: vscode.ViewColumn.Two,
                     preview: false,
                     preserveFocus: true,
                 });
@@ -826,7 +873,7 @@ function activate(context) {
         dependenciesPanel = vscode.window.createWebviewPanel(
             'pipelineDependencies',
             'Pipeline Dependencies',
-            vscode.ViewColumn.Beside,
+            vscode.ViewColumn.Two,
             { enableScripts: true }
         );
 
@@ -896,7 +943,20 @@ function activate(context) {
                 vscode.window.setStatusBarMessage('Expanding pipeline templates...', 2000);
             }
 
-            const expandedYaml = parser.expandPipelineFromString(sourceText, parserOverrides);
+            let expandedYaml;
+            try {
+                expandedYaml = parser.expandPipelineFromString(sourceText, parserOverrides);
+            } catch (error) {
+                const errorMessage = error.message || 'An error occurred while expanding pipeline templates';
+                const enhancedMessage =
+                    `Error in Pipeline Diagram:\n\n${errorMessage}\n\n` +
+                    `💡 Tip: Check your YAML syntax and template references. ` +
+                    `You can also use "Expand Pipeline" to debug template expansion issues.`;
+                const enhancedError = new Error(enhancedMessage);
+                enhancedError.stack = error.stack;
+                showErrorWebviewNow(enhancedError, context, 'dependency');
+                return;
+            }
 
             if (!silent) {
                 vscode.window.setStatusBarMessage('Analyzing dependencies...', 2000);
@@ -908,12 +968,12 @@ function activate(context) {
             } catch (error) {
                 const errorMessage = error.message || 'An error occurred while analyzing pipeline dependencies';
                 const enhancedMessage =
-                    `Error in Show Dependencies:\n\n${errorMessage}\n\n` +
+                    `Error in Pipeline Diagram:\n\n${errorMessage}\n\n` +
                     `💡 Tip: It's often easier to identify and fix issues using "Expand Pipeline" first. ` +
                     `This will show you the full expanded YAML with all template variables and references resolved.`;
                 const enhancedError = new Error(enhancedMessage);
                 enhancedError.stack = error.stack;
-                showErrorWebview(enhancedError, context, 'dependency');
+                showErrorWebviewNow(enhancedError, context, 'dependency');
                 return;
             }
 
@@ -1478,7 +1538,7 @@ ${mermaidDiagram
 
             if (reveal) {
                 try {
-                    panel.reveal(vscode.ViewColumn.Beside, true);
+                    panel.reveal(vscode.ViewColumn.Two, true);
                 } catch (revealError) {
                     // Panel reveal failed, ignore
                 }
@@ -1490,9 +1550,14 @@ ${mermaidDiagram
                 vscode.window.setStatusBarMessage('Pipeline dependencies analyzed.', 3000);
             }
         } catch (error) {
-            if (!silent) {
-                vscode.window.showErrorMessage(`Failed to analyze dependencies: ${error.message}`);
-            }
+            // This catch block handles unexpected errors that weren't caught by inner try-catch blocks
+            const errorMessage = error.message || 'An unexpected error occurred while analyzing dependencies';
+            const enhancedMessage =
+                `Error in Pipeline Diagram:\n\n${errorMessage}\n\n` +
+                `💡 Tip: This is an unexpected error. Please check the error details below.`;
+            const enhancedError = new Error(enhancedMessage);
+            enhancedError.stack = error.stack;
+            showErrorWebviewNow(enhancedError, context, 'dependency');
         } finally {
             isDependenciesRendering = false;
             if (pendingDependenciesDocument) {

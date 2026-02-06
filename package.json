@@ -36,7 +36,7 @@
       },
       {
         "command": "azurePipelineStudio.showDependencies",
-        "title": "Show Dependencies"
+        "title": "Pipeline Diagram"
       }
     ],
     "configuration": {

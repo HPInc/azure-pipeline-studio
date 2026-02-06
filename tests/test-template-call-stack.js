@@ -86,9 +86,9 @@ const test1Pass = runErrorTestCase(
     {},
     'Template file not found',
     (errorMsg) => {
-        // Should show the root file in the stack
-        if (!errorMsg.includes('error-template-not-found.yaml')) {
-            throw new Error('Call stack missing root file');
+        // Should show the root file in the stack with line number 2
+        if (!errorMsg.includes('error-template-not-found.yaml:2')) {
+            throw new Error('Call stack missing root file line number (expected :2)');
         }
 
         // Should show the missing template reference
@@ -109,9 +109,10 @@ const test2Pass = runErrorTestCase(
     },
     "Repository resource 'unknownrepo' is not defined",
     (errorMsg) => {
-        // Should show the root file in the stack
-        if (!errorMsg.includes('error-repo-missing.yaml')) {
-            throw new Error('Call stack missing root file');
+        // Should show the root file in the stack with line number 2
+        // calls template at line 2 in error-repo-missing.yaml
+        if (!errorMsg.includes('error-repo-missing.yaml:2')) {
+            throw new Error('Call stack missing root file line number (expected :2)');
         }
     }
 );
@@ -123,9 +124,9 @@ const test3Pass = runErrorTestCase(
     {},
     'Failed to parse template',
     (errorMsg) => {
-        // Should show the root file in the stack
-        if (!errorMsg.includes('error-parse-failure-root.yaml')) {
-            throw new Error('Call stack missing root file');
+        // Should show the root file in the stack with line number 2
+        if (!errorMsg.includes('error-parse-failure-root.yaml:2')) {
+            throw new Error('Call stack missing root file line number (expected :2)');
         }
 
         // Should mention the bad template
@@ -197,10 +198,65 @@ const test5Pass = runErrorTestCase(
     }
 );
 
+// Test 6: Root file undefined parameter with line number
+const test6Pass = runErrorTestCase(
+    'Test 6: Root file undefined parameter shows line number',
+    'error-root-param-undefined.yaml',
+    {},
+    "Undefined template parameter 'missing'",
+    (errorMsg) => {
+        // Should show the root file with line number
+        // "error-root-param-undefined.yaml:10"
+        if (!errorMsg.includes('error-root-param-undefined.yaml:10')) {
+            throw new Error('Call stack missing root file line number (expected :10)');
+        }
+    }
+);
+
+// Test 7: Nested file undefined parameter with line numbers
+const test7Pass = runErrorTestCase(
+    'Test 7: Nested file undefined parameter shows line numbers',
+    'error-nested-param-undefined.yaml',
+    {},
+    "Undefined template parameter 'thisDoesNotExist'",
+    (errorMsg) => {
+        // Root calls nested at line 2
+        if (!errorMsg.includes('error-nested-param-undefined.yaml:2')) {
+            throw new Error('Call stack missing root file line number (expected :2)');
+        }
+
+        // Nested file has error at line 3 (script: echo ${{ parameters.thisDoesNotExist }})
+        if (!errorMsg.includes('nested-param-template.yaml:3')) {
+            throw new Error('Call stack missing nested file line number (expected :3)');
+        }
+    }
+);
+
+// Test 8: Nested missing template with line numbers in stack
+const test8Pass = runErrorTestCase(
+    'Test 8: Nested missing template shows line numbers',
+    'error-nested-missing-template.yaml',
+    {},
+    'Template file not found: truly-missing-template.yaml',
+    (errorMsg) => {
+        // Root calls intermediate at line 2
+        if (!errorMsg.includes('error-nested-missing-template.yaml:2')) {
+            throw new Error('Call stack missing root file line number (expected :2)');
+        }
+
+        // Intermediate calls missing at line 4
+        if (!errorMsg.includes('nested-missing-caller.yaml:4')) {
+            throw new Error('Call stack missing intermediate file line number (expected :4)');
+        }
+    }
+);
+
 // Summary
 console.log('='.repeat(70));
-const totalTests = 5;
-const passedTests = [test1Pass, test2Pass, test3Pass, test4Pass, test5Pass].filter(Boolean).length;
+const totalTests = 8;
+const passedTests = [test1Pass, test2Pass, test3Pass, test4Pass, test5Pass, test6Pass, test7Pass, test8Pass].filter(
+    Boolean
+).length;
 const failedTests = totalTests - passedTests;
 
 console.log(`Total tests: ${totalTests}`);

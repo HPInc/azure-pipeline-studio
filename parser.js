@@ -252,13 +252,13 @@ class AzurePipelineParser {
      * @returns {{yamlDoc: object, jsonDoc: object}} - Parsed YAML doc and JSON document
      * @throws {Error} If YAML parsing fails or syntax hints are detected
      */
-    parseYamlDocument(source, identifier, skipSyntax = false, context = undefined) {
+    parseYamlDocument(source, identifier, skipSyntax = false, context = undefined, lineNumber = null) {
         if (!skipSyntax) {
             try {
                 this.validateYamlSyntaxHints(source, identifier);
             } catch (err) {
                 const msg = err && err.message ? err.message : String(err);
-                throw new Error(this.formatErrorWithStack(msg, context));
+                throw new Error(this.formatErrorWithStack(msg, context, lineNumber));
             }
         }
 
@@ -280,7 +280,7 @@ class AzurePipelineParser {
             const errorMsg = identifier
                 ? `Failed to parse template '${identifier}': ${error.message}`
                 : `Failed to parse YAML: ${error.message}`;
-            throw new Error(this.formatErrorWithStack(errorMsg, context));
+            throw new Error(this.formatErrorWithStack(errorMsg, context, lineNumber));
         }
     }
 
@@ -889,12 +889,59 @@ class AzurePipelineParser {
 
         const lines = [];
         lines.push('Template call stack:');
-        // Add line number to the first file path if provided
-        const firstPath = lineNumber ? `${rawStack[0]}:${lineNumber}` : rawStack[0];
-        lines.push('    ' + firstPath);
+
+        // The lineNumber parameter is the line where the error parameter is defined (should go on last entry)
+
+        // For root file, extract line number from first nested entry if available
+        let rootLineNumber = null;
+        if (rawStack.length > 1) {
+            const firstNestedMatch = rawStack[1].match(/:(\d+)(?=\s|$|\()/);
+            if (firstNestedMatch) {
+                rootLineNumber = firstNestedMatch[1];
+            }
+        } else if (lineNumber) {
+            rootLineNumber = lineNumber;
+        }
+
+        const firstPath = rootLineNumber ? `${rawStack[0]}:${rootLineNumber}` : rawStack[0];
+        lines.push('  ' + firstPath);
+
+        // For nested templates, shift line numbers:
+        // Each template should show the line where it CALLS the next template
+        // The line number stored in entry[i] is where entry[i] is called from entry[i-1]
+        // So we need to show entry[i]'s line number on entry[i-1], and move down
         for (let i = 1; i < rawStack.length; i++) {
-            // Stack entries now include line numbers in format "path:line" or just "path"
-            lines.push('    ' + '  '.repeat(i) + '└── ' + rawStack[i]);
+            let entry = rawStack[i];
+
+            // If this is the last entry, add the error parameter line number
+            if (i === rawStack.length - 1 && lineNumber) {
+                // Add or replace line number with error parameter line
+                if (entry.includes(':')) {
+                    entry = entry.replace(/:(\d+)(?=\s|$|\()/, `:${lineNumber}`);
+                } else {
+                    // No line number in entry, add it before the first space or parenthesis
+                    entry = entry
+                        .replace(/(@[^:\s\(]+)(?=\s|$|\()/, `$1:${lineNumber}`)
+                        .replace(/(\.ya?ml)(?=\s|$|\()/, `$1:${lineNumber}`);
+                }
+            } else if (i < rawStack.length - 1) {
+                // Not the last entry: show where this template calls the next one
+                const nextEntry = rawStack[i + 1];
+                const lineMatch = nextEntry.match(/:(\d+)(?=\s|$|\()/);
+                if (lineMatch) {
+                    const nextLineNumber = lineMatch[1];
+                    // Add or replace line number in current entry
+                    if (entry.includes(':')) {
+                        entry = entry.replace(/:(\d+)(?=\s|$|\()/, `:${nextLineNumber}`);
+                    } else {
+                        entry = entry
+                            .replace(/(@[^:\s\(]+)(?=\s|$|\()/, `$1:${nextLineNumber}`)
+                            .replace(/(\.ya?ml)(?=\s|$|\()/, `$1:${nextLineNumber}`);
+                    }
+                }
+            }
+
+            lines.push('  ' + '  '.repeat(i) + '└── ' + entry);
         }
         return '\n' + lines.join('\n');
     }
@@ -930,8 +977,8 @@ class AzurePipelineParser {
                     (err) =>
                         `Parameter '${err.name}' expects type '${err.expected}' but received '${err.actual}' (value: ${JSON.stringify(err.value)})`
                 )
-                .join('\n    ');
-            errorMessages.push(`Invalid parameter type(s) for template '${templateName}':\n    ${errorDetails}`);
+                .join('\n  ');
+            errorMessages.push(`Invalid parameter type(s) for template '${templateName}':\n  ${errorDetails}`);
         }
 
         if (errors.invalidValues.length > 0) {
@@ -940,8 +987,8 @@ class AzurePipelineParser {
                     (err) =>
                         `Parameter '${err.name}' has value '${err.value}' which is not in allowed values: [${err.allowed.join(', ')}]`
                 )
-                .join('\n    ');
-            errorMessages.push(`Invalid parameter value(s) for template '${templateName}':\n    ${errorDetails}`);
+                .join('\n  ');
+            errorMessages.push(`Invalid parameter value(s) for template '${templateName}':\n  ${errorDetails}`);
         }
 
         if (errors.unknownParameters.length > 0) {
@@ -955,7 +1002,34 @@ class AzurePipelineParser {
 
         if (errorMessages.length > 0) {
             let errorMessage = errorMessages.join('\n\n');
-            const stackString = this.getTemplateCallStack(context);
+
+            // Try to find the line number where the error parameter is defined
+            let errorLineNumber = null;
+            if (context.sourceLines && Array.isArray(context.sourceLines)) {
+                // Get first error parameter name
+                let paramName = null;
+                if (errors.typeErrors.length > 0) {
+                    paramName = errors.typeErrors[0].name;
+                } else if (errors.missingRequired.length > 0) {
+                    paramName = errors.missingRequired[0];
+                } else if (errors.invalidValues.length > 0) {
+                    paramName = errors.invalidValues[0].name;
+                }
+
+                if (paramName) {
+                    // Search for the parameter in source lines
+                    for (let i = 0; i < context.sourceLines.length; i++) {
+                        const line = context.sourceLines[i];
+                        // Look for "paramName:" pattern (with possible whitespace)
+                        if (line.match(new RegExp(`^\\s*${paramName}\\s*:`))) {
+                            errorLineNumber = i + 1;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            const stackString = this.getTemplateCallStack(context, errorLineNumber);
             if (stackString) errorMessage += stackString;
             throw new Error(errorMessage);
         }
@@ -2688,6 +2762,19 @@ class AzurePipelineParser {
             return [];
         }
 
+        // Try to find line number where this template is referenced
+        let templateLineNumber = null;
+        if (context.sourceLines && Array.isArray(context.sourceLines)) {
+            const templateSearchStr = typeof templateRaw === 'string' ? templateRaw : String(templateRaw);
+            for (let i = 0; i < context.sourceLines.length; i++) {
+                const line = context.sourceLines[i];
+                if (line.includes('template:') && line.includes(templateSearchStr)) {
+                    templateLineNumber = i + 1;
+                    break;
+                }
+            }
+        }
+
         const repoRef = this.parseRepositoryTemplateReference(templatePath);
         const isSelfRepo = repoRef && this.isSelfRepositoryAlias(repoRef.repository);
 
@@ -2705,7 +2792,8 @@ class AzurePipelineParser {
                 throw new Error(
                     this.formatErrorWithStack(
                         `Template file not found for repository '${repoRef.repository}': ${repoRef.templatePath}`,
-                        context
+                        context,
+                        templateLineNumber
                     )
                 );
             }
@@ -2717,7 +2805,8 @@ class AzurePipelineParser {
                 throw new Error(
                     this.formatErrorWithStack(
                         `Repository resource '${repoRef.repository}' is not defined for template '${templatePath}'.`,
-                        context
+                        context,
+                        templateLineNumber
                     )
                 );
             }
@@ -2727,7 +2816,8 @@ class AzurePipelineParser {
                     this.formatErrorWithStack(
                         `Repository resource '${repoRef.repository}' does not define a local location. ` +
                             `Set a 'location' for this resource (for example via the 'azurePipelineStudio.resourceLocations' setting).`,
-                        context
+                        context,
+                        templateLineNumber
                     )
                 );
             }
@@ -2740,7 +2830,8 @@ class AzurePipelineParser {
                 throw new Error(
                     this.formatErrorWithStack(
                         `Template file not found for repository '${repoRef.repository}': ${repoRef.templatePath}`,
-                        context
+                        context,
+                        templateLineNumber
                     )
                 );
             }
@@ -2762,7 +2853,9 @@ class AzurePipelineParser {
 
         if (!fs.existsSync(resolvedPath)) {
             const identifier = repoRef ? `${repoRef.templatePath}@${repoRef.repository}` : templatePath;
-            throw new Error(this.formatErrorWithStack(`Template file not found: ${identifier}`, context));
+            throw new Error(
+                this.formatErrorWithStack(`Template file not found: ${identifier}`, context, templateLineNumber)
+            );
         }
 
         const templateSource = fs.readFileSync(resolvedPath, 'utf8');
@@ -2771,7 +2864,13 @@ class AzurePipelineParser {
         let templateJson;
         try {
             const skipSyntax = context.skipSyntax !== undefined ? context.skipSyntax : false;
-            const { yamlDoc, jsonDoc } = this.parseYamlDocument(templateSource, identifier, skipSyntax, context);
+            const { yamlDoc, jsonDoc } = this.parseYamlDocument(
+                templateSource,
+                identifier,
+                skipSyntax,
+                context,
+                templateLineNumber
+            );
             templateJson = jsonDoc;
 
             const templateQuoteStyles = new Map();
@@ -2796,10 +2895,14 @@ class AzurePipelineParser {
             // Avoid repeating the template identifier if the inner message already includes it
             const identifier = repoRef ? `${repoRef.templatePath}@${repoRef.repository}` : templatePath;
             if (baseMsg.includes(identifier)) {
-                throw new Error(this.formatErrorWithStack(baseMsg, context));
+                throw new Error(this.formatErrorWithStack(baseMsg, context, templateLineNumber));
             }
             throw new Error(
-                this.formatErrorWithStack(`Failed to parse template '${templatePath}': ${baseMsg}`, context)
+                this.formatErrorWithStack(
+                    `Failed to parse template '${templatePath}': ${baseMsg}`,
+                    context,
+                    templateLineNumber
+                )
             );
         }
 
@@ -2808,27 +2911,18 @@ class AzurePipelineParser {
         const mergedParameters = { ...parameterInfo.parameters, ...providedParameters };
         const templateDisplayPath = repoRef ? `${repoRef.templatePath}@${repoRef.repository}` : templatePath;
 
-        // Try to find line number where this template is referenced
-        let templateLineNumber = null;
-        if (context.sourceLines && Array.isArray(context.sourceLines)) {
-            const templateSearchStr = typeof templateRaw === 'string' ? templateRaw : String(templateRaw);
-            for (let i = 0; i < context.sourceLines.length; i++) {
-                const line = context.sourceLines[i];
-                if (line.includes('template:') && line.includes(templateSearchStr)) {
-                    templateLineNumber = i + 1;
-                    break;
-                }
-            }
-        }
-
-        // Build stack entry with path, resolved location (for repo templates), and line number
+        // Build stack entry with path, resolved location, and line number
+        // Always include resolved path in parentheses for clickable navigation
         let stackEntry;
         if (repoRef) {
             stackEntry = templateLineNumber
                 ? `${templateDisplayPath}:${templateLineNumber} (${resolvedPath})`
                 : `${templateDisplayPath} (${resolvedPath})`;
         } else {
-            stackEntry = templateLineNumber ? `${templateDisplayPath}:${templateLineNumber}` : templateDisplayPath;
+            // Include resolved path for local templates too
+            stackEntry = templateLineNumber
+                ? `${templateDisplayPath}:${templateLineNumber} (${resolvedPath})`
+                : `${templateDisplayPath} (${resolvedPath})`;
         }
 
         const updatedContext = {

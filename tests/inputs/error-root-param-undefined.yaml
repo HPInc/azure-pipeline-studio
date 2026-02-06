@@ -1,0 +1,13 @@
+parameters:
+- name: env
+  default: dev
+
+
+steps:
+- script: echo "Test"
+  displayName: Step 1
+
+# Line 9
+
+- script: echo ${{ parameters.missing }}
+  displayName: Step 2
