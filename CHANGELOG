@@ -1,10 +1,24 @@
 # Changelog
 
-All notable changes to Azure Pipeline Studio will be documented in this file.   
+All notable changes to Azure Pipeline Studio will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
-.html).
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [1.0.15] - 2026-02-09
+
+### Added
+- Duplicate key detection in YAML validation (excludes template expressions `${{ }}`)
+- Proper section spacing: 2 blank lines before first `stages:`/`jobs:`/`steps:` keyword
+- Single blank line before `name:` section for improved readability
+- Root section detection now recognizes inline-value mappings (e.g., `name: $(Build.DefinitionName)`)
+- Comprehensive test coverage for inline-value root mapping scenarios
+
+### Fixed
+- Template call stack test expectations updated to reflect formatter-adjusted line numbers
+- Root-level sections with inline values (like `name:` with variables) now properly formatted
+
+[1.0.15]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.0.15
 
 ## [1.0.14] - 2026-02-06
 

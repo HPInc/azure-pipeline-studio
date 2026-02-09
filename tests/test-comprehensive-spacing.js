@@ -55,6 +55,36 @@ runTest(
     'stages:\n- stage: Build\n  jobs:\n  - job: BuildJob\n    steps:\n    - script: echo Build\n\n- stage: Test\n  jobs:\n  - job: TestJob\n    steps:\n    - script: echo Test'
 );
 
+runTest(
+    'Name after parameters and two blanks before stages',
+    'parameters:\n- name: buildConfig\n  type: string\n  default: Debug\nname: $(BuildDefinitionName)\nstages:\n- stage: Build\n  jobs:\n  - job: BuildJob\n    steps:\n    - script: echo Build',
+    'parameters:\n- name: buildConfig\n  type: string\n  default: Debug\n\nname: $(BuildDefinitionName)\n\n\nstages:\n- stage: Build\n  jobs:\n  - job: BuildJob\n    steps:\n    - script: echo Build'
+);
+
+runTest(
+    'One blank line before name section',
+    'resources:\n  repositories:\n  - repository: templates\n    type: githubenterprise\n    name: codeway/templates\n    endpoint: ghe\nname: $(Date:yyyyMMdd)$(Rev:.r)\ntrigger:\n  branches:\n    include:\n    - main',
+    'resources:\n  repositories:\n  - repository: templates\n    type: githubenterprise\n    name: codeway/templates\n    endpoint: ghe\n\nname: $(Date:yyyyMMdd)$(Rev:.r)\n\ntrigger:\n  branches:\n    include:\n    - main'
+);
+
+runTest(
+    'Root mapping with inline value treated as section',
+    'trigger:\n  branches:\n    include:\n    - main\nname: MyPipeline\nvariables:\n- name: var1\n  value: val1',
+    'trigger:\n  branches:\n    include:\n    - main\n\nname: MyPipeline\n\nvariables:\n- name: var1\n  value: val1'
+);
+
+runTest(
+    'Multiple root mappings with inline values',
+    'name: Pipeline1\npool: Default\ntrigger: none\nstages:\n- stage: Build',
+    'name: Pipeline1\n\npool: Default\n\ntrigger: none\n\n\nstages:\n- stage: Build'
+);
+
+runTest(
+    'Name with inline value after nested structure',
+    'resources:\n  containers:\n  - container: linux\n    image: ubuntu:latest\nname: $(Build.DefinitionName)_$(Date:yyyyMMdd)$(Rev:.r)\nstages:\n- stage: Test',
+    'resources:\n  containers:\n  - container: linux\n    image: ubuntu:latest\n\nname: $(Build.DefinitionName)_$(Date:yyyyMMdd)$(Rev:.r)\n\n\nstages:\n- stage: Test'
+);
+
 // ============================================================
 // SECTION 2: Conditional Stages
 // ============================================================
