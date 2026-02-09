@@ -2136,6 +2136,7 @@ function formatYaml(content, options = {}) {
         sectionSpacing: getBooleanOption(options, 'sectionSpacing', false),
         wasExpanded: getBooleanOption(options, 'wasExpanded', false),
         azureCompatible: getBooleanOption(options, 'azureCompatible', false),
+        suppressConsoleOutput: getBooleanOption(options, 'suppressConsoleOutput', false),
     };
 
     try {
@@ -2157,7 +2158,9 @@ function formatYaml(content, options = {}) {
             const filePrefix = effective.fileName ? `[${effective.fileName}] ` : '';
             const lines = `YAML validation warnings:${hintsBlock}`.split('\n');
             const indented = lines.map((line, idx) => (idx === 0 ? line : '  ' + line)).join('\n');
-            console.error(`${filePrefix}${indented}`);
+            if (!effective.suppressConsoleOutput) {
+                console.error(`${filePrefix}${indented}`);
+            }
             return {
                 text: content,
                 warning: hintsBlock,
@@ -2178,7 +2181,9 @@ function formatYaml(content, options = {}) {
                 const filePrefix = effective.fileName ? `[${effective.fileName}] ` : '';
                 const lines = `YAML parsing error: ${errorMessages}`.split('\n');
                 const indented = lines.map((line, idx) => (idx === 0 ? line : '  ' + line)).join('\n');
-                console.error(`${filePrefix}${indented}`);
+                if (!effective.suppressConsoleOutput) {
+                    console.error(`${filePrefix}${indented}`);
+                }
                 const hintSuffix = hintsBlock;
                 return {
                     text: content,
@@ -2242,7 +2247,9 @@ function formatYaml(content, options = {}) {
         if (syntaxMessage) {
             const lines = syntaxMessage.split('\n');
             const indented = lines.map((line, idx) => (idx === 0 ? line : '  ' + line)).join('\n');
-            console.error(`${filePrefix}${indented}`);
+            if (!effective.suppressConsoleOutput) {
+                console.error(`${filePrefix}${indented}`);
+            }
             return {
                 text: content,
                 warning: hintsBlock || undefined,
@@ -2253,7 +2260,9 @@ function formatYaml(content, options = {}) {
         const formattingError = `YAML formatting failed: ${error.message}`;
         const lines = formattingError.split('\n');
         const indented = lines.map((line, idx) => (idx === 0 ? line : '  ' + line)).join('\n');
-        console.error(`${filePrefix}${indented}`);
+        if (!effective.suppressConsoleOutput) {
+            console.error(`${filePrefix}${indented}`);
+        }
         return {
             text: content,
             warning: hintsBlock || undefined,
