@@ -5,6 +5,14 @@ All notable changes to Azure Pipeline Studio will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.16] - 2026-02-10
+
+### Fixed
+- `# aps-format=false` directive now properly honored regardless of VS Code settings or CLI options passed
+- Multi-document YAML files with comment-only sections before `---` no longer add spurious "null" values
+
+[1.0.16]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.0.16
+
 ## [1.0.15] - 2026-02-09
 
 ### Added

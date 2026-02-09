@@ -2149,9 +2149,8 @@ function formatYaml(content, options = {}) {
     const directives = parseFormatDirectives(content);
 
     // If formatting is disabled via file directive, return original content
-    const metadataKeys = new Set(['fileName', 'baseDir']);
-    const formattingOptionKeys = options ? Object.keys(options).filter((k) => !metadataKeys.has(k)) : [];
-    if (directives.disabled && formattingOptionKeys.length === 0) {
+    // File-level directive takes precedence over any passed options
+    if (directives.disabled) {
         return baseResult;
     }
 
@@ -2165,7 +2164,19 @@ function formatYaml(content, options = {}) {
 
         for (let docIndex = 0; docIndex < documents.length; docIndex++) {
             const doc = documents[docIndex];
-            if (!doc.trim()) continue;
+            const trimmedDoc = doc.trim();
+
+            // Skip empty documents or comment-only documents
+            if (!trimmedDoc) continue;
+            const hasOnlyComments = trimmedDoc.split('\n').every((line) => {
+                const trimmedLine = line.trim();
+                return !trimmedLine || trimmedLine.startsWith('#');
+            });
+            if (hasOnlyComments) {
+                // Preserve comment-only sections as-is
+                formattedDocs.push(doc);
+                continue;
+            }
 
             const result = formatYaml(doc, options);
             if (result.error) {
