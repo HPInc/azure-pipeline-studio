@@ -2207,12 +2207,28 @@ function runCli(args) {
 
         recursiveResult.warnings.forEach((entry) => {
             const displayPath = path.relative(process.cwd(), entry.filePath) || entry.filePath;
-            console.warn(`[warn] ${displayPath}: ${entry.message}`);
+            const locationMatch = entry.message.match(/at line (\d+), column (\d+):/);
+            if (locationMatch) {
+                const line = locationMatch[1];
+                const column = locationMatch[2];
+                const messageWithoutLocation = entry.message.replace(/ at line \d+, column \d+:/, '');
+                console.warn(`[warn] ${displayPath}:${line}:${column}: ${messageWithoutLocation}`);
+            } else {
+                console.warn(`[warn] ${displayPath}: ${entry.message}`);
+            }
         });
 
         recursiveResult.errors.forEach((entry) => {
             const displayPath = path.relative(process.cwd(), entry.filePath) || entry.filePath;
-            console.error(`[error] ${displayPath}: ${entry.message}`);
+            const locationMatch = entry.message.match(/at line (\d+), column (\d+):/);
+            if (locationMatch) {
+                const line = locationMatch[1];
+                const column = locationMatch[2];
+                const messageWithoutLocation = entry.message.replace(/ at line \d+, column \d+:/, '');
+                console.error(`[error] ${displayPath}:${line}:${column}: ${messageWithoutLocation}`);
+            } else {
+                console.error(`[error] ${displayPath}: ${entry.message}`);
+            }
         });
 
         if (recursiveResult.errors.length) {

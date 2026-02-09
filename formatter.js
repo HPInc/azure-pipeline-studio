@@ -684,7 +684,83 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
     return hints;
 }
 
-function describeYamlSyntaxError(error, content) {
+function findFirstKeyOccurrence(content, duplicateLine, duplicateColumn) {
+    if (!content || typeof content !== 'string') {
+        return null;
+    }
+
+    const lines = content.split('\n');
+    if (duplicateLine >= lines.length) {
+        return null;
+    }
+
+    const duplicateLineContent = lines[duplicateLine];
+    const keyMatch = duplicateLineContent.slice(duplicateColumn).match(/^(\s*)([^:\s]+)\s*:/);
+    if (!keyMatch) {
+        return null;
+    }
+
+    const keyName = keyMatch[2];
+    const indentation = duplicateColumn + keyMatch[1].length;
+
+    for (let i = 0; i < duplicateLine; i++) {
+        const line = lines[i];
+        const trimmed = line.trimStart();
+
+        if (trimmed.startsWith('#') || trimmed.length === 0) {
+            continue;
+        }
+
+        const lineIndent = line.length - trimmed.length;
+        const keyPattern = new RegExp(`^${keyName}\\s*:`);
+
+        if (lineIndent === indentation && keyPattern.test(trimmed)) {
+            return { line: i, column: lineIndent };
+        }
+    }
+
+    return null;
+}
+
+function enrichDuplicateKeyError(error, content, fileName = '') {
+    if (!error || !error.message) {
+        return error.message || '';
+    }
+
+    const lowerMessage = error.message.toLowerCase();
+    if (!lowerMessage.includes('map keys must be unique') && !lowerMessage.includes('duplicated mapping key')) {
+        return error.message;
+    }
+
+    const locationMatch = error.message.match(/at line (\d+), column (\d+):/);
+    if (!locationMatch || !content) {
+        return error.message;
+    }
+
+    const duplicateLine = parseInt(locationMatch[1], 10) - 1;
+    const duplicateColumn = parseInt(locationMatch[2], 10) - 1;
+
+    const firstOccurrence = findFirstKeyOccurrence(content, duplicateLine, duplicateColumn);
+
+    // Extract key name for clearer error message
+    const lines = content.split('\n');
+    const duplicateLineContent = lines[duplicateLine] || '';
+    const keyMatch = duplicateLineContent.slice(duplicateColumn).match(/^(\s*)([^:\s]+)\s*:/);
+    const keyName = keyMatch ? keyMatch[2] : 'key';
+
+    if (firstOccurrence) {
+        const filePrefix = fileName ? `${fileName}:` : '';
+        const firstLocation = `${filePrefix}${firstOccurrence.line + 1}:${firstOccurrence.column + 1}`;
+        const duplicateLocation = `${filePrefix}${duplicateLine + 1}:${duplicateColumn + 1}`;
+
+        // Format with newlines for better readability and to prevent truncation
+        return `Duplicate key '${keyName}' detected\n  First defined at: ${firstLocation}\n  Duplicate found at: ${duplicateLocation}`;
+    }
+
+    return error.message;
+}
+
+function describeYamlSyntaxError(error, content, fileName = '') {
     if (!error || typeof error !== 'object') {
         return undefined;
     }
@@ -712,6 +788,30 @@ function describeYamlSyntaxError(error, content) {
     const location = lineText && columnText ? `${lineText}, ${columnText}` : lineText || columnText;
 
     const hints = analyzeTemplateHints(content);
+
+    // For duplicate key errors, find the first occurrence and create clickable links
+    const lowerMessage = (baseMessage || '').toLowerCase();
+    if (lowerMessage.includes('duplicated mapping key') && hasLine && hasColumn && content) {
+        const firstOccurrence = findFirstKeyOccurrence(content, mark.line, mark.column);
+
+        // Extract key name for clearer error message
+        const lines = content.split('\n');
+        const duplicateLine = lines[mark.line] || '';
+        const keyMatch = duplicateLine.slice(mark.column).match(/^(\s*)([^:\s]+)\s*:/);
+        const keyName = keyMatch ? keyMatch[2] : 'key';
+
+        if (firstOccurrence) {
+            const filePrefix = fileName ? `${fileName}:` : '';
+            const firstLocation = `${filePrefix}${firstOccurrence.line + 1}:${firstOccurrence.column + 1}`;
+            const duplicateLocation = `${filePrefix}${mark.line + 1}:${mark.column + 1}`;
+
+            hints.unshift(
+                `Duplicate key '${keyName}' detected.`,
+                `  First defined at: ${firstLocation}`,
+                `  Duplicate found at: ${duplicateLocation}`
+            );
+        }
+    }
 
     // Specific friendly rewrites for common Azure expression mistakes
     const lowerReason = (baseMessage || '').toLowerCase();
@@ -2177,7 +2277,10 @@ function formatYaml(content, options = {}) {
             const filteredErrors = genuineErrors.filter((e) => !isDuplicateKeyForTemplateExpression(e));
 
             if (filteredErrors.length > 0) {
-                const errorMessages = filteredErrors.map((e) => e.message).join(', ');
+                const enrichedMessages = filteredErrors.map((e) =>
+                    enrichDuplicateKeyError(e, content, effective.fileName || '')
+                );
+                const errorMessages = enrichedMessages.join('\n\n');
                 const filePrefix = effective.fileName ? `[${effective.fileName}] ` : '';
                 const lines = `YAML parsing error: ${errorMessages}`.split('\n');
                 const indented = lines.map((line, idx) => (idx === 0 ? line : '  ' + line)).join('\n');
@@ -2185,11 +2288,13 @@ function formatYaml(content, options = {}) {
                     console.error(`${filePrefix}${indented}`);
                 }
                 const hintSuffix = hintsBlock;
+                // Don't truncate multi-line error messages (they contain important location info)
+                const hasNewlines = errorMessages.includes('\n');
                 return {
                     text: content,
                     warning: hintsBlock || undefined,
                     error:
-                        errorMessages.length > 100
+                        !hasNewlines && errorMessages.length > 100
                             ? errorMessages.substring(0, 100) + '...' + hintSuffix
                             : `${errorMessages}${hintSuffix}`,
                 };
@@ -2241,7 +2346,7 @@ function formatYaml(content, options = {}) {
             error: undefined,
         };
     } catch (error) {
-        const syntaxMessage = describeYamlSyntaxError(error, content);
+        const syntaxMessage = describeYamlSyntaxError(error, content, effective.fileName || '');
         const filePrefix = effective.fileName ? `[${effective.fileName}] ` : '';
 
         if (syntaxMessage) {
