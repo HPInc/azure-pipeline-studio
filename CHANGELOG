@@ -11,8 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Duplicate key detection in YAML validation (excludes template expressions `${{ }}`)
 - Proper section spacing: 2 blank lines before first `stages:`/`jobs:`/`steps:` keyword
 - Single blank line before `name:` section for improved readability
-- Root section detection now recognizes inline-value mappings (e.g., `name: $(Build.DefinitionName)`)
 - Comprehensive test coverage for inline-value root mapping scenarios
+- Enhanced duplicate key error messages with clickable file paths
 
 ### Fixed
 - Template call stack test expectations updated to reflect formatter-adjusted line numbers
