@@ -1,9 +1,12 @@
 # Azure Pipeline Studio
 
-![Menu](images/menu.png "Context Menu")
-![Error](images/error.png "Error Validation")
-
 VS Code extension and CLI tool for formatting and expanding Azure DevOps YAML pipelines with complete expression support.
+
+## Context Menu
+![Menu](images/menu.png "Context Menu")
+
+## Error Display
+![Error](images/error.png "Error Display")
 
 ## Quick Start
 

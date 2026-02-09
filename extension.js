@@ -1994,7 +1994,7 @@ function formatFilesRecursively(targets, extensions, formatOptions) {
         results.totalFiles += 1;
         try {
             const source = fs.readFileSync(filePath, 'utf8');
-            const fileFormatOptions = { ...formatOptions, fileName: filePath };
+            const fileFormatOptions = { ...formatOptions, fileName: filePath, suppressConsoleOutput: true };
             const formatResult = formatYaml(source, fileFormatOptions);
 
             if (formatResult.error) {
@@ -2002,14 +2002,14 @@ function formatFilesRecursively(targets, extensions, formatOptions) {
                 return;
             }
 
+            // Always collect warnings (e.g., template hints) even if file wasn't formatted
+            if (formatResult.warning) {
+                results.warnings.push({ filePath, message: formatResult.warning });
+            }
+
             if (formatResult.text !== source) {
                 fs.writeFileSync(filePath, formatResult.text, 'utf8');
                 results.formattedFiles.push(filePath);
-
-                // Only show warning if file was actually formatted
-                if (formatResult.warning) {
-                    results.warnings.push({ filePath, message: formatResult.warning });
-                }
             }
         } catch (error) {
             results.errors.push({ filePath, message: error.message });
@@ -2207,12 +2207,28 @@ function runCli(args) {
 
         recursiveResult.warnings.forEach((entry) => {
             const displayPath = path.relative(process.cwd(), entry.filePath) || entry.filePath;
-            console.warn(`[warn] ${displayPath}: ${entry.message}`);
+            const locationMatch = entry.message.match(/at line (\d+), column (\d+):/);
+            if (locationMatch) {
+                const line = locationMatch[1];
+                const column = locationMatch[2];
+                const messageWithoutLocation = entry.message.replace(/ at line \d+, column \d+:/, '');
+                console.warn(`[warn] ${displayPath}:${line}:${column}: ${messageWithoutLocation}`);
+            } else {
+                console.warn(`[warn] ${displayPath}: ${entry.message}`);
+            }
         });
 
         recursiveResult.errors.forEach((entry) => {
             const displayPath = path.relative(process.cwd(), entry.filePath) || entry.filePath;
-            console.error(`[error] ${displayPath}: ${entry.message}`);
+            const locationMatch = entry.message.match(/at line (\d+), column (\d+):/);
+            if (locationMatch) {
+                const line = locationMatch[1];
+                const column = locationMatch[2];
+                const messageWithoutLocation = entry.message.replace(/ at line \d+, column \d+:/, '');
+                console.error(`[error] ${displayPath}:${line}:${column}: ${messageWithoutLocation}`);
+            } else {
+                console.error(`[error] ${displayPath}: ${entry.message}`);
+            }
         });
 
         if (recursiveResult.errors.length) {

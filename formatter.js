@@ -684,7 +684,83 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
     return hints;
 }
 
-function describeYamlSyntaxError(error, content) {
+function findFirstKeyOccurrence(content, duplicateLine, duplicateColumn) {
+    if (!content || typeof content !== 'string') {
+        return null;
+    }
+
+    const lines = content.split('\n');
+    if (duplicateLine >= lines.length) {
+        return null;
+    }
+
+    const duplicateLineContent = lines[duplicateLine];
+    const keyMatch = duplicateLineContent.slice(duplicateColumn).match(/^(\s*)([^:\s]+)\s*:/);
+    if (!keyMatch) {
+        return null;
+    }
+
+    const keyName = keyMatch[2];
+    const indentation = duplicateColumn + keyMatch[1].length;
+
+    for (let i = 0; i < duplicateLine; i++) {
+        const line = lines[i];
+        const trimmed = line.trimStart();
+
+        if (trimmed.startsWith('#') || trimmed.length === 0) {
+            continue;
+        }
+
+        const lineIndent = line.length - trimmed.length;
+        const keyPattern = new RegExp(`^${keyName}\\s*:`);
+
+        if (lineIndent === indentation && keyPattern.test(trimmed)) {
+            return { line: i, column: lineIndent };
+        }
+    }
+
+    return null;
+}
+
+function enrichDuplicateKeyError(error, content, fileName = '') {
+    if (!error || !error.message) {
+        return error.message || '';
+    }
+
+    const lowerMessage = error.message.toLowerCase();
+    if (!lowerMessage.includes('map keys must be unique') && !lowerMessage.includes('duplicated mapping key')) {
+        return error.message;
+    }
+
+    const locationMatch = error.message.match(/at line (\d+), column (\d+):/);
+    if (!locationMatch || !content) {
+        return error.message;
+    }
+
+    const duplicateLine = parseInt(locationMatch[1], 10) - 1;
+    const duplicateColumn = parseInt(locationMatch[2], 10) - 1;
+
+    const firstOccurrence = findFirstKeyOccurrence(content, duplicateLine, duplicateColumn);
+
+    // Extract key name for clearer error message
+    const lines = content.split('\n');
+    const duplicateLineContent = lines[duplicateLine] || '';
+    const keyMatch = duplicateLineContent.slice(duplicateColumn).match(/^(\s*)([^:\s]+)\s*:/);
+    const keyName = keyMatch ? keyMatch[2] : 'key';
+
+    if (firstOccurrence) {
+        const filePrefix = fileName ? `${fileName}:` : '';
+        const firstLocation = `${filePrefix}${firstOccurrence.line + 1}:${firstOccurrence.column + 1}`;
+        const duplicateLocation = `${filePrefix}${duplicateLine + 1}:${duplicateColumn + 1}`;
+
+        // Format with newlines for better readability and to prevent truncation
+        return `Duplicate key '${keyName}' detected\n  First defined at: ${firstLocation}\n  Duplicate found at: ${duplicateLocation}`;
+    }
+
+    return error.message;
+}
+
+function describeYamlSyntaxError(error, content, fileName = '') {
     if (!error || typeof error !== 'object') {
         return undefined;
     }
@@ -699,13 +775,8 @@ function describeYamlSyntaxError(error, content) {
 
     // Allow "duplicated mapping key" errors for Azure Pipeline expressions
     // like ${{ insert }}, ${{ parameters.x }}, etc. which are valid at runtime
-    if (baseMessage && baseMessage.includes('duplicated mapping key')) {
-        // Check if this might be an expression key
-        const snippet = error.snippet || '';
-        if (snippet.includes('${{') || (error.mark && error.mark.snippet && error.mark.snippet.includes('${{'))) {
-            // This is likely a valid Azure Pipelines expression with duplicate keys
-            return undefined;
-        }
+    if (isDuplicateKeyForTemplateExpression(error)) {
+        return undefined;
     }
 
     const mark = error.mark && typeof error.mark === 'object' ? error.mark : undefined;
@@ -717,6 +788,30 @@ function describeYamlSyntaxError(error, content) {
     const location = lineText && columnText ? `${lineText}, ${columnText}` : lineText || columnText;
 
     const hints = analyzeTemplateHints(content);
+
+    // For duplicate key errors, find the first occurrence and create clickable links
+    const lowerMessage = (baseMessage || '').toLowerCase();
+    if (lowerMessage.includes('duplicated mapping key') && hasLine && hasColumn && content) {
+        const firstOccurrence = findFirstKeyOccurrence(content, mark.line, mark.column);
+
+        // Extract key name for clearer error message
+        const lines = content.split('\n');
+        const duplicateLine = lines[mark.line] || '';
+        const keyMatch = duplicateLine.slice(mark.column).match(/^(\s*)([^:\s]+)\s*:/);
+        const keyName = keyMatch ? keyMatch[2] : 'key';
+
+        if (firstOccurrence) {
+            const filePrefix = fileName ? `${fileName}:` : '';
+            const firstLocation = `${filePrefix}${firstOccurrence.line + 1}:${firstOccurrence.column + 1}`;
+            const duplicateLocation = `${filePrefix}${mark.line + 1}:${mark.column + 1}`;
+
+            hints.unshift(
+                `Duplicate key '${keyName}' detected.`,
+                `  First defined at: ${firstLocation}`,
+                `  Duplicate found at: ${duplicateLocation}`
+            );
+        }
+    }
 
     // Specific friendly rewrites for common Azure expression mistakes
     const lowerReason = (baseMessage || '').toLowerCase();
@@ -742,6 +837,25 @@ function describeYamlSyntaxError(error, content) {
     }
 
     return message;
+}
+
+function isDuplicateKeyForTemplateExpression(error) {
+    if (!error || typeof error !== 'object') {
+        return false;
+    }
+
+    const message = typeof error.message === 'string' ? error.message : '';
+    if (!message.includes('duplicated mapping key')) {
+        return false;
+    }
+
+    const snippet = typeof error.snippet === 'string' ? error.snippet : '';
+    if (snippet.includes('${{')) {
+        return true;
+    }
+
+    const markSnippet = error.mark && typeof error.mark.snippet === 'string' ? error.mark.snippet : '';
+    return markSnippet.includes('${{');
 }
 
 /**
@@ -914,8 +1028,7 @@ function isStepOrExpressionListItem(line) {
  * @param {object} state - The formatting state object
  */
 function handleCommentLine(state) {
-    const { lineNum, inMultiLineBlock, pass1, currentSection, stepSpacingSections, lines, foundFirstMainSection } =
-        state;
+    const { lineNum, inMultiLineBlock, pass1, currentSection, spacedSections, lines, foundFirstMainSection } = state;
     const line = lines[lineNum];
     const index = lineNum;
 
@@ -934,30 +1047,13 @@ function handleCommentLine(state) {
         }
     }
 
-    if (isTrailingComment) {
-        // Only add a blank if there was prior content and none already
-        let hasContentBefore = false;
-        for (let j = pass1.length - 1; j >= 0; j--) {
-            if (hasActualContent(pass1[j])) {
-                hasContentBefore = true;
-                break;
-            }
-        }
-
-        if (hasContentBefore) {
-            const lastLine = pass1.length > 0 ? pass1[pass1.length - 1] : null;
-            if (lastLine && !isBlank(lastLine)) {
-                pass1.push('');
-            }
-        }
-    } else {
+    if (!isTrailingComment) {
         // Add blank before a comment in steps/jobs/stages, OR if we're at root level after finding a main section
         // (this catches comments at root level between items, even if currentSection tracking lost the context)
         // ALSO check if we're in a nested steps section by looking backward for a steps: header
         let inNestedSteps = false;
         const commentIndent = getIndent(line);
-        // Increased from 20 to 100 to handle larger steps sections
-        for (let j = lineNum - 1; j >= 0 && j >= lineNum - 100; j--) {
+        for (let j = lineNum - 1; j >= 0; j--) {
             const checkLine = lines[j];
             if (isBlank(checkLine) || isComment(checkLine)) continue;
             const checkIndent = getIndent(checkLine);
@@ -973,9 +1069,7 @@ function handleCommentLine(state) {
             }
         }
 
-        if (
-            shouldAddBlankBeforeComment(inNestedSteps, currentSection, stepSpacingSections, foundFirstMainSection, line)
-        ) {
+        if (needsBlankBeforeComment(inNestedSteps, currentSection, spacedSections, foundFirstMainSection, line)) {
             const lastLine = pass1.length > 0 ? pass1[pass1.length - 1] : null;
             const lastTrimmed = lastLine ? lastLine.trim() : '';
             const lastIsHeader = lastTrimmed === 'steps:' || lastTrimmed === 'jobs:' || lastTrimmed === 'stages:';
@@ -993,11 +1087,11 @@ function handleCommentLine(state) {
 /**
  * Check if should add blank line before comment
  */
-function shouldAddBlankBeforeComment(inNestedSteps, currentSection, stepSpacingSections, foundFirstMainSection, line) {
+function needsBlankBeforeComment(inNestedSteps, currentSection, spacedSections, foundFirstMainSection, line) {
     return (
         inNestedSteps ||
         currentSection === 'steps' ||
-        stepSpacingSections.includes(currentSection) ||
+        spacedSections.includes(currentSection) ||
         (foundFirstMainSection && getIndent(line) === 0)
     );
 }
@@ -1020,8 +1114,8 @@ function handleBlankLine(state) {
         pass1,
         inMultiLineBlock,
         currentSection,
-        stepSpacingSections,
-        listItemSpacingSections,
+        spacedSections,
+        listItemSections,
         prevWasComment,
         lineNum,
         lines,
@@ -1060,11 +1154,11 @@ function handleBlankLine(state) {
             keepBlank = true;
         } else if (currentSection === 'variables') {
             keepBlank = false;
-        } else if (currentSection === 'steps' || stepSpacingSections.includes(currentSection)) {
+        } else if (currentSection === 'steps' || spacedSections.includes(currentSection)) {
             const isPrevComment = isComment(prevLine);
             const isNextList = isListItem(lines[nextNonBlank]);
             keepBlank = !(isPrevComment && isNextList);
-        } else if (listItemSpacingSections.includes(currentSection)) {
+        } else if (listItemSections.includes(currentSection)) {
             if (nextLineIndent === 0 || nextLineIndent === 2) {
                 keepBlank = true;
             }
@@ -1196,6 +1290,12 @@ function handleSectionSpacing(state) {
     } = state;
     const line = lines[lineNum];
     const trimmed = line.trim();
+    // Root section = mapping key at indent 0 (with or without value on same line)
+    const isRootSection =
+        !isComment(line) &&
+        !isListItem(line) &&
+        getIndent(line) === 0 &&
+        (isMappingKey(line) || trimmed.includes(': '));
 
     let section2HandledThisLine = false;
     let newParametersEnded = parametersEnded;
@@ -1205,12 +1305,12 @@ function handleSectionSpacing(state) {
     // 2. First Block Blank Lines (skip for expanded output to preserve original spacing)
     if (hasParametersAtStart && !options.wasExpanded) {
         if (!parametersEnded && lineNum > firstNonEmptyLine) {
-            if (!isComment(line) && !isListItem(line) && getIndent(line) === 0 && isMappingKey(line)) {
+            if (isRootSection) {
                 newParametersEnded = true;
             }
         }
 
-        if (newParametersEnded && !foundFirstSection && topLevelSections.some((s) => trimmed === s)) {
+        if (newParametersEnded && !newFoundFirstSection && topLevelSections.some((s) => trimmed === s)) {
             newFoundFirstSection = true;
             section2HandledThisLine = true;
             const keyOnly = trimmed.includes(':') ? trimmed.substring(0, trimmed.indexOf(':') + 1).trim() : trimmed;
@@ -1229,37 +1329,53 @@ function handleSectionSpacing(state) {
     }
 
     // 3. Section Spacing (betweenSectionBlankLines and firstBlockBlankLines)
-    const isRootSection = !isComment(line) && !isListItem(line) && getIndent(line) === 0 && isMappingKey(line);
-
     let newLastRootSectionIndex = lastRootSectionIndex;
-    if (isRootSection && lastRootSectionIndex >= 0 && !section2HandledThisLine && !options.wasExpanded) {
-        // Remove existing blanks before this section
-        while (pass1.length > 0 && isBlank(pass1[pass1.length - 1])) {
-            pass1.pop();
-        }
-
+    if (isRootSection && !section2HandledThisLine && !options.wasExpanded) {
         const keyOnly = trimmed.includes(':') ? trimmed.substring(0, trimmed.indexOf(':') + 1).trim() : trimmed;
         const isMainSection = isMainSectionKey(keyOnly);
         const isFirstMainSection =
-            isMainSection && !newFoundFirstMainSection && hasParametersAtStart && newParametersEnded;
+            isMainSection &&
+            !newFoundFirstMainSection &&
+            (hasParametersAtStart ? newParametersEnded : lastRootSectionIndex >= 0);
 
         if (isFirstMainSection) {
             newFoundFirstMainSection = true;
             newFoundFirstSection = true;
         }
 
-        // Determine blank lines to add
-        let blankLinesToAdd;
-        if (isFirstMainSection) {
-            blankLinesToAdd = options.firstBlockBlankLines;
-        } else if (isMainSection) {
-            blankLinesToAdd = 1;
-        } else {
-            blankLinesToAdd = options.betweenSectionBlankLines;
+        // Check if there's any actual content after this line
+        let hasContentAfter = false;
+        for (let j = lineNum + 1; j < lines.length; j++) {
+            if (hasActualContent(lines[j])) {
+                hasContentAfter = true;
+                break;
+            }
         }
 
-        for (let k = 0; k < blankLinesToAdd; k++) {
-            pass1.push('');
+        // Determine blank lines to add (only if there's already content before AND after)
+        let blankLinesToAdd = 0;
+        const shouldAddBlanks =
+            (lastRootSectionIndex >= 0 || (hasParametersAtStart && newParametersEnded)) && hasContentAfter;
+
+        if (shouldAddBlanks) {
+            // Remove existing blanks before this section
+            while (pass1.length > 0 && isBlank(pass1[pass1.length - 1])) {
+                pass1.pop();
+            }
+
+            if (keyOnly === 'name:') {
+                blankLinesToAdd = 1;
+            } else if (isFirstMainSection) {
+                blankLinesToAdd = options.firstBlockBlankLines;
+            } else if (isMainSection) {
+                blankLinesToAdd = 1;
+            } else {
+                blankLinesToAdd = options.betweenSectionBlankLines;
+            }
+
+            for (let k = 0; k < blankLinesToAdd; k++) {
+                pass1.push('');
+            }
         }
     }
     if (isRootSection) {
@@ -1824,7 +1940,17 @@ function applyBlankLineAdjustmentsForSpacing(lines, removePositions, insertPosit
  * Initialize the formatting state for pipeline processing
  */
 function initializeFormattingState(lines, options) {
-    const topLevelSections = ['stages:', 'jobs:', 'steps:', 'trigger:', 'pr:', 'resources:', 'pool:', 'variables:'];
+    const topLevelSections = [
+        'stages:',
+        'jobs:',
+        'steps:',
+        'trigger:',
+        'pr:',
+        'resources:',
+        'pool:',
+        'variables:',
+        'name:',
+    ];
     let hasParametersAtStart = false;
     let firstNonEmptyLine = -1;
 
@@ -1840,8 +1966,8 @@ function initializeFormattingState(lines, options) {
     return {
         options: options,
         lines,
-        stepSpacingSections: ['steps'],
-        listItemSpacingSections: ['stages', 'jobs'],
+        spacedSections: ['steps'],
+        listItemSections: ['stages', 'jobs'],
         topLevelSections,
         hasParametersAtStart,
         firstNonEmptyLine,
@@ -2110,6 +2236,7 @@ function formatYaml(content, options = {}) {
         sectionSpacing: getBooleanOption(options, 'sectionSpacing', false),
         wasExpanded: getBooleanOption(options, 'wasExpanded', false),
         azureCompatible: getBooleanOption(options, 'azureCompatible', false),
+        suppressConsoleOutput: getBooleanOption(options, 'suppressConsoleOutput', false),
     };
 
     try {
@@ -2131,7 +2258,9 @@ function formatYaml(content, options = {}) {
             const filePrefix = effective.fileName ? `[${effective.fileName}] ` : '';
             const lines = `YAML validation warnings:${hintsBlock}`.split('\n');
             const indented = lines.map((line, idx) => (idx === 0 ? line : '  ' + line)).join('\n');
-            console.error(`${filePrefix}${indented}`);
+            if (!effective.suppressConsoleOutput) {
+                console.error(`${filePrefix}${indented}`);
+            }
             return {
                 text: content,
                 warning: hintsBlock,
@@ -2139,25 +2268,33 @@ function formatYaml(content, options = {}) {
             };
         }
 
-        const doc = YAML.parseDocument(protectedContent, { strict: false, uniqueKeys: false });
+        const doc = YAML.parseDocument(protectedContent, { strict: false, uniqueKeys: true });
 
         if (doc.errors && doc.errors.length > 0) {
             const genuineErrors = doc.errors.filter(
                 (e) => !e.message || !e.message.includes('Invalid escape sequence')
             );
+            const filteredErrors = genuineErrors.filter((e) => !isDuplicateKeyForTemplateExpression(e));
 
-            if (genuineErrors.length > 0) {
-                const errorMessages = genuineErrors.map((e) => e.message).join(', ');
+            if (filteredErrors.length > 0) {
+                const enrichedMessages = filteredErrors.map((e) =>
+                    enrichDuplicateKeyError(e, content, effective.fileName || '')
+                );
+                const errorMessages = enrichedMessages.join('\n\n');
                 const filePrefix = effective.fileName ? `[${effective.fileName}] ` : '';
                 const lines = `YAML parsing error: ${errorMessages}`.split('\n');
                 const indented = lines.map((line, idx) => (idx === 0 ? line : '  ' + line)).join('\n');
-                console.error(`${filePrefix}${indented}`);
+                if (!effective.suppressConsoleOutput) {
+                    console.error(`${filePrefix}${indented}`);
+                }
                 const hintSuffix = hintsBlock;
+                // Don't truncate multi-line error messages (they contain important location info)
+                const hasNewlines = errorMessages.includes('\n');
                 return {
                     text: content,
                     warning: hintsBlock || undefined,
                     error:
-                        errorMessages.length > 100
+                        !hasNewlines && errorMessages.length > 100
                             ? errorMessages.substring(0, 100) + '...' + hintSuffix
                             : `${errorMessages}${hintSuffix}`,
                 };
@@ -2209,13 +2346,15 @@ function formatYaml(content, options = {}) {
             error: undefined,
         };
     } catch (error) {
-        const syntaxMessage = describeYamlSyntaxError(error, content);
+        const syntaxMessage = describeYamlSyntaxError(error, content, effective.fileName || '');
         const filePrefix = effective.fileName ? `[${effective.fileName}] ` : '';
 
         if (syntaxMessage) {
             const lines = syntaxMessage.split('\n');
             const indented = lines.map((line, idx) => (idx === 0 ? line : '  ' + line)).join('\n');
-            console.error(`${filePrefix}${indented}`);
+            if (!effective.suppressConsoleOutput) {
+                console.error(`${filePrefix}${indented}`);
+            }
             return {
                 text: content,
                 warning: hintsBlock || undefined,
@@ -2226,7 +2365,9 @@ function formatYaml(content, options = {}) {
         const formattingError = `YAML formatting failed: ${error.message}`;
         const lines = formattingError.split('\n');
         const indented = lines.map((line, idx) => (idx === 0 ? line : '  ' + line)).join('\n');
-        console.error(`${filePrefix}${indented}`);
+        if (!effective.suppressConsoleOutput) {
+            console.error(`${filePrefix}${indented}`);
+        }
         return {
             text: content,
             warning: hintsBlock || undefined,
