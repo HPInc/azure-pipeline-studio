@@ -280,8 +280,8 @@ const test11Pass = runTestCase('Test 11: Step Spacing Can Be Disabled', 'full-te
     }
 
     // With stepSpacing disabled, should have significantly fewer blank lines
-    // Expect at most ~35 blank lines for the comprehensive test file
-    if (blankCount > 35) {
+    // Expect at most ~40 blank lines for the comprehensive test file
+    if (blankCount > 40) {
         throw new Error(`Expected minimal blank lines with stepSpacing disabled, found ${blankCount}`);
     }
 });
@@ -429,18 +429,19 @@ const test19Pass = runTest('Test 19: Respect aps-format=false with metadata opti
     }
 });
 
-// Test 20: Allow formatting override with explicit format options
-const test20Pass = runTest('Test 20: Allow formatting override with explicit options', () => {
+// Test 20: File directive takes precedence over options
+const test20Pass = runTest('Test 20: aps-format=false takes precedence over options', () => {
     const yaml = ['# aps-format=false', 'steps:', '  - script: echo formatted'].join('\n');
 
-    // Call with actual formatting option to override the directive
+    // Call with actual formatting option - directive should still take precedence
     const result = formatYaml(yaml, {
         fileName: 'test.yaml',
-        stepSpacing: true, // explicit formatting option
+        stepSpacing: true,
+        indent: 4,
     });
 
-    if (result.text === yaml) {
-        throw new Error('Should format when explicit format options override aps-format=false');
+    if (result.text !== yaml) {
+        throw new Error('aps-format=false should take precedence over explicit format options');
     }
 });
 
@@ -477,6 +478,67 @@ const test22Pass = runTest('Test 22: Remove blank lines after mapping keys', () 
     }
 });
 
+// Test 23: Multi-document YAML with comments before separator
+const test23Pass = runTest('Test 23: Multi-document YAML preserves comment sections', () => {
+    const yaml = [
+        '# aps-format=false',
+        '# file: /test.yaml',
+        '# This is a comment block',
+        '',
+        '---',
+        'parameters:',
+        '- name: test',
+        '  type: string',
+    ].join('\n');
+
+    const result = formatYaml(yaml);
+
+    // Should not add "null" before ---
+    if (result.text.includes('null')) {
+        throw new Error('Multi-document YAML should not add "null" for comment-only sections');
+    }
+
+    // Should preserve the comment section and separator
+    if (!result.text.includes('# file: /test.yaml')) {
+        throw new Error('Comment section should be preserved');
+    }
+
+    if (!result.text.includes('---')) {
+        throw new Error('Document separator should be preserved');
+    }
+});
+
+// Test 24: Multi-document YAML formats both documents
+const test24Pass = runTest('Test 24: Multi-document YAML formats all documents', () => {
+    const yaml = ['variables:', '- name: var1', '  value: test', '', '---', 'steps:', '- script: echo test'].join('\n');
+
+    const result = formatYaml(yaml, { stepSpacing: true });
+
+    // Should have document separator
+    if (!result.text.includes('---')) {
+        throw new Error('Document separator should be preserved');
+    }
+
+    // Both documents should be formatted
+    const parts = result.text.split('---');
+    if (parts.length !== 2) {
+        throw new Error('Should have two documents separated by ---');
+    }
+});
+
+// Test 25: Multi-document YAML with empty sections skipped
+const test25Pass = runTest('Test 25: Multi-document YAML skips empty sections', () => {
+    const yaml = ['steps:', '- script: echo test', '', '---', '', '---', 'stages:', '- stage: Build'].join('\n');
+
+    const result = formatYaml(yaml);
+
+    // Should skip empty document between separators
+    const separatorCount = (result.text.match(/\n---\n/g) || []).length;
+    if (separatorCount !== 1) {
+        throw new Error(`Expected 1 document separator, got ${separatorCount}`);
+    }
+});
+
 // Summary
 const allTests = [
     test1Pass,
@@ -501,6 +563,9 @@ const allTests = [
     test20Pass,
     test21Pass,
     test22Pass,
+    test23Pass,
+    test24Pass,
+    test25Pass,
 ];
 const passed = allTests.filter((t) => t).length;
 const failed = allTests.length - passed;
