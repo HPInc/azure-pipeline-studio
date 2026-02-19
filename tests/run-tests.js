@@ -31,9 +31,13 @@ const tests = [
     'test-multilevel-templates.js',
     'test-parameter-scoping.js',
     'test-variable-scoping.js',
+    'test-variable-template.js',
+    'test-file-scoped-variables.js',
     'test-template-call-stack.js',
     'test-formatting.js',
     'test-comprehensive-spacing.js',
+    'test-pipeline-diagram.js',
+    'test-resources.js',
 ];
 
 console.log('='.repeat(70));

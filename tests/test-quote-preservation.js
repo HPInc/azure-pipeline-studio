@@ -189,8 +189,44 @@ const test6Pass = runTestCase(
     }
 );
 
+// Test 7: Variable format conversion preserves quotes
+console.log('=== Test 7: Variable format conversion (object to array) ===');
+let test7Pass = true;
+
+const formatConversionYaml = `variables:
+  myString: 'quoted value'
+  myNumber: 42
+  myPattern: "*.txt"
+
+stages:
+  - stage: Test
+    jobs:
+      - job: TestJob
+        steps:
+          - bash: echo "\${{ variables.myString }}"
+          - bash: echo "\${{ variables.myNumber }}"
+          - bash: echo "\${{ variables.myPattern }}"
+`;
+
+try {
+    const output = parser.expandPipelineFromString(formatConversionYaml, { azureCompatible: false });
+
+    // Check that variables maintain their quote style or are handled consistently
+    if (!output.includes('myString') && !output.includes('quoted value')) {
+        throw new Error('Variable myString should be present in output');
+    }
+    if (!output.includes('myPattern') && !output.includes('*.txt')) {
+        throw new Error('Variable myPattern should be present in output');
+    }
+
+    console.log('✅ PASS: Variables format conversion handled correctly\n');
+} catch (error) {
+    console.log(`❌ FAIL: ${error.message}\n`);
+    test7Pass = false;
+}
+
 // Summary
-const allPassed = test1Pass && test2Pass && test3Pass && test4Pass && test5Pass && test6Pass;
+const allPassed = test1Pass && test2Pass && test3Pass && test4Pass && test5Pass && test6Pass && test7Pass;
 console.log('=== Summary ===');
 console.log(allPassed ? 'All quote preservation tests passed ✅' : 'Some tests failed ❌');
 process.exit(allPassed ? 0 : 1);

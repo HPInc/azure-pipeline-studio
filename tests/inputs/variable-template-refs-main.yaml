@@ -1,0 +1,16 @@
+trigger: none
+variables:
+- template: variable-template-with-refs.yaml
+
+stages:
+- stage: Stage1
+
+  jobs:
+  - job: Job1
+
+    steps:
+    - script: echo "baseUrl=${{ variables.baseUrl }}"
+
+    - script: echo "apiEndpoint=${{ variables.apiEndpoint }}"
+
+    - script: echo "fullPath=${{ variables.fullPath }}"

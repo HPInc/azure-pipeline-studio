@@ -1,0 +1,7 @@
+variables:
+- name: baseUrl
+  value: 'https://example.com'
+- name: apiEndpoint
+  value: '${{ variables.baseUrl }}/api'
+- name: fullPath
+  value: '${{ variables.apiEndpoint }}/v1'

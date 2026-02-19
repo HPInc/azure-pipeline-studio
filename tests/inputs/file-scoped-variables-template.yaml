@@ -1,0 +1,18 @@
+parameters: []
+variables:
+- name: templateVar
+  value: 'template-value'
+- name: sharedVar
+  value: 'template-shared-value'
+
+steps:
+# In the template, templateVar should be accessible
+- script: echo "Inside template - templateVar=${{ variables.templateVar }}"
+
+# sharedVar should show template's value
+
+- script: echo "Inside template - sharedVar=${{ variables.sharedVar }}"
+
+# mainVar should NOT be accessible (complete file isolation)
+
+- script: echo "Inside template - mainVar=${{ variables.mainVar }}"

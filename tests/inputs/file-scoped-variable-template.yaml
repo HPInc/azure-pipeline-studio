@@ -1,0 +1,5 @@
+variables:
+- name: varTemplateVar1
+  value: 'from-var-template-1'
+- name: varTemplateVar2
+  value: 'from-var-template-2'

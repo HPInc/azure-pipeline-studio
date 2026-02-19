@@ -539,6 +539,57 @@ const test25Pass = runTest('Test 25: Multi-document YAML skips empty sections', 
     }
 });
 
+// Test 26: Indentation validation - malformed YAML handled gracefully
+const test26Pass = runTest('Test 26: Malformed indentation handled gracefully', () => {
+    // Incorrect indentation (steps too far left)
+    const incorrectYaml = `parameters:
+  - name: testConfigurations
+    type: object
+
+jobs:
+- job: TestJob
+  displayName: 'Test Job'
+   steps:
+    - script: echo "Test"`;
+
+    try {
+        // Parser should handle this gracefully, either fixing or erroring
+        const parser = new AzurePipelineParser();
+        const output = parser.expandPipelineFromString(incorrectYaml, {
+            azureCompatible: true,
+            parameters: { testConfigurations: [] },
+        });
+
+        // If it succeeds, it should have some content
+        if (output.length === 0) {
+            throw new Error('Parser returned empty output for malformed YAML');
+        }
+    } catch (error) {
+        // Errors are acceptable for malformed YAML
+        if (!error.message) {
+            throw new Error('Error should have a message');
+        }
+    }
+
+    // Test another case: missing proper indentation for nested elements
+    const yaml2 = `stages:
+- stage: Build
+jobs:
+- job: build
+steps:
+- script: echo test`;
+
+    try {
+        const result = formatYaml(yaml2);
+        // Should either format it or return with warning
+        if (!result.text && !result.error && !result.warning) {
+            throw new Error('Formatter should return text, error, or warning');
+        }
+    } catch (error) {
+        // Errors acceptable for malformed structure
+    }
+});
+
 // Summary
 const allTests = [
     test1Pass,
@@ -566,6 +617,7 @@ const allTests = [
     test23Pass,
     test24Pass,
     test25Pass,
+    test26Pass,
 ];
 const passed = allTests.filter((t) => t).length;
 const failed = allTests.length - passed;

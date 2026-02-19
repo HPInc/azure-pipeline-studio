@@ -1,0 +1,7 @@
+variables:
+- name: templateVar1
+  value: 'from-template-1'
+- name: templateVar2
+  value: 'from-template-2'
+- name: sharedVar
+  value: 'template-overrides-main'
