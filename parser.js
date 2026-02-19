@@ -522,6 +522,15 @@ class AzurePipelineParser {
         const resourceLocations = overrides.resourceLocations || {};
         const skipSyntax = overrides.skipSyntax !== undefined ? overrides.skipSyntax : this.skipSyntax;
 
+        // Initialize file scopes for variable tracking
+        const currentFile = overrides.fileName || overrides.rootTemplate || 'pipeline';
+        const fileScopes = overrides.fileScopes || {};
+
+        // Track variables from the main file
+        if (!fileScopes[currentFile]) {
+            fileScopes[currentFile] = { ...variables, ...overrideVariables };
+        }
+
         return {
             parameters: { ...parameters, ...overrideParameters },
             parameterMap: { ...parameterMap },
@@ -549,6 +558,8 @@ class AzurePipelineParser {
             jobIndex: -1, // Track current job index during expansion
             stepIndex: -1, // Track current step index during expansion
             skipSyntax, // Skip syntax validation when parsing templates
+            currentFile, // Track the current file being processed
+            fileScopes, // Track variables by file for scoping
         };
     }
 
@@ -1189,6 +1200,14 @@ class AzurePipelineParser {
 
                 if (parentKey === 'variables' && item.name && item.value !== undefined) {
                     context.variables[item.name] = item.value;
+
+                    // Track the variable in the file scope
+                    if (context.currentFile && context.fileScopes) {
+                        if (!context.fileScopes[context.currentFile]) {
+                            context.fileScopes[context.currentFile] = {};
+                        }
+                        context.fileScopes[context.currentFile][item.name] = item.value;
+                    }
                 }
 
                 // Track global indices for context (stages, jobs, steps counters)
@@ -1354,6 +1373,14 @@ class AzurePipelineParser {
         if (varName && varValue !== undefined) {
             // Update the appropriate scope based on current context level
             context.variables[varName] = varValue;
+
+            // Track the variable in the file scope
+            if (context.currentFile && context.fileScopes) {
+                if (!context.fileScopes[context.currentFile]) {
+                    context.fileScopes[context.currentFile] = {};
+                }
+                context.fileScopes[context.currentFile][varName] = varValue;
+            }
 
             // Also update the appropriate scoped variables
             if (context.jobIndex >= 0) {
@@ -2613,13 +2640,16 @@ class AzurePipelineParser {
     }
 
     createTemplateContext(parent, parameterOverrides, baseDir, options = {}) {
+        // Determine the template file path for scoping
+        const templateFile = options.templateFile || 'template';
+
         return {
             parameters: { ...parameterOverrides }, // Only use template's own parameters - don't inherit parent's
             parameterMap: { ...parent.parameterMap }, // Preserve parameterMap for this template expansion
-            variables: { ...parent.variables }, // Preserve variables from parent context (includes overrides)
-            globalVariables: parent.globalVariables,
-            stageVariables: parent.stageVariables,
-            jobVariables: parent.jobVariables,
+            variables: {}, // Template starts with empty variables - complete file isolation
+            globalVariables: parent.globalVariables, // Preserve for stage/job scoping
+            stageVariables: parent.stageVariables, // Preserve for job scoping
+            jobVariables: parent.jobVariables, // Preserve current job scope
             resources: parent.resources,
             locals: { ...parent.locals },
             baseDir: baseDir || parent.baseDir,
@@ -2640,6 +2670,8 @@ class AzurePipelineParser {
             sourceLines: parent.sourceLines, // Preserve source lines for line number extraction
             sourceText: parent.sourceText, // Preserve source text for context
             errors: parent.errors, // Preserve errors array for error collection
+            currentFile: templateFile, // Set current file to the template being expanded
+            fileScopes: {}, // Template gets its own empty fileScopes - complete file isolation
         };
     }
 
@@ -2934,6 +2966,7 @@ class AzurePipelineParser {
         this.validateTemplateParameters(templateJson, providedParameters, templatePath, updatedContext);
         const templateContext = this.createTemplateContext(updatedContext, mergedParameters, templateBaseDir, {
             repoBaseDir: repoBaseDirForContext,
+            templateFile: resolvedPath, // Pass the resolved template file path for scoping
         });
 
         // Update source lines to the template file so nested templates can find their line numbers

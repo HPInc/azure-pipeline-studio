@@ -1,0 +1,77 @@
+trigger: none
+variables:
+- name: mainVar
+  value: 'main-value'
+- name: sharedVar
+  value: 'main-shared-value'
+# Include variable template - these variables SHOULD be accessible in main file
+- template: ./file-scoped-variable-template.yaml
+
+stages:
+- stage: Stage1
+
+  jobs:
+  - job: Job1
+
+    steps:
+    # This should work - mainVar is defined in main file
+    - script: echo "mainVar=${{ variables.mainVar }}"
+    # This should work - sharedVar is defined in main file
+
+    - script: echo "sharedVar=${{ variables.sharedVar }}"
+    # Variables from variable template SHOULD be accessible in main file
+
+    - script: echo "varTemplateVar1=${{ variables.varTemplateVar1 }}"
+    - script: echo "varTemplateVar2=${{ variables.varTemplateVar2 }}"
+    # Include steps template that defines templateVar
+
+    - template: ./file-scoped-variables-template.yaml
+    # This should NOT work - templateVar is defined in template and should not leak
+    # Expected: variables.templateVar should be undefined
+
+    - script: echo "templateVar=${{ variables.templateVar }}"
+    # This should still be 'main-shared-value' - template's sharedVar should not leak
+
+    - script: echo "sharedVar=${{ variables.sharedVar }}"
+
+# Test stage-level variable overriding
+- stage: Stage2
+  variables:
+  - name: sharedVar
+    value: 'stage2-overrides-global'
+  - name: stageVar
+    value: 'stage2-value'
+
+  jobs:
+  - job: Job2
+
+    steps:
+    # mainVar from global should still be accessible
+    - script: echo "Stage2-Job2-mainVar=${{ variables.mainVar }}"
+    # sharedVar should be overridden by stage
+
+    - script: echo "Stage2-Job2-sharedVar=${{ variables.sharedVar }}"
+    # stageVar should be accessible
+
+    - script: echo "Stage2-Job2-stageVar=${{ variables.stageVar }}"
+
+  # Test job-level variable overriding
+  - job: Job3
+    variables:
+    - name: sharedVar
+      value: 'job3-overrides-stage'
+    - name: jobVar
+      value: 'job3-value'
+
+    steps:
+    # mainVar from global should still be accessible
+    - script: echo "Stage2-Job3-mainVar=${{ variables.mainVar }}"
+    # sharedVar should be overridden by job (not stage)
+
+    - script: echo "Stage2-Job3-sharedVar=${{ variables.sharedVar }}"
+    # stageVar should be accessible from stage
+
+    - script: echo "Stage2-Job3-stageVar=${{ variables.stageVar }}"
+    # jobVar should be accessible
+
+    - script: echo "Stage2-Job3-jobVar=${{ variables.jobVar }}"

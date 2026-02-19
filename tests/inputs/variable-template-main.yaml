@@ -1,0 +1,26 @@
+trigger: none
+variables:
+- name: mainVar
+  value: 'main-value'
+- name: sharedVar
+  value: 'main-shared-value'
+- template: variable-template-vars.yaml
+
+stages:
+- stage: Stage1
+
+  jobs:
+  - job: Job1
+
+    steps:
+    # mainVar from main file
+    - script: echo "mainVar=${{ variables.mainVar }}"
+    # sharedVar should be overridden by template
+
+    - script: echo "sharedVar=${{ variables.sharedVar }}"
+    # templateVar1 from variable template should be accessible
+
+    - script: echo "templateVar1=${{ variables.templateVar1 }}"
+    # templateVar2 from variable template should be accessible
+
+    - script: echo "templateVar2=${{ variables.templateVar2 }}"
