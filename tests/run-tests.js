@@ -36,6 +36,8 @@ const tests = [
     'test-template-call-stack.js',
     'test-formatting.js',
     'test-comprehensive-spacing.js',
+    'test-pipeline-diagram.js',
+    'test-resources.js',
 ];
 
 console.log('='.repeat(70));
