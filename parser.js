@@ -2890,6 +2890,7 @@ class AzurePipelineParser {
             );
         }
 
+        console.log(`Expanding template '${templatePath}' from file: ${resolvedPath}`);
         const templateSource = fs.readFileSync(resolvedPath, 'utf8');
         const identifier = repoRef ? `${repoRef.templatePath}@${repoRef.repository}` : templatePath;
 

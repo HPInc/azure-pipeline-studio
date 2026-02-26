@@ -4,6 +4,7 @@ const minimist = require('minimist');
 
 // Import utility functions and formatter
 const { pickFirstString, resolveConfiguredPath, normalizeExtension } = require('./utils');
+const { PipelineSimulator, printSimulationResults } = require('./simulator');
 const { formatYaml } = require('./formatter');
 const { DependencyAnalyzer } = require('./dependency-analyzer');
 
@@ -2103,8 +2104,8 @@ function runCli(args) {
         '  -d, --debug                  Print files being formatted';
 
     const argv = minimist(args, {
-        string: ['output', 'repo', 'format-option', 'format-recursive', 'extension', 'variables'],
-        boolean: ['help', 'expand-templates', 'azure-compatible', 'skip-syntax-check', 'debug'],
+        string: ['output', 'repo', 'format-option', 'format-recursive', 'extension', 'variables', 'mock-catalog'],
+        boolean: ['help', 'expand-templates', 'azure-compatible', 'skip-syntax-check', 'debug', 'simulate'],
         alias: {
             h: 'help',
             o: 'output',
@@ -2124,6 +2125,7 @@ function runCli(args) {
             'azure-compatible': false,
             'skip-syntax-check': false,
             debug: false,
+            simulate: false,
         },
     });
 
@@ -2237,6 +2239,66 @@ function runCli(args) {
         return;
     }
 
+    const repositories = buildRepositoryOverridesFromCliEntries(repositoryEntries, process.cwd());
+    const cliVariables = Object.keys(variablesMap).length > 0 ? variablesMap : undefined;
+
+    if (argv.simulate) {
+        if (filesToFormat.length === 0) {
+            console.error('Error: --simulate requires a pipeline file argument.');
+            console.error(usage);
+            process.exitCode = 1;
+            return;
+        }
+
+        const simulateFile = path.resolve(process.cwd(), filesToFormat[0]);
+        const simulateSource = fs.readFileSync(simulateFile, 'utf8');
+        const simulateParser = new AzurePipelineParser({ skipSyntax: argv['skip-syntax-check'] || false });
+
+        const simulateParserOptions = {
+            fileName: simulateFile,
+            baseDir: path.dirname(simulateFile),
+            templateStack: [simulateFile],
+            azureCompatible: false,
+        };
+        if (repositories) {
+            const resourceLocations = {};
+            for (const [alias, config] of Object.entries(repositories)) {
+                resourceLocations[alias] = config.location || config.path;
+            }
+            simulateParserOptions.resourceLocations = resourceLocations;
+        }
+        if (cliVariables) {
+            simulateParserOptions.variables = cliVariables;
+        }
+
+        let mockCatalog = {};
+        const mockCatalogPath = argv['mock-catalog'];
+        if (mockCatalogPath) {
+            const resolvedCatalog = path.resolve(process.cwd(), mockCatalogPath);
+            try {
+                mockCatalog = JSON.parse(fs.readFileSync(resolvedCatalog, 'utf8'));
+            } catch (err) {
+                console.error(`Error loading mock catalog "${mockCatalogPath}": ${err.message}`);
+                process.exitCode = 1;
+                return;
+            }
+        }
+
+        try {
+            const { document } = simulateParser.expandPipeline(simulateSource, simulateParserOptions);
+            const simulator = new PipelineSimulator({ mockCatalog });
+            const results = simulator.simulate(document, { variables: variablesMap });
+            printSimulationResults(results);
+            if (results.totalFailed > 0) {
+                process.exitCode = 1;
+            }
+        } catch (err) {
+            console.error(`Simulation failed: ${err.message}`);
+            process.exitCode = 1;
+        }
+        return;
+    }
+
     if (filesToFormat.length === 0) {
         console.error(usage);
         process.exitCode = 1;
@@ -2251,9 +2313,6 @@ function runCli(args) {
     }
 
     const formatOverrides = buildFormatOptionsFromCli(formatOption) || {};
-    const repositories = buildRepositoryOverridesFromCliEntries(repositoryEntries, process.cwd());
-    // Use the variables map we parsed earlier
-    const cliVariables = Object.keys(variablesMap).length > 0 ? variablesMap : undefined;
 
     // Create parser instance if template expansion is needed
     const cliParser = argv['expand-templates'] ? new AzurePipelineParser() : null;
