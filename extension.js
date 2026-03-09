@@ -631,6 +631,25 @@ function activate(context) {
 
     const scheduleRender = (document, delayMs = 500) => {
         if (!shouldRenderDocument(document)) return;
+
+        // Expansion rendering can be expensive for large pipelines; allow opting in to live refresh while typing.
+        if (!lastRenderedDocument || lastRenderedDocument.fileName !== document.fileName) {
+            // No active expansion view for this document, skip auto-refresh
+            return;
+        }
+
+        // When delayMs is 0, this is typically from save or explicit command; otherwise check refreshOnType preference
+        if (delayMs > 0) {
+            const expansionConfig = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
+            const refreshOnType = expansionConfig.get('expansion.refreshOnType', true);
+            if (!refreshOnType) {
+                return;
+            }
+
+            const configuredDelay = expansionConfig.get('expansion.refreshDelayMs', 500);
+            delayMs = Number.isInteger(configuredDelay) && configuredDelay >= 0 ? configuredDelay : delayMs;
+        }
+
         pendingDocument = document;
         clearTimeout(debounceTimer);
         clearTimeout(activeDebounceTimer);
@@ -716,7 +735,6 @@ function activate(context) {
                 ...(Object.keys(compileTimeVariables).length && { variables: compileTimeVariables }),
             };
 
-            console.log('Parser overrides:', JSON.stringify(parserOverrides, null, 2));
             const expandedYaml = parser.expandPipelineFromString(sourceText, parserOverrides);
 
             const formatOptions = getFormatSettings(document);
@@ -856,7 +874,6 @@ function activate(context) {
         'azurePipelineStudio.configureResourceLocations',
         async () => {
             try {
-                console.log('[Azure Pipeline Studio] Configure Resource Locations command triggered');
                 await handleConfigureResourceLocationRequest();
             } catch (error) {
                 console.error('[Azure Pipeline Studio] Error in configure command:', error);
@@ -865,6 +882,63 @@ function activate(context) {
         }
     );
     context.subscriptions.push(configureCommandDisposable);
+
+    const generateLoadingHtml = (projectName) => {
+        return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pipeline Diagram - Loading</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #1e1e1e;
+            color: #cccccc;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+        .loading-container {
+            text-align: center;
+            max-width: 500px;
+        }
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid #3e3e42;
+            border-top: 4px solid #0078d4;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        h2 {
+            color: #ffffff;
+            margin-bottom: 10px;
+        }
+        p {
+            color: #888888;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="loading-container">
+        <div class="spinner"></div>
+        <h2>Analyzing Pipeline Dependencies</h2>
+        <p>Expanding templates and generating diagram...</p>
+        <p style="margin-top: 15px; font-size: 0.85em; opacity: 0.7;">${projectName}</p>
+    </div>
+</body>
+</html>`;
+    };
 
     const ensureDependenciesPanel = () => {
         if (dependenciesPanel) {
@@ -924,69 +998,159 @@ function activate(context) {
         }
 
         isDependenciesRendering = true;
+
+        // Show panel immediately with loading state to avoid blocking extension host
+        const panel = ensureDependenciesPanel();
+        if (!panel) {
+            isDependenciesRendering = false;
+            return;
+        }
+
+        activeDependenciesPanel = dependenciesPanel = panel;
+
+        const projectName = document?.fileName || 'Pipeline';
+        const loadingHtml = generateLoadingHtml(projectName);
         try {
-            const sourceText = document.getText();
+            panel.webview.html = loadingHtml;
 
-            const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
-            const compileTimeVariables = config.get('expansion.variables', {});
-            const skipSyntaxCheck = config.get('expansion.skipSyntaxCheck', false);
-            const resourceOverrides = buildResourceOverridesForDocument(document);
+            // Give UI time to actually render the loading state before starting heavy work
+            // This is critical for responsiveness
+            await new Promise((resolve) => setTimeout(resolve, 100));
+        } catch (panelError) {
+            console.error('[Azure Pipeline Studio] Failed to set loading HTML', panelError);
+            dependenciesPanel = null;
+            activeDependenciesPanel = null;
+            isDependenciesRendering = false;
+            return;
+        }
 
-            const parserOverrides = {
-                fileName: document.fileName,
-                azureCompatible: false,
-                skipSyntaxCheck,
-                ...(resourceOverrides && { resources: resourceOverrides }),
-                ...(Object.keys(compileTimeVariables).length && { variables: compileTimeVariables }),
-            };
-
-            if (!silent) {
-                vscode.window.setStatusBarMessage('Expanding pipeline templates...', 2000);
-            }
-
-            let expandedYaml;
+        if (reveal) {
             try {
-                expandedYaml = parser.expandPipelineFromString(sourceText, parserOverrides);
-            } catch (error) {
-                const errorMessage = error.message || 'An error occurred while expanding pipeline templates';
-                const enhancedMessage =
-                    `Error in Pipeline Diagram:\n\n${errorMessage}\n\n` +
-                    `💡 Tip: Check your YAML syntax and template references. ` +
-                    `You can also use "Expand Pipeline" to debug template expansion issues.`;
-                const enhancedError = new Error(enhancedMessage);
-                enhancedError.stack = error.stack;
-                showErrorWebviewNow(enhancedError, context, 'dependency');
-                return;
+                panel.reveal(vscode.ViewColumn.Two, true);
+            } catch (revealError) {
+                // Panel reveal failed, ignore
             }
+        }
 
-            if (!silent) {
-                vscode.window.setStatusBarMessage('Analyzing dependencies...', 2000);
-            }
-
-            let dependencies;
+        // Defer expensive computation to avoid blocking extension host
+        // Use setTimeout with delay to allow more event loop processing and UI updates
+        // setImmediate runs before I/O, setTimeout allows UI updates to process
+        // Increased delay to ensure loading state is visible before heavy work starts
+        setTimeout(async () => {
             try {
-                dependencies = dependencyAnalyzer.analyzePipeline(expandedYaml);
-            } catch (error) {
-                const errorMessage = error.message || 'An error occurred while analyzing pipeline dependencies';
-                const enhancedMessage =
-                    `Error in Pipeline Diagram:\n\n${errorMessage}\n\n` +
-                    `💡 Tip: It's often easier to identify and fix issues using "Expand Pipeline" first. ` +
-                    `This will show you the full expanded YAML with all template variables and references resolved.`;
-                const enhancedError = new Error(enhancedMessage);
-                enhancedError.stack = error.stack;
-                showErrorWebviewNow(enhancedError, context, 'dependency');
-                return;
-            }
+                const sourceText = document.getText();
 
-            const mermaidDiagram =
-                dependencies.stages.length > 0 || dependencies.jobs.length > 0
-                    ? dependencyAnalyzer.generateMermaidDiagram(dependencies)
-                    : '';
+                // Warn if document is very large
+                if (sourceText.length > 100000) {
+                    console.warn(
+                        '[Azure Pipeline Studio] Large document detected:',
+                        sourceText.length,
+                        'characters - processing may take time'
+                    );
+                    if (!silent) {
+                        vscode.window.showWarningMessage(
+                            'Large pipeline detected. Diagram generation may take some time and could impact editor responsiveness.',
+                            'Continue'
+                        );
+                    }
+                }
 
-            const projectName = document?.fileName || 'Pipeline';
-            const stageCount = dependencies.stages.length || dependencies.jobs.length || 0;
+                const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
+                const compileTimeVariables = config.get('expansion.variables', {});
+                const skipSyntaxCheck = config.get('expansion.skipSyntaxCheck', false);
+                const resourceOverrides = buildResourceOverridesForDocument(document);
 
-            const htmlContent = `<!DOCTYPE html>
+                const parserOverrides = {
+                    fileName: document.fileName,
+                    azureCompatible: false,
+                    skipSyntaxCheck,
+                    ...(resourceOverrides && { resources: resourceOverrides }),
+                    ...(Object.keys(compileTimeVariables).length && { variables: compileTimeVariables }),
+                };
+
+                if (!silent) {
+                    vscode.window.setStatusBarMessage('Expanding pipeline templates...', 2000);
+                }
+
+                let expandedYaml;
+                try {
+                    // Wrap parser call with Promise + setTimeout to allow event loop processing between operations
+                    // Note: The parser itself is still synchronous, but this allows UI updates before it starts
+                    expandedYaml = await new Promise((resolve, reject) => {
+                        try {
+                            // Small delay to allow event loop to process UI updates
+                            setTimeout(() => {
+                                try {
+                                    const result = parser.expandPipelineFromString(sourceText, parserOverrides);
+                                    resolve(result);
+                                } catch (err) {
+                                    reject(err);
+                                }
+                            }, 10);
+                        } catch (err) {
+                            reject(err);
+                        }
+                    });
+                } catch (error) {
+                    const errorMessage = error.message || 'An error occurred while expanding pipeline templates';
+                    const enhancedMessage =
+                        `Error in Pipeline Diagram:\n\n${errorMessage}\n\n` +
+                        `💡 Tip: Check your YAML syntax and template references. ` +
+                        `You can also use "Expand Pipeline" to debug template expansion issues.`;
+                    const enhancedError = new Error(enhancedMessage);
+                    enhancedError.stack = error.stack;
+                    showErrorWebviewNow(enhancedError, context, 'dependency');
+                    return;
+                }
+
+                if (!silent) {
+                    vscode.window.setStatusBarMessage('Analyzing dependencies...', 2000);
+                }
+
+                let dependencies;
+                try {
+                    // Wrap analyzer call with Promise + setTimeout to allow event loop processing
+                    // Small delay to allow UI updates between heavy operations
+                    dependencies = await new Promise((resolve, reject) => {
+                        setTimeout(() => {
+                            try {
+                                const result = dependencyAnalyzer.analyzePipeline(expandedYaml);
+                                resolve(result);
+                            } catch (err) {
+                                reject(err);
+                            }
+                        }, 10);
+                    });
+                } catch (error) {
+                    const errorMessage = error.message || 'An error occurred while analyzing pipeline dependencies';
+                    const enhancedMessage =
+                        `Error in Pipeline Diagram:\n\n${errorMessage}\n\n` +
+                        `💡 Tip: It's often easier to identify and fix issues using "Expand Pipeline" first. ` +
+                        `This will show you the full expanded YAML with all template variables and references resolved.`;
+                    const enhancedError = new Error(enhancedMessage);
+                    enhancedError.stack = error.stack;
+                    showErrorWebviewNow(enhancedError, context, 'dependency');
+                    return;
+                }
+
+                const stageCount = dependencies.stages.length || 0;
+                const jobCount = dependencies.jobs.length || 0;
+
+                // Wrap diagram generation with Promise + setTimeout to allow event loop processing
+                // Small delay to allow UI updates between heavy operations
+                const mermaidDiagram = await new Promise((resolve) => {
+                    setTimeout(() => {
+                        const diagram =
+                            dependencies.stages.length > 0 || dependencies.jobs.length > 0
+                                ? dependencyAnalyzer.generateMermaidDiagram(dependencies)
+                                : '';
+                        resolve(diagram);
+                    }, 10);
+                });
+
+                const stageCountForDisplay = stageCount || jobCount || 0;
+
+                const htmlContent = `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -1337,7 +1501,7 @@ function activate(context) {
                 </div>
                 <div class="header-info-item">
                     <span>🏗️</span>
-                    <span>${stageCount} Stage${stageCount !== 1 ? 's' : ''}</span>
+                    <span>${stageCountForDisplay} Stage${stageCountForDisplay !== 1 ? 's' : ''}</span>
                 </div>
                 <div class="header-info-item" style="display: flex; align-items: center; gap: 8px;">
                     <div class="legend-color" style="width: 16px; height: 16px; background: #F87171; border-radius: 2px;"></div>
@@ -1520,53 +1684,41 @@ ${mermaidDiagram
 </body>
 </html>`;
 
-            const panel = ensureDependenciesPanel();
-            if (!panel) {
-                return;
-            }
+                dependenciesPanelHtml = htmlContent;
 
-            activeDependenciesPanel = dependenciesPanel = panel;
-            dependenciesPanelHtml = htmlContent;
-
-            try {
-                panel.webview.html = htmlContent;
-            } catch (panelError) {
-                // Panel might be disposed, ignore
-                dependenciesPanel = null;
-                activeDependenciesPanel = null;
-                return;
-            }
-
-            if (reveal) {
                 try {
-                    panel.reveal(vscode.ViewColumn.Two, true);
-                } catch (revealError) {
-                    // Panel reveal failed, ignore
+                    panel.webview.html = htmlContent;
+                } catch (panelError) {
+                    console.error('[Azure Pipeline Studio] Failed to set panel HTML', panelError);
+                    // Panel might be disposed, ignore
+                    dependenciesPanel = null;
+                    activeDependenciesPanel = null;
+                    return;
+                }
+
+                closeErrorPanel();
+
+                if (!silent) {
+                    vscode.window.setStatusBarMessage('Pipeline dependencies analyzed.', 3000);
+                }
+            } catch (error) {
+                // This catch block handles unexpected errors that weren't caught by inner try-catch blocks
+                const errorMessage = error.message || 'An unexpected error occurred while analyzing dependencies';
+                const enhancedMessage =
+                    `Error in Pipeline Diagram:\n\n${errorMessage}\n\n` +
+                    `💡 Tip: This is an unexpected error. Please check the error details below.`;
+                const enhancedError = new Error(enhancedMessage);
+                enhancedError.stack = error.stack;
+                showErrorWebviewNow(enhancedError, context, 'dependency');
+            } finally {
+                isDependenciesRendering = false;
+                if (pendingDependenciesDocument) {
+                    const queuedDocument = pendingDependenciesDocument;
+                    pendingDependenciesDocument = null;
+                    void renderDependenciesPanel(queuedDocument, { silent: true });
                 }
             }
-
-            closeErrorPanel();
-
-            if (!silent) {
-                vscode.window.setStatusBarMessage('Pipeline dependencies analyzed.', 3000);
-            }
-        } catch (error) {
-            // This catch block handles unexpected errors that weren't caught by inner try-catch blocks
-            const errorMessage = error.message || 'An unexpected error occurred while analyzing dependencies';
-            const enhancedMessage =
-                `Error in Pipeline Diagram:\n\n${errorMessage}\n\n` +
-                `💡 Tip: This is an unexpected error. Please check the error details below.`;
-            const enhancedError = new Error(enhancedMessage);
-            enhancedError.stack = error.stack;
-            showErrorWebviewNow(enhancedError, context, 'dependency');
-        } finally {
-            isDependenciesRendering = false;
-            if (pendingDependenciesDocument) {
-                const queuedDocument = pendingDependenciesDocument;
-                pendingDependenciesDocument = null;
-                void renderDependenciesPanel(queuedDocument, { silent: true });
-            }
-        }
+        }, 150); // 150ms delay to ensure loading state renders before heavy computation
     };
 
     const scheduleDependenciesRefresh = (document, delayMs = 500) => {
@@ -1577,6 +1729,16 @@ ${mermaidDiagram
         if (document.uri.toString() !== dependenciesDocumentUri.toString()) {
             return;
         }
+
+        // Diagram rendering can be expensive for large pipelines; allow opting in to live refresh while typing.
+        const diagramConfig = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
+        const refreshOnType = diagramConfig.get('diagram.refreshOnType', false);
+        if (!refreshOnType) {
+            return;
+        }
+
+        const configuredDelay = diagramConfig.get('diagram.refreshDelayMs', 1200);
+        const effectiveDelay = Number.isInteger(configuredDelay) && configuredDelay >= 0 ? configuredDelay : delayMs;
 
         pendingDependenciesDocument = document;
         clearTimeout(dependenciesDebounceTimer);
@@ -1592,19 +1754,20 @@ ${mermaidDiagram
             if (queuedDocument) {
                 void renderDependenciesPanel(queuedDocument, { silent: true });
             }
-        }, delayMs);
+        }, effectiveDelay);
     };
 
     const showDependenciesCommandDisposable = vscode.commands.registerCommand(
         'azurePipelineStudio.showDependencies',
-        async () => {
+        () => {
             const editor = vscode.window.activeTextEditor;
             if (!editor || !shouldRenderDocument(editor.document)) {
                 vscode.window.showInformationMessage('Open an Azure Pipeline YAML file to view dependencies.');
                 return;
             }
 
-            await renderDependenciesPanel(editor.document, { reveal: true });
+            // Start async work but don't await it - let command return immediately
+            void renderDependenciesPanel(editor.document, { reveal: true });
         }
     );
     context.subscriptions.push(showDependenciesCommandDisposable);
@@ -1751,7 +1914,6 @@ ${mermaidDiagram
             }
 
             newLocation = folderUri[0].fsPath;
-            console.log(`[Azure Pipeline Studio] Selected folder location: ${newLocation}`);
         } else {
             newLocation = await vscode.window.showInputBox({
                 prompt: `Local path for repository '${alias}'`,
@@ -1764,8 +1926,6 @@ ${mermaidDiagram
                 vscode.window.showInformationMessage('Repository location not updated.');
                 return;
             }
-
-            console.log(`[Azure Pipeline Studio] Entered manual location: ${newLocation}`);
         }
 
         const sanitizedLocation = newLocation.trim();
@@ -1792,15 +1952,7 @@ ${mermaidDiagram
         const target = vscode.ConfigurationTarget.Workspace;
 
         try {
-            console.log(`[Azure Pipeline Studio] About to save repository '${alias}' location: ${sanitizedLocation}`);
-            console.log(`[Azure Pipeline Studio] Target:`, target);
-            console.log(`[Azure Pipeline Studio] Entries to save:`, JSON.stringify(updatedEntries, null, 2));
-
             await config.update('resourceLocations', updatedEntries, target);
-
-            console.log(
-                `[Azure Pipeline Studio] Successfully saved repository '${alias}' location: ${sanitizedLocation}`
-            );
 
             vscode.window.showInformationMessage(`Repository '${alias}' location saved.`);
 
@@ -1815,10 +1967,6 @@ ${mermaidDiagram
         vscode.workspace.onDidChangeTextDocument(({ document }) => {
             if (isRelevantDocument(document)) {
                 scheduleRender(document);
-
-                if (lastRenderedDocument && lastRenderedDocument.fileName === document.fileName) {
-                    void renderYamlDocument(document, { silent: true });
-                }
             }
 
             // Refresh dependencies panel even if not the expanded document
@@ -1832,6 +1980,14 @@ ${mermaidDiagram
             const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
             if (config.get('refreshOnSave', true)) {
                 scheduleRender(document, 0);
+            }
+
+            if (
+                dependenciesPanel &&
+                dependenciesDocumentUri &&
+                dependenciesDocumentUri.toString() === document.uri.toString()
+            ) {
+                void renderDependenciesPanel(document, { silent: true });
             }
         })
     );
