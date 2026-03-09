@@ -470,7 +470,8 @@ class DependencyAnalyzer {
         const criticalPath = [];
         let current = endNode;
 
-        while (current !== null) {
+        // Use != to catch both null and undefined
+        while (current != null) {
             criticalPath.unshift(current);
             current = longestPathPrev.get(current);
         }
