@@ -5,6 +5,28 @@ All notable changes to Azure Pipeline Studio will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-03-09
+
+### Added
+- **Pipeline simulation support(Initial Version)**: New `--simulate` CLI option for dry-run pipeline execution with mock catalog support
+- New configuration settings for refresh behavior:
+  - `azurePipelineStudio.diagram.refreshOnType` - Control automatic diagram refresh while typing (default: true)
+  - `azurePipelineStudio.diagram.refreshDelayMs` - Configure debounce delay for diagram refresh (default: 500ms)
+  - `azurePipelineStudio.expansion.refreshOnType` - Control automatic expansion refresh while typing (default: true)
+  - `azurePipelineStudio.expansion.refreshDelayMs` - Configure debounce delay for expansion refresh (default: 500ms)
+
+### Changed
+- **Improved extension responsiveness**: Pipeline diagram rendering now uses async/await with deferred computation to prevent extension host blocking
+- Loading states now display immediately before expensive template expansion and dependency analysis operations
+- Security updates
+
+### Fixed
+- Extension host hangs and freezes when rendering large pipeline diagrams
+- UI blocking during template expansion and dependency analysis
+- Unresponsive editor experience with large pipelines
+
+[1.1.1]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.1.1
+
 ## [1.1.0] - 2026-02-19
 
 ### Added

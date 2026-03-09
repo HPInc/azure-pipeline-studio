@@ -220,7 +220,7 @@
   "devDependencies": {
     "@types/vscode": "^1.64.0",
     "ajv": "^8.0.0",
-    "copy-webpack-plugin": "^13.0.1",
+    "copy-webpack-plugin": "^14.0.0",
     "terser-webpack-plugin": "^5.3.16",
     "webpack": "^5.97.1",
     "webpack-cli": "^4.10.0"
