@@ -41,6 +41,11 @@
     ],
     "configuration": {
       "properties": {
+        "azurePipelineStudio.diagnostics.templateResolution": {
+          "default": false,
+          "description": "Enable detailed template resolution diagnostics in the extension host logs (candidate paths, repository roots, and selected template files).",
+          "type": "boolean"
+        },
         "azurePipelineStudio.diagram.refreshDelayMs": {
           "default": 500,
           "description": "Debounce delay (ms) before refreshing Pipeline Diagram while typing when diagram.refreshOnType is enabled.",

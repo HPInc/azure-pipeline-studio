@@ -1,6 +1,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const YAML = require('yaml');
 const jsep = require('jsep');
 const adoFunctions = require('./ado-functions');
@@ -21,6 +22,8 @@ class AzurePipelineParser {
         this.expressionCache = new Map();
         this.globQuotePattern = /[\*\?\[\]]|\/[\*\?\[]|[*/]\/|\/[*/]/;
         this.skipSyntax = options.skipSyntax || false;
+        this._pathExistsCache = new Map();
+        this._realPathCache = new Map();
     }
 
     expandPipelineFromFile(filePath, overrides = {}) {
@@ -520,6 +523,7 @@ class AzurePipelineParser {
 
         const mergedResources = this.mergeResourcesConfig(resources, overrideResources);
         const resourceLocations = overrides.resourceLocations || {};
+        const diagnostics = overrides.diagnostics || {};
         const skipSyntax = overrides.skipSyntax !== undefined ? overrides.skipSyntax : this.skipSyntax;
 
         // Initialize file scopes for variable tracking
@@ -544,6 +548,7 @@ class AzurePipelineParser {
             repoBaseDir,
             rootRepoBaseDir,
             resourceLocations,
+            diagnostics,
             templateStack: overrides.templateStack || [],
             // Preserve the original root template/file for clearer error stacks
             rootTemplate:
@@ -2813,14 +2818,35 @@ class AzurePipelineParser {
         let resolvedPath;
         let templateBaseDir;
         let repoBaseDirForContext = context.repoBaseDir || undefined;
+        const attemptedTemplatePaths = [];
+
+        this.logTemplateDiagnostics(context, 'Resolving template reference', {
+            templatePath,
+            baseDir: context.baseDir,
+            repoBaseDir: context.repoBaseDir,
+            rootRepoBaseDir: context.rootRepoBaseDir,
+            repository: repoRef?.repository,
+        });
 
         if (isSelfRepo) {
             const selfBaseDir = context.rootRepoBaseDir || context.repoBaseDir;
             const repoBaseDir = this.resolveRepoBaseDirectory(selfBaseDir, context);
             repoBaseDirForContext = repoBaseDir;
             const currentDir = context.baseDir || repoBaseDir;
-            resolvedPath = this.resolveRepoTemplate(repoRef.templatePath, currentDir, repoBaseDir);
+            resolvedPath = this.resolveRepoTemplate(repoRef.templatePath, currentDir, repoBaseDir, {
+                candidateCollector: attemptedTemplatePaths,
+                debugLabel: 'self-repository',
+                templatePath: repoRef.templatePath,
+                context,
+            });
             if (!resolvedPath) {
+                const fallbackPath = path.isAbsolute(repoRef.templatePath)
+                    ? repoRef.templatePath
+                    : path.resolve(currentDir || process.cwd(), repoRef.templatePath);
+                resolvedPath = this.resolveRealPath(fallbackPath);
+            }
+
+            if (!this.pathExistsSync(resolvedPath, context)) {
                 throw new Error(
                     this.formatErrorWithStack(
                         `Template file not found for repository '${repoRef.repository}': ${repoRef.templatePath}`,
@@ -2857,7 +2883,12 @@ class AzurePipelineParser {
             const repoBaseDir = this.resolveRepoBaseDirectory(repositoryLocation, context);
             repoBaseDirForContext = repoBaseDir;
             const currentDir = context.baseDir || repoBaseDir;
-            resolvedPath = this.resolveRepoTemplate(repoRef.templatePath, currentDir, repoBaseDir);
+            resolvedPath = this.resolveRepoTemplate(repoRef.templatePath, currentDir, repoBaseDir, {
+                candidateCollector: attemptedTemplatePaths,
+                debugLabel: `repository:${repoRef.repository}`,
+                templatePath: repoRef.templatePath,
+                context,
+            });
             if (!resolvedPath) {
                 throw new Error(
                     this.formatErrorWithStack(
@@ -2871,27 +2902,66 @@ class AzurePipelineParser {
             templateBaseDir = path.dirname(resolvedPath);
         } else {
             const repoBaseDir = context.repoBaseDir || undefined;
-            const candidatePath = this.resolveRepoTemplate(templatePath, context.baseDir, repoBaseDir);
+            const candidatePath = this.resolveRepoTemplate(templatePath, context.baseDir, repoBaseDir, {
+                preferRepoBaseDir: false,
+                returnMissingCandidate: false,
+                candidateCollector: attemptedTemplatePaths,
+                debugLabel: 'unqualified-template',
+                templatePath,
+                context,
+            });
             if (candidatePath) {
                 resolvedPath = candidatePath;
                 templateBaseDir = path.dirname(resolvedPath);
                 repoBaseDirForContext = repoBaseDirForContext || repoBaseDir;
             } else {
-                const baseDir = context.baseDir || process.cwd();
-                resolvedPath = path.isAbsolute(templatePath) ? templatePath : path.resolve(baseDir, templatePath);
-                templateBaseDir = path.dirname(resolvedPath);
+                const rootRepoBaseDir = context.rootRepoBaseDir || undefined;
+                const shouldTryRootFallback =
+                    rootRepoBaseDir &&
+                    (!repoBaseDir || path.normalize(rootRepoBaseDir) !== path.normalize(repoBaseDir));
+
+                if (shouldTryRootFallback) {
+                    const rootCandidatePath = this.resolveRepoTemplate(templatePath, context.baseDir, rootRepoBaseDir, {
+                        preferRepoBaseDir: true,
+                        returnMissingCandidate: false,
+                        candidateCollector: attemptedTemplatePaths,
+                        debugLabel: 'unqualified-template-root-fallback',
+                        templatePath,
+                        context,
+                    });
+
+                    if (rootCandidatePath) {
+                        resolvedPath = rootCandidatePath;
+                        templateBaseDir = path.dirname(resolvedPath);
+                        repoBaseDirForContext = rootRepoBaseDir;
+                    }
+                }
+
+                if (!resolvedPath) {
+                    const baseDir = context.baseDir || process.cwd();
+                    resolvedPath = path.isAbsolute(templatePath) ? templatePath : path.resolve(baseDir, templatePath);
+                    resolvedPath = this.resolveRealPath(resolvedPath);
+                    templateBaseDir = path.dirname(resolvedPath);
+                }
             }
         }
 
-        if (!fs.existsSync(resolvedPath)) {
+        if (!this.pathExistsSync(resolvedPath, context)) {
             const identifier = repoRef ? `${repoRef.templatePath}@${repoRef.repository}` : templatePath;
+            if (attemptedTemplatePaths.length) {
+                this.logTemplateDiagnostics(context, 'Template lookup failed', {
+                    identifier,
+                    resolvedPath,
+                    attemptedTemplatePaths,
+                });
+            }
             throw new Error(
                 this.formatErrorWithStack(`Template file not found: ${identifier}`, context, templateLineNumber)
             );
         }
 
         console.log(`Expanding template '${templatePath}' from file: ${resolvedPath}`);
-        const templateSource = fs.readFileSync(resolvedPath, 'utf8');
+        const templateSource = this.readFileWithFallback(resolvedPath, context);
         const identifier = repoRef ? `${repoRef.templatePath}@${repoRef.repository}` : templatePath;
 
         let templateJson;
@@ -3096,6 +3166,167 @@ class AzurePipelineParser {
         return input;
     }
 
+    resolveRealPath(fileSystemPath) {
+        if (!fileSystemPath || typeof fileSystemPath !== 'string') {
+            return fileSystemPath;
+        }
+
+        const cachedRealPath = this._realPathCache.get(fileSystemPath);
+        if (cachedRealPath) {
+            return cachedRealPath;
+        }
+
+        try {
+            const realPath = fs.realpathSync.native
+                ? fs.realpathSync.native(fileSystemPath)
+                : fs.realpathSync(fileSystemPath);
+            const normalized = path.normalize(realPath);
+            this._realPathCache.set(fileSystemPath, normalized);
+            return normalized;
+        } catch (error) {
+            // Avoid expensive WSL readlink fallback for paths we already know do not exist.
+            const knownExists = this._pathExistsCache.get(fileSystemPath);
+            if (knownExists === false) {
+                const normalized = path.normalize(fileSystemPath);
+                this._realPathCache.set(fileSystemPath, normalized);
+                return normalized;
+            }
+
+            // If we don't know existence yet, do one local exists probe first.
+            // Only attempt WSL readlink when local probe indicates the path might exist.
+            if (knownExists !== true) {
+                try {
+                    if (!fs.existsSync(fileSystemPath)) {
+                        this._pathExistsCache.set(fileSystemPath, false);
+                        const normalized = path.normalize(fileSystemPath);
+                        this._realPathCache.set(fileSystemPath, normalized);
+                        return normalized;
+                    }
+                    this._pathExistsCache.set(fileSystemPath, true);
+                } catch (_) {
+                    // Continue to WSL fallback only for UNC paths
+                }
+            }
+
+            const wslInfo = this.parseWslUncPath(fileSystemPath);
+            if (wslInfo) {
+                try {
+                    const escaped = this.escapeShellArg(wslInfo.posixPath);
+                    const resolvedPosix = execFileSync(
+                        'wsl.exe',
+                        ['-d', wslInfo.distro, 'sh', '-lc', `readlink -f ${escaped}`],
+                        { encoding: 'utf8' }
+                    )
+                        .trim()
+                        .replace(/\r?\n/g, '');
+                    if (resolvedPosix) {
+                        const normalized = this.toWslUncPath(wslInfo.distro, resolvedPosix);
+                        this._realPathCache.set(fileSystemPath, normalized);
+                        return normalized;
+                    }
+                } catch (_) {
+                    // Fall through to normalized input path
+                }
+            }
+
+            const normalized = path.normalize(fileSystemPath);
+            this._realPathCache.set(fileSystemPath, normalized);
+            return normalized;
+        }
+    }
+
+    parseWslUncPath(fileSystemPath) {
+        if (!fileSystemPath || typeof fileSystemPath !== 'string') {
+            return undefined;
+        }
+
+        const match = /^\\\\wsl(?:\.localhost)?\\([^\\]+)\\(.+)$/i.exec(fileSystemPath);
+        if (!match) {
+            return undefined;
+        }
+
+        const distro = match[1];
+        const tail = match[2].replace(/\\/g, '/').replace(/^\/+/, '');
+        return {
+            distro,
+            posixPath: `/${tail}`,
+        };
+    }
+
+    toWslUncPath(distro, posixPath) {
+        const normalizedPosix = String(posixPath || '').replace(/^\/+/, '');
+        return path.normalize(`\\\\wsl.localhost\\${distro}\\${normalizedPosix.replace(/\//g, '\\')}`);
+    }
+
+    escapeShellArg(value) {
+        const stringValue = String(value || '');
+        return `'${stringValue.replace(/'/g, `'"'"'`)}'`;
+    }
+
+    pathExistsSync(fileSystemPath, context) {
+        const cachedExists = this._pathExistsCache.get(fileSystemPath);
+        if (cachedExists !== undefined) {
+            return cachedExists;
+        }
+
+        try {
+            if (fs.existsSync(fileSystemPath)) {
+                this._pathExistsCache.set(fileSystemPath, true);
+                return true;
+            }
+        } catch (_) {
+            // Continue with fallback probes
+        }
+
+        const wslInfo = this.parseWslUncPath(fileSystemPath);
+        if (!wslInfo) {
+            this._pathExistsCache.set(fileSystemPath, false);
+            return false;
+        }
+
+        try {
+            const escaped = this.escapeShellArg(wslInfo.posixPath);
+            execFileSync('wsl.exe', ['-d', wslInfo.distro, 'sh', '-lc', `test -f ${escaped}`], { stdio: 'ignore' });
+            this.logTemplateDiagnostics(context, 'Template exists via WSL fallback', {
+                fileSystemPath,
+                distro: wslInfo.distro,
+                posixPath: wslInfo.posixPath,
+            });
+            this._pathExistsCache.set(fileSystemPath, true);
+            return true;
+        } catch (_) {
+            this._pathExistsCache.set(fileSystemPath, false);
+            return false;
+        }
+    }
+
+    readFileWithFallback(fileSystemPath, context) {
+        try {
+            return fs.readFileSync(fileSystemPath, 'utf8');
+        } catch (error) {
+            const wslInfo = this.parseWslUncPath(fileSystemPath);
+            if (!wslInfo) {
+                throw error;
+            }
+
+            try {
+                const escaped = this.escapeShellArg(wslInfo.posixPath);
+                const content = execFileSync('wsl.exe', ['-d', wslInfo.distro, 'sh', '-lc', `cat ${escaped}`], {
+                    encoding: 'utf8',
+                    maxBuffer: 10 * 1024 * 1024,
+                });
+                this.logTemplateDiagnostics(context, 'Template content read via WSL fallback', {
+                    fileSystemPath,
+                    distro: wslInfo.distro,
+                    posixPath: wslInfo.posixPath,
+                });
+                return content;
+            } catch (_) {
+                throw error;
+            }
+        }
+    }
+
     resolveRepoBaseDirectory(repoLocation, context) {
         const fallback = context.baseDir || process.cwd();
 
@@ -3103,22 +3334,26 @@ class AzurePipelineParser {
 
         const absoluteLocation = path.isAbsolute(repoLocation) ? repoLocation : path.resolve(fallback, repoLocation);
         try {
-            const stat = fs.statSync(absoluteLocation);
+            const resolvedLocation = this.resolveRealPath(absoluteLocation);
+            const stat = fs.statSync(resolvedLocation);
             if (stat.isFile()) {
-                return path.dirname(absoluteLocation);
+                return path.dirname(resolvedLocation);
             }
             if (stat.isDirectory()) {
-                return absoluteLocation;
+                return resolvedLocation;
             }
         } catch (error) {
             // Path does not currently exist; fall back to the resolved location
         }
 
-        return absoluteLocation;
+        return this.resolveRealPath(absoluteLocation);
     }
 
-    resolveRepoTemplate(templatePath, cwd, repoBaseDir) {
+    resolveRepoTemplate(templatePath, cwd, repoBaseDir, options = {}) {
         if (!templatePath) return undefined;
+
+        const preferRepoBaseDir = options.preferRepoBaseDir !== false;
+        const returnMissingCandidate = options.returnMissingCandidate !== false;
 
         const parts = String(templatePath)
             .replace(/^[\\/]+/, '')
@@ -3126,11 +3361,21 @@ class AzurePipelineParser {
             .filter((segment) => segment?.length);
 
         const candidateBases = [];
+        const addCandidateBase = (base) => {
+            if (!base) return;
 
-        if (repoBaseDir) candidateBases.push(repoBaseDir);
+            const normalizedBase = path.normalize(base);
+            if (!candidateBases.some((candidate) => path.normalize(candidate) === normalizedBase)) {
+                candidateBases.push(base);
+            }
+        };
 
-        if (cwd && (!repoBaseDir || path.normalize(repoBaseDir) !== path.normalize(cwd))) {
-            candidateBases.push(cwd);
+        if (preferRepoBaseDir) {
+            addCandidateBase(repoBaseDir);
+            addCandidateBase(cwd);
+        } else {
+            addCandidateBase(cwd);
+            addCandidateBase(repoBaseDir);
         }
 
         if (!candidateBases.length) return undefined;
@@ -3139,16 +3384,133 @@ class AzurePipelineParser {
             parts.length ? path.resolve(base, ...parts) : path.normalize(base)
         );
 
+        if (Array.isArray(options.candidateCollector)) {
+            candidateFiles.forEach((candidate) => {
+                if (!options.candidateCollector.includes(candidate)) {
+                    options.candidateCollector.push(candidate);
+                }
+            });
+        }
+
         for (const candidate of candidateFiles) {
             try {
                 const stat = fs.statSync(candidate);
-                if (stat.isFile()) return path.normalize(candidate);
+                if (stat.isFile()) {
+                    const resolvedCandidate = this.resolveRealPath(candidate);
+                    this.logTemplateDiagnostics(options.context, 'Template candidate matched', {
+                        debugLabel: options.debugLabel,
+                        templatePath: options.templatePath,
+                        matchedPath: resolvedCandidate,
+                    });
+                    return resolvedCandidate;
+                }
             } catch (error) {
-                // Candidate does not exist relative to this base; continue searching
+                this.logTemplateDiagnostics(options.context, 'Template candidate stat failed', {
+                    debugLabel: options.debugLabel,
+                    templatePath: options.templatePath,
+                    candidate,
+                    error: error?.message || String(error),
+                });
+
+                // On some UNC/WSL symlink paths fs.statSync can fail even when the link exists.
+                // Try lstat + realpath fallback before giving up on this candidate.
+                try {
+                    const linkStat = fs.lstatSync(candidate);
+                    if (linkStat.isSymbolicLink()) {
+                        const resolvedLinkPath = this.resolveRealPath(candidate);
+                        const resolvedStat = fs.statSync(resolvedLinkPath);
+                        if (resolvedStat.isFile()) {
+                            this.logTemplateDiagnostics(
+                                options.context,
+                                'Template candidate matched via symlink fallback',
+                                {
+                                    debugLabel: options.debugLabel,
+                                    templatePath: options.templatePath,
+                                    candidate,
+                                    matchedPath: resolvedLinkPath,
+                                }
+                            );
+                            return resolvedLinkPath;
+                        }
+                    }
+                } catch (linkError) {
+                    this.logTemplateDiagnostics(options.context, 'Template candidate lstat failed', {
+                        debugLabel: options.debugLabel,
+                        templatePath: options.templatePath,
+                        candidate,
+                        error: linkError?.message || String(linkError),
+                    });
+
+                    // Last-resort fallback only after regular stat/lstat failed.
+                    // Keep this probe local-only; expensive WSL checks are deferred to final resolution.
+                    try {
+                        if (fs.existsSync(candidate)) {
+                            const fallbackCandidate = this.resolveRealPath(candidate);
+                            this.logTemplateDiagnostics(
+                                options.context,
+                                'Template candidate matched via local exists fallback',
+                                {
+                                    debugLabel: options.debugLabel,
+                                    templatePath: options.templatePath,
+                                    candidate,
+                                    matchedPath: fallbackCandidate,
+                                }
+                            );
+                            return fallbackCandidate;
+                        }
+                    } catch (existsError) {
+                        this.logTemplateDiagnostics(options.context, 'Template candidate exists check failed', {
+                            debugLabel: options.debugLabel,
+                            templatePath: options.templatePath,
+                            candidate,
+                            error: existsError?.message || String(existsError),
+                        });
+                    }
+                }
             }
         }
 
-        return candidateFiles[0];
+        // Deferred expensive fallback: run WSL-aware existence checks only after fast probes fail.
+        // This preserves performance in the common case while still handling UNC/symlink edge cases.
+        if (!returnMissingCandidate && options.enableDeferredExistsFallback !== false) {
+            for (const candidate of candidateFiles) {
+                if (this.pathExistsSync(candidate, options.context)) {
+                    const deferredCandidate = this.resolveRealPath(candidate);
+                    this.logTemplateDiagnostics(
+                        options.context,
+                        'Template candidate matched via deferred exists fallback',
+                        {
+                            debugLabel: options.debugLabel,
+                            templatePath: options.templatePath,
+                            candidate,
+                            matchedPath: deferredCandidate,
+                        }
+                    );
+                    return deferredCandidate;
+                }
+            }
+        }
+
+        this.logTemplateDiagnostics(options.context, 'Template candidates exhausted', {
+            debugLabel: options.debugLabel,
+            templatePath: options.templatePath,
+            candidateFiles,
+        });
+
+        return returnMissingCandidate ? candidateFiles[0] : undefined;
+    }
+
+    logTemplateDiagnostics(context, message, payload = {}) {
+        if (!context?.diagnostics?.templateResolution) {
+            return;
+        }
+
+        try {
+            const details = JSON.stringify(payload);
+            console.log(`[AzurePipelineStudio][template-resolution] ${message} ${details}`);
+        } catch (error) {
+            console.log(`[AzurePipelineStudio][template-resolution] ${message}`);
+        }
     }
 
     expandNodePreservingTemplates(node, context) {

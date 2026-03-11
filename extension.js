@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const minimist = require('minimist');
+const { execFileSync } = require('child_process');
 
 // Import utility functions and formatter
 const { pickFirstString, resolveConfiguredPath, normalizeExtension } = require('./utils');
@@ -16,6 +17,73 @@ try {
 }
 const { AzurePipelineParser } = require('./parser');
 const { NONAME } = require('dns');
+
+// Resolve symlinks with WSL fallback for UNC paths
+function resolveSymlinkPath(filePath) {
+    if (!filePath) return filePath;
+
+    try {
+        // Try native fs.realpathSync first (works for local paths, may fail on UNC)
+        const resolved = fs.realpathSync(filePath);
+        console.log('[AzurePipelineStudio][symlink-resolution] Native realpath:', { original: filePath, resolved });
+        return resolved;
+    } catch (err) {
+        console.log('[AzurePipelineStudio][symlink-resolution] Native realpath failed:', {
+            filePath,
+            error: err.message,
+        });
+
+        // If it's a UNC path and native realpath failed, try WSL
+        if (filePath.startsWith('\\\\wsl.localhost\\')) {
+            try {
+                // Convert UNC to POSIX path for wsl readlink -f
+                const posixPath = filePath
+                    .slice(2) // Remove leading \\
+                    .split('\\')
+                    .slice(2) // Remove wsl.localhost\distroname
+                    .join('/'); // Convert backslashes to forward slashes
+
+                const distroMatch = filePath.match(/\\\\wsl\.localhost\\([^\\]+)\\/);
+                if (distroMatch) {
+                    const distro = distroMatch[1];
+                    const wslPath = '/' + posixPath.split('/').slice(1).join('/');
+
+                    console.log('[AzurePipelineStudio][symlink-resolution] WSL readlink attempt:', { distro, wslPath });
+
+                    const result = execFileSync('wsl.exe', ['-d', distro, 'readlink', '-f', wslPath], {
+                        encoding: 'utf8',
+                        timeout: 5000,
+                    }).trim();
+
+                    console.log('[AzurePipelineStudio][symlink-resolution] WSL readlink result:', {
+                        input: wslPath,
+                        output: result,
+                    });
+
+                    // Convert result back to UNC path
+                    if (result.startsWith('/')) {
+                        const resolved = `\\\\wsl.localhost\\${distro}${result.replace(/\//g, '\\')}`;
+                        console.log('[AzurePipelineStudio][symlink-resolution] Converted to UNC:', {
+                            original: filePath,
+                            resolved,
+                        });
+                        return resolved;
+                    }
+                }
+            } catch (wslErr) {
+                console.log('[AzurePipelineStudio][symlink-resolution] WSL readlink failed:', {
+                    filePath,
+                    error: wslErr.message,
+                });
+            }
+        }
+        // Return original path if resolution failed
+        console.log('[AzurePipelineStudio][symlink-resolution] Returning original path (resolution failed):', {
+            filePath,
+        });
+        return filePath;
+    }
+}
 
 // Module-level state for cleanup
 let activeDebounceTimer;
@@ -185,15 +253,36 @@ function activate(context) {
     // Register openErrorFile command once at activation
     context.subscriptions.push(
         vscode.commands.registerCommand('azurePipelineStudio.openErrorFile', async (filePath, lineNumber) => {
-            try {
-                const document = await vscode.workspace.openTextDocument(filePath);
+            const showDocument = async (pathOrUri) => {
+                const document = await vscode.workspace.openTextDocument(pathOrUri);
                 const options = { preview: false };
                 if (lineNumber && lineNumber > 0) {
                     const position = new vscode.Position(lineNumber - 1, 0);
                     options.selection = new vscode.Range(position, position);
                 }
                 await vscode.window.showTextDocument(document, options);
+            };
+
+            try {
+                await showDocument(filePath);
             } catch (err) {
+                // When VS Code runs on Windows with WSL folders mounted via \\wsl.localhost\,
+                // bare Unix paths (e.g. /projects/foo/bar.yaml) cannot be opened directly.
+                // Retry as UNC path using distro inferred from workspace folders.
+                if (filePath && filePath.startsWith('/') && vscode.workspace.workspaceFolders) {
+                    for (const folder of vscode.workspace.workspaceFolders) {
+                        const wslMatch = /^\\\\wsl\.localhost\\([^\\]+)/i.exec(folder.uri.fsPath);
+                        if (wslMatch) {
+                            const wslUncPath = `\\\\wsl.localhost\\${wslMatch[1]}${filePath.replace(/\//g, '\\')}`;
+                            try {
+                                await showDocument(vscode.Uri.file(wslUncPath));
+                                return;
+                            } catch (_) {
+                                // Continue scanning remaining workspace folders
+                            }
+                        }
+                    }
+                }
                 vscode.window.showErrorMessage(`Failed to open file: ${filePath}`);
             }
         })
@@ -724,13 +813,25 @@ function activate(context) {
             const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
             const compileTimeVariables = config.get('expansion.variables', {});
             const skipSyntaxCheck = config.get('expansion.skipSyntaxCheck', false);
+            const enableTemplateResolutionDiagnostics = config.get('diagnostics.templateResolution', false);
             const resourceOverrides = buildResourceOverridesForDocument(document);
             const azureCompatible = options.azureCompatible ?? false;
+            const documentDir = path.dirname(resolveSymlinkPath(document.fileName));
+            const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+            const workspaceRootDir = workspaceFolder?.uri?.fsPath
+                ? resolveSymlinkPath(workspaceFolder.uri.fsPath)
+                : documentDir;
 
             const parserOverrides = {
                 fileName: document.fileName,
+                baseDir: documentDir,
+                repoBaseDir: workspaceRootDir,
+                rootRepoBaseDir: workspaceRootDir,
                 azureCompatible,
                 skipSyntaxCheck,
+                diagnostics: {
+                    templateResolution: enableTemplateResolutionDiagnostics,
+                },
                 ...(resourceOverrides && { resources: resourceOverrides }),
                 ...(Object.keys(compileTimeVariables).length && { variables: compileTimeVariables }),
             };
@@ -786,7 +887,8 @@ function activate(context) {
 
         const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
         const workspaceDir = workspaceFolder?.uri.fsPath;
-        const documentDir = document.fileName ? path.dirname(document.fileName) : undefined;
+        const resolvedPath = resolveSymlinkPath(document.fileName);
+        const documentDir = resolvedPath ? path.dirname(resolvedPath) : undefined;
         const repositories = {};
 
         for (const entry of configuredResources) {
@@ -1058,12 +1160,24 @@ function activate(context) {
                 const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
                 const compileTimeVariables = config.get('expansion.variables', {});
                 const skipSyntaxCheck = config.get('expansion.skipSyntaxCheck', false);
+                const enableTemplateResolutionDiagnostics = config.get('diagnostics.templateResolution', false);
                 const resourceOverrides = buildResourceOverridesForDocument(document);
+                const documentDir = path.dirname(resolveSymlinkPath(document.fileName));
+                const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+                const workspaceRootDir = workspaceFolder?.uri?.fsPath
+                    ? resolveSymlinkPath(workspaceFolder.uri.fsPath)
+                    : documentDir;
 
                 const parserOverrides = {
                     fileName: document.fileName,
+                    baseDir: documentDir,
+                    repoBaseDir: workspaceRootDir,
+                    rootRepoBaseDir: workspaceRootDir,
                     azureCompatible: false,
                     skipSyntaxCheck,
+                    diagnostics: {
+                        templateResolution: enableTemplateResolutionDiagnostics,
+                    },
                     ...(resourceOverrides && { resources: resourceOverrides }),
                     ...(Object.keys(compileTimeVariables).length && { variables: compileTimeVariables }),
                 };

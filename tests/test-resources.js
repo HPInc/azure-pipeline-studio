@@ -11,6 +11,7 @@
  */
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const minimist = require('minimist');
 const { AzurePipelineParser } = require('../parser');
@@ -444,6 +445,237 @@ stages:
 
     if (!output.includes('options:')) {
         throw new Error('Expected container options in output');
+    }
+});
+
+runTest('Test 13: Unqualified template reference uses self repository', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aps-self-'));
+
+    try {
+        const pipelinesDir = path.join(tempRoot, 'pipelines');
+        const templatesDir = path.join(tempRoot, 'templates');
+
+        fs.mkdirSync(pipelinesDir, { recursive: true });
+        fs.mkdirSync(templatesDir, { recursive: true });
+
+        fs.writeFileSync(
+            path.join(templatesDir, 'build.yml'),
+            `steps:\n  - script: echo "resolved from self"\n`,
+            'utf8'
+        );
+
+        const yaml = `
+stages:
+  - stage: Build
+    jobs:
+      - job: BuildJob
+        steps:
+          - template: templates/build.yml
+`;
+
+        const result = parser.expandPipeline(yaml, {
+            fileName: path.join(pipelinesDir, 'azure-pipelines.yml'),
+            baseDir: pipelinesDir,
+            repoBaseDir: tempRoot,
+            rootRepoBaseDir: tempRoot,
+        });
+
+        if (!result.yaml.includes('resolved from self')) {
+            throw new Error('Expected unqualified template reference to resolve against self repository');
+        }
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+runTest('Test 14: Symlinked template path resolves to real template location', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aps-symlink-'));
+
+    try {
+        const realTemplatesDir = path.join(tempRoot, 'real', 'templates');
+        const symlinkDir = path.join(tempRoot, 'links');
+
+        fs.mkdirSync(realTemplatesDir, { recursive: true });
+        fs.mkdirSync(symlinkDir, { recursive: true });
+
+        fs.writeFileSync(
+            path.join(realTemplatesDir, 'nested.yml'),
+            `steps:\n  - script: echo "nested from real path"\n`,
+            'utf8'
+        );
+
+        fs.writeFileSync(path.join(realTemplatesDir, 'main.yml'), `steps:\n  - template: nested.yml\n`, 'utf8');
+
+        fs.symlinkSync(path.join(realTemplatesDir, 'main.yml'), path.join(symlinkDir, 'main.yml'));
+
+        const yaml = `
+stages:
+  - stage: Build
+    jobs:
+      - job: BuildJob
+        steps:
+          - template: links/main.yml
+`;
+
+        const result = parser.expandPipeline(yaml, {
+            fileName: path.join(tempRoot, 'azure-pipelines.yml'),
+            baseDir: tempRoot,
+            repoBaseDir: tempRoot,
+            rootRepoBaseDir: tempRoot,
+        });
+
+        if (!result.yaml.includes('nested from real path')) {
+            throw new Error('Expected nested template under the symlink target directory to resolve');
+        }
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+runTest('Test 15: Unqualified template prefers local path before self fallback', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aps-local-first-'));
+
+    try {
+        const pipelinesDir = path.join(tempRoot, 'pipelines');
+        const localTemplatesDir = path.join(pipelinesDir, 'templates');
+        const repoTemplatesDir = path.join(tempRoot, 'templates');
+
+        fs.mkdirSync(localTemplatesDir, { recursive: true });
+        fs.mkdirSync(repoTemplatesDir, { recursive: true });
+
+        fs.writeFileSync(
+            path.join(localTemplatesDir, 'build.yml'),
+            `steps:\n  - script: echo "resolved from local path"\n`,
+            'utf8'
+        );
+
+        fs.writeFileSync(
+            path.join(repoTemplatesDir, 'build.yml'),
+            `steps:\n  - script: echo "resolved from repo root"\n`,
+            'utf8'
+        );
+
+        const yaml = `
+  stages:
+    - stage: Build
+    jobs:
+      - job: BuildJob
+      steps:
+        - template: templates/build.yml
+  `;
+
+        const result = parser.expandPipeline(yaml, {
+            fileName: path.join(pipelinesDir, 'azure-pipelines.yml'),
+            baseDir: pipelinesDir,
+            repoBaseDir: tempRoot,
+            rootRepoBaseDir: tempRoot,
+        });
+
+        if (!result.yaml.includes('resolved from local path')) {
+            throw new Error('Expected local template path to be preferred before self fallback');
+        }
+
+        if (result.yaml.includes('resolved from repo root')) {
+            throw new Error('Did not expect repo-root template to win when a local path exists');
+        }
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+runTest('Test 16: Unqualified template falls back to root repo when missing in external repo', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aps-root-fallback-'));
+
+    try {
+        const externalRepoDir = path.join(tempRoot, 'external-templates');
+        fs.mkdirSync(externalRepoDir, { recursive: true });
+
+        fs.writeFileSync(path.join(externalRepoDir, 'entry.yml'), `steps:\n  - template: systemtest.yaml\n`, 'utf8');
+
+        fs.writeFileSync(
+            path.join(tempRoot, 'systemtest.yaml'),
+            `steps:\n  - script: echo "from root fallback"\n`,
+            'utf8'
+        );
+
+        const yaml = `
+resources:
+  repositories:
+    - repository: templates
+      type: git
+      name: external/templates
+
+stages:
+  - stage: Build
+    jobs:
+      - job: BuildJob
+        steps:
+          - template: entry.yml@templates
+`;
+
+        const result = parser.expandPipeline(yaml, {
+            fileName: path.join(tempRoot, 'azure-pipelines.yml'),
+            baseDir: tempRoot,
+            repoBaseDir: tempRoot,
+            rootRepoBaseDir: tempRoot,
+            resourceLocations: {
+                templates: externalRepoDir,
+            },
+        });
+
+        if (!result.yaml.includes('from root fallback')) {
+            throw new Error('Expected unqualified template reference to fall back to root repository file');
+        }
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+runTest('Test 17: Absolute-style unqualified template resolves from root repo', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aps-absolute-root-'));
+
+    try {
+        const externalRepoDir = path.join(tempRoot, 'external-templates');
+        fs.mkdirSync(externalRepoDir, { recursive: true });
+
+        fs.writeFileSync(path.join(externalRepoDir, 'entry.yml'), `steps:\n  - template: /systemtest.yaml\n`, 'utf8');
+
+        fs.writeFileSync(
+            path.join(tempRoot, 'systemtest.yaml'),
+            `steps:\n  - script: echo "from absolute root"\n`,
+            'utf8'
+        );
+
+        const yaml = `
+resources:
+  repositories:
+    - repository: templates
+      type: git
+      name: external/templates
+
+stages:
+  - stage: Build
+    jobs:
+      - job: BuildJob
+        steps:
+          - template: entry.yml@templates
+`;
+
+        const result = parser.expandPipeline(yaml, {
+            fileName: path.join(tempRoot, 'azure-pipelines.yml'),
+            baseDir: tempRoot,
+            repoBaseDir: tempRoot,
+            rootRepoBaseDir: tempRoot,
+            resourceLocations: {
+                templates: externalRepoDir,
+            },
+        });
+
+        if (!result.yaml.includes('from absolute root')) {
+            throw new Error('Expected /systemtest.yaml to resolve from root repository');
+        }
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
     }
 });
 

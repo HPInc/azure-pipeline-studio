@@ -44,6 +44,17 @@ function resolveConfiguredPath(rawPath, workspaceDir, documentDir) {
         return Object.prototype.hasOwnProperty.call(process.env, name) ? process.env[name] : match;
     });
 
+    // In Windows-hosted VS Code with WSL workspaces, users often configure absolute
+    // POSIX paths (e.g. /projects/templates). Convert those to UNC so fs/stat calls work.
+    const wslSourcePath = [workspaceDir, documentDir].find(
+        (value) => typeof value === 'string' && /^\\\\wsl\.localhost\\[^\\]+\\/i.test(value)
+    );
+    const wslMatch = typeof wslSourcePath === 'string' ? /^\\\\wsl\.localhost\\([^\\]+)\\/i.exec(wslSourcePath) : null;
+    if (wslMatch && /^\/(?!\/)/.test(candidate)) {
+        const uncPath = `\\\\wsl.localhost\\${wslMatch[1]}${candidate.replace(/\//g, '\\')}`;
+        return path.normalize(uncPath);
+    }
+
     if (path.isAbsolute(candidate)) {
         return path.normalize(candidate);
     }

@@ -3,3 +3,5 @@ Expanded pipeline written to /tmp/output.yaml
 (Use `node --trace-warnings ...` to show where the warning was created)
 Not able to click on the error link in all the place. The stack trace work, but other links are not clickable
 Duplicate keys
+Default stage dependency
+Work without @self
