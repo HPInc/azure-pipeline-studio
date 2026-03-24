@@ -5,6 +5,19 @@ function returnBoolean(value) {
     return value ? '__TRUE__' : '__FALSE__';
 }
 
+function toLogicalBoolean(value) {
+    if (typeof value === 'string') {
+        const lowered = value.toLowerCase();
+        if (lowered === '__true__' || lowered === '__false__') {
+            return toBoolean(lowered);
+        }
+
+        // Raw string values (typically variables) use JS truthiness in logical operators.
+        return value.length > 0;
+    }
+    return toBoolean(value);
+}
+
 function toBoolean(value) {
     if (typeof value === 'boolean') return value;
     if (typeof value === 'number') return value !== 0;
@@ -181,19 +194,19 @@ function le(args) {
 
 // Logical functions
 function and(args) {
-    return returnBoolean((args || []).every((a) => toBoolean(a)));
+    return returnBoolean((args || []).every((a) => toLogicalBoolean(a)));
 }
 
 function or(args) {
-    return returnBoolean((args || []).some((a) => toBoolean(a)));
+    return returnBoolean((args || []).some((a) => toLogicalBoolean(a)));
 }
 
 function not(args) {
-    return returnBoolean(!toBoolean(args[0]));
+    return returnBoolean(!toLogicalBoolean(args[0]));
 }
 
 function xor(args) {
-    return returnBoolean(toBoolean(args[0]) !== toBoolean(args[1]));
+    return returnBoolean(toLogicalBoolean(args[0]) !== toLogicalBoolean(args[1]));
 }
 
 // Collection functions

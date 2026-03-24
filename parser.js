@@ -1199,14 +1199,16 @@ class AzurePipelineParser {
                 if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
 
                 if (parentKey === 'variables' && item.name && item.value !== undefined) {
-                    context.variables[item.name] = item.value;
+                    // Azure stores variables as strings; coerce native booleans to lowercase string
+                    const varValue = typeof item.value === 'boolean' ? String(item.value) : item.value;
+                    context.variables[item.name] = varValue;
 
                     // Track the variable in the file scope
                     if (context.currentFile && context.fileScopes) {
                         if (!context.fileScopes[context.currentFile]) {
                             context.fileScopes[context.currentFile] = {};
                         }
-                        context.fileScopes[context.currentFile][item.name] = item.value;
+                        context.fileScopes[context.currentFile][item.name] = varValue;
                     }
                 }
 
@@ -1369,7 +1371,11 @@ class AzurePipelineParser {
         if (!isVarArray || !item || typeof item !== 'object' || Array.isArray(item)) return;
 
         const varName = item.name;
-        const varValue = item.value;
+        // Azure Pipelines stores all variables as strings; native booleans (from YAML `value: false`)
+        // must be coerced so that `or(variables.x, ...)` never treats the string as truthy,
+        // and so the displayed value matches what Azure actually outputs (lowercase false/true).
+        const rawValue = item.value;
+        const varValue = typeof rawValue === 'boolean' ? String(rawValue) : rawValue;
         if (varName && varValue !== undefined) {
             // Update the appropriate scope based on current context level
             context.variables[varName] = varValue;
