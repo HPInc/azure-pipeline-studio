@@ -249,6 +249,54 @@ function activate(context) {
                 .replace(/'/g, '&#039;');
         };
 
+        // Collect repo root base dirs for resolving absolute-style template paths
+        // Primary: parse call stack pairs (/rel/path.yaml, \\unc\path.yaml) and strip the template
+        // suffix from the UNC path to derive the exact repo root.
+        // Fallback: use the parent directory of any bare UNC path found in the error text.
+        const templateResolveBaseDirs = [];
+        const errorText = normalizedError.message || String(normalizedError);
+
+        // Extract (templateRelPath, uncPath) pairs from call stack entries.
+        const stackPairRegex = /([^\s\(]+\.ya?ml(?:@[^:\s]+)?)(?::\d+)?\s+\((\\\\[^\)]+\.ya?ml)\)/g;
+        let stackPairMatch;
+        while ((stackPairMatch = stackPairRegex.exec(errorText)) !== null) {
+            const templateRef = stackPairMatch[1].split('@')[0]; // strip @repo suffix
+            const uncPath = stackPairMatch[2];
+            // Normalize separators to compare suffix
+            const uncNorm = uncPath.replace(/\\/g, '/');
+            const tmplNorm = templateRef.replace(/\\/g, '/');
+            if (uncNorm.endsWith(tmplNorm)) {
+                const root = uncPath.slice(0, uncPath.length - templateRef.length).replace(/[/\\]+$/, '');
+                if (root && !templateResolveBaseDirs.includes(root)) templateResolveBaseDirs.push(root);
+            }
+        }
+
+        // Fallback: use the immediate parent directory of any bare UNC path in the error text.
+        for (const uncFilePath of [...errorText.matchAll(/(\\\\[^\s\n\)]+\.ya?ml)/g)].map((m) => m[1])) {
+            const dir = path.dirname(uncFilePath);
+            if (dir && !templateResolveBaseDirs.includes(dir)) templateResolveBaseDirs.push(dir);
+        }
+
+        if (lastRenderedDocument) {
+            try {
+                const resourceOverrides = buildResourceOverridesForDocument(lastRenderedDocument);
+                if (resourceOverrides?.repositories) {
+                    for (const entry of Object.values(resourceOverrides.repositories)) {
+                        const loc = entry?.location;
+                        if (loc && typeof loc === 'string' && !templateResolveBaseDirs.includes(loc)) {
+                            templateResolveBaseDirs.push(loc);
+                        }
+                    }
+                }
+                const wf = vscode.workspace.getWorkspaceFolder(lastRenderedDocument.uri);
+                if (wf?.uri?.fsPath && !templateResolveBaseDirs.includes(wf.uri.fsPath)) {
+                    templateResolveBaseDirs.push(wf.uri.fsPath);
+                }
+            } catch (e) {
+                /* ignore */
+            }
+        }
+
         // Convert file paths in text to clickable links
         const makePathsClickable = (text) => {
             const placeholders = [];
@@ -286,12 +334,26 @@ function activate(context) {
             text = text.replace(
                 pathRegex,
                 (match, uncPath, uncLine, uncCol, winPath, winLine, winCol, unixPath, unixLine, unixCol) => {
-                    const filePath = uncPath || winPath || unixPath;
+                    let filePath = uncPath || winPath || unixPath;
                     const lineNumber = uncLine || winLine || unixLine;
 
                     // Skip extension bundle paths
                     if (filePath && filePath.includes('extension-bundle.js')) {
                         return match;
+                    }
+
+                    // For absolute-style template paths, resolve against known repository roots so the link points to the actual file on disk.
+                    if (unixPath && templateResolveBaseDirs.length) {
+                        const resolved = templateResolveBaseDirs
+                            .map((base) => path.join(base, unixPath))
+                            .find((candidate) => {
+                                try {
+                                    return fs.existsSync(candidate);
+                                } catch {
+                                    return false;
+                                }
+                            });
+                        if (resolved) filePath = resolved;
                     }
 
                     if (filePath) {
