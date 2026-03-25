@@ -1,0 +1,5 @@
+# aps-format=false
+steps:
+- bash: echo "outer step"
+  displayName: 'Outer Step'
+- template: nested-step-quote-inner-tmpl.yaml

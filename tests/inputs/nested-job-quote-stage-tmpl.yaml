@@ -1,0 +1,9 @@
+# aps-format=false
+stages:
+- stage: Stage0
+  jobs:
+  - job: ExplicitJob
+    steps:
+    - bash: echo "explicit"
+      displayName: 'Explicit Job Step'
+  - template: nested-job-quote-job-tmpl.yaml

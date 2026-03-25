@@ -1,0 +1,10 @@
+# aps-format=false
+stages:
+- stage: Build
+  jobs:
+  - job: BuildJob
+    steps:
+    - template: trailing-space-runtime-var-tmpl.yaml
+      parameters:
+        restorePath: $(Agent.TempDirectory)\nuget\packages
+        extraArgs: ' '

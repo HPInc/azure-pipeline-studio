@@ -1,0 +1,9 @@
+# aps-format=false
+parameters:
+  restorePath: $(Agent.TempDirectory)\packages
+  extraArgs: ''
+steps:
+- task: MSBuild@1
+  displayName: 'Build'
+  inputs:
+    msbuildArgs: /p:RestorePackagesPath=${{ parameters.restorePath }} ${{ parameters.extraArgs }}
