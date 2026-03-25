@@ -1,0 +1,9 @@
+# aps-format=false
+jobs:
+- job: TemplateJob
+  steps:
+  - task: JavaToolInstaller@0
+    displayName: 'Install Java in Job'
+    inputs:
+      jdkArchitectureOption: 'x64'
+      jdkSourceOption: 'PreInstalled'

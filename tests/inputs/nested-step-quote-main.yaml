@@ -1,0 +1,11 @@
+# aps-format=false
+stages:
+- stage: Build
+  jobs:
+  - job: BuildJob
+    steps:
+    - bash: echo "step 0"
+      displayName: 'Setup'
+    - bash: echo "step 1"
+      displayName: 'Prepare'
+    - template: nested-step-quote-outer-tmpl.yaml

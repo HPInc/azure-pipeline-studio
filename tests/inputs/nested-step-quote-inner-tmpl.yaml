@@ -1,0 +1,8 @@
+# aps-format=false
+steps:
+- task: JavaToolInstaller@0
+  displayName: 'Install Java'
+  inputs:
+    jdkArchitectureOption: 'x64'
+    jdkSourceOption: 'LocalDirectory'
+    jdkFile: '/tools/jdk.zip'

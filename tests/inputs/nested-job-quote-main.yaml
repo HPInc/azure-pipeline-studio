@@ -1,0 +1,3 @@
+# aps-format=false
+stages:
+- template: nested-job-quote-stage-tmpl.yaml

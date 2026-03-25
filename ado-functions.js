@@ -211,7 +211,12 @@ function xor(args) {
 
 // Collection functions
 function coalesce(args) {
-    return (args || []).find((arg) => arg !== undefined && arg !== null && arg !== '');
+    // Azure coalesce returns first non-null, non-empty string.
+    // If all args are empty strings (none truly non-empty), fall back to first non-null.
+    const arr = args || [];
+    const nonEmpty = arr.find((arg) => arg !== undefined && arg !== null && arg !== '');
+    if (nonEmpty !== undefined) return nonEmpty;
+    return arr.find((arg) => arg !== undefined && arg !== null);
 }
 
 function containsFn(args) {

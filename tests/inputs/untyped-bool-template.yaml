@@ -1,0 +1,11 @@
+parameters:
+- name: enableFeature
+  default: false
+
+
+steps:
+- script: echo "enabled=${{ parameters.enableFeature }}"
+  displayName: Print feature flag
+
+- script: echo "not-enabled=${{ not(parameters.enableFeature) }}"
+  displayName: Print negated feature flag

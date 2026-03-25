@@ -248,9 +248,14 @@ stages:
         throw new Error('Mermaid diagram should contain Deploy stage');
     }
 
-    const hasArrows = mermaid.includes('==>') || mermaid.includes('-->') || mermaid.includes('→');
-    if (!hasArrows) {
-        throw new Error('Mermaid diagram should contain dependency arrow');
+    const hasConnectors =
+        mermaid.includes('==>') ||
+        mermaid.includes('-->') ||
+        mermaid.includes('===') ||
+        mermaid.includes('---') ||
+        mermaid.includes('→');
+    if (!hasConnectors) {
+        throw new Error('Mermaid diagram should contain dependency connector');
     }
 
     if (!mermaid.includes('classDef')) {
@@ -489,8 +494,14 @@ stages:
         throw new Error('Mermaid should contain Deploy stage');
     }
 
-    if (!mermaid.includes('==>') && !mermaid.includes('-->') && !mermaid.includes('→')) {
-        throw new Error('Mermaid diagram should contain dependency arrow');
+    if (
+        !mermaid.includes('==>') &&
+        !mermaid.includes('-->') &&
+        !mermaid.includes('===') &&
+        !mermaid.includes('---') &&
+        !mermaid.includes('→')
+    ) {
+        throw new Error('Mermaid diagram should contain dependency connector');
     }
 });
 

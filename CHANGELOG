@@ -5,6 +5,19 @@ All notable changes to Azure Pipeline Studio will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.2] - 2026-03-25
+
+### Fixed
+- **Untyped parameter boolean coercion**: Parameters declared without a `type:` (object-mode syntax or array-mode with no type field) now correctly treat YAML boolean values (`false`/`true`) as strings, matching Azure Pipelines behaviour. Previously `not(false)` on an untyped parameter returned `True` instead of `False` because the YAML-parsed JS boolean bypassed string-truthiness rules.
+- **Consistent variable and parameter string-truthiness**: Untyped parameters now follow the same expression evaluation rules as runtime variables — non-empty strings (including `"false"` and `"true"`) are truthy, and only `type: boolean` parameters behave as proper booleans. This means `or(parameters.untypedFalse, parameters.untypedFalse)` correctly evaluates to `True`, consistent with Azure Pipelines.
+- **Boolean expression output matches Azure Pipelines format**: Expression results that produce booleans (e.g. `not()`, `or()`, `and()`) now render as `True`/`False` (capitalised) while plain parameter/variable string values like `"false"` render lowercase, matching the distinction Azure Pipelines makes between expression results and string content.
+- **`coalesce()` falls back correctly when all args are empty strings**: Previously returned `undefined` when all arguments were empty strings; now falls back to the first non-null value, matching Azure Pipelines behaviour.
+- **Trailing-space values preserve single quotes**: String values with trailing spaces are now quoted with single quotes in the output (matching Azure Pipelines) instead of emitting an invalid PLAIN scalar, which YAML forbids for trailing whitespace.
+- **Float-valued scalars preserved as strings**: Values like `versionMajorMinor: 1.0` are no longer rounded to `1` in the expanded output. YAML parses `1.0` as JS number `1`, so the source string representation is now captured and restored, matching how Azure Pipelines treats these values.
+- **Quote style remapping for deeply nested templates**: Quote styles (single/double) defined inside nested step/job/stage templates are now correctly remapped to their expanded positions in the output document, fixing cases where deeply nested property paths caused quotes to be dropped or misapplied.
+
+[1.1.2]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.1.2
+
 ## [1.1.1] - 2026-03-09
 
 ### Added

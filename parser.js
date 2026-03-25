@@ -274,6 +274,16 @@ class AzurePipelineParser {
                 yamlDoc = YAML.parseDocument(source);
             }
 
+            // Preserve float-valued scalars as their source string representation
+            // (e.g. 1.0 must not become 1). Mutating node.value before toJSON() is
+            // simpler than mapping and patching the JS object after the fact.
+            YAML.visit(yamlDoc, {
+                Scalar(_key, node) {
+                    if (typeof node.value === 'number' && node.source && node.source.includes('.')) {
+                        node.value = node.source;
+                    }
+                },
+            });
             const jsonDoc = yamlDoc.toJSON() || {};
             return { yamlDoc, jsonDoc };
         } catch (error) {
@@ -317,7 +327,13 @@ class AzurePipelineParser {
                         }
                     }
                 } else if (this.hadMixedExpression(value, pathArr, context) || this.hasRuntimeVariable(value)) {
-                    valueNode.type = 'PLAIN';
+                    // PLAIN scalars can't represent trailing spaces (YAML spec forbids it);
+                    // fall back to single quotes (like Azure does) when the value has trailing space
+                    if (value !== value.trimEnd()) {
+                        valueNode.type = 'QUOTE_SINGLE';
+                    } else {
+                        valueNode.type = 'PLAIN';
+                    }
                 } else if (this.isKeyValueLike(value)) {
                     valueNode.type = 'QUOTE_SINGLE';
                 } else if (quoteStyle) {
@@ -739,7 +755,7 @@ class AzurePipelineParser {
     }
 
     extractParameters(document) {
-        const result = { parameters: {}, parameterMap: {} };
+        const result = { parameters: {}, parameterMap: {}, parameterTypes: {} };
         if (!document || typeof document !== 'object') {
             return result;
         }
@@ -749,21 +765,33 @@ class AzurePipelineParser {
             return result;
         }
 
+        // Azure Pipelines treats untyped parameters (or type: string) as strings.
+        // YAML parses bare `false`/`true` as JS booleans, so we must stringify them
+        // for non-boolean-typed params to match Azure's expression evaluation behaviour.
+        const coerceToParamType = (value, paramType) => {
+            if (paramType !== 'boolean' && typeof value === 'boolean') return String(value);
+            return value;
+        };
+
         if (Array.isArray(parameters)) {
             for (const param of parameters) {
                 if (param && typeof param === 'object' && param.name) {
+                    const paramType = param.type ? String(param.type).toLowerCase() : 'string';
+                    result.parameterTypes[param.name] = paramType;
                     const value = param.default;
-                    result.parameters[param.name] = value !== undefined ? value : null;
+                    result.parameters[param.name] = value !== undefined ? coerceToParamType(value, paramType) : null;
                     result.parameterMap[`parameters.${param.name}`] = `parameters.${parameters.indexOf(param)}.default`;
                 }
             }
         } else if (typeof parameters === 'object') {
             for (const [name, param] of Object.entries(parameters)) {
+                // Object-mode parameters have no type declaration — treat as string.
+                result.parameterTypes[name] = 'string';
                 if (param && typeof param === 'object') {
                     const value = param.default;
-                    result.parameters[name] = value !== undefined ? value : null;
+                    result.parameters[name] = value !== undefined ? coerceToParamType(value, 'string') : null;
                 } else {
-                    result.parameters[name] = param;
+                    result.parameters[name] = coerceToParamType(param, 'string');
                 }
                 result.parameterMap[`parameters.${name}`] = `parameters.${name}`;
             }
@@ -1154,7 +1182,7 @@ class AzurePipelineParser {
 
                 // Handle array expansion - normalize to array and process items
                 const items = Array.isArray(expanded) ? expanded : [expanded];
-                this.expandAndAppendArrayItems(items, context, result, isVarArray);
+                this.expandAndAppendArrayItems(items, context, result, isVarArray, parentKey);
             } finally {
                 if (context.expansionPath && !isDirective) {
                     context.expansionPath.pop();
@@ -1185,13 +1213,16 @@ class AzurePipelineParser {
                 stages: context.stageIndex,
             };
 
-            const remapStart = Object.prototype.hasOwnProperty.call(idxMap, parentKey)
-                ? idxMap[parentKey] + 1
-                : currentResultLength;
+            // For steps/jobs/stages, use max(resultLength, contextIndex+1) to handle both cases:
+            // - Nested templates (resultLen=0 but contextIndex tracks global position)
+            // - Direct templates (resultLen reflects actual position in result array)
+            const contextIndex = idxMap[parentKey];
+            const remapStart =
+                contextIndex !== undefined && contextIndex >= 0
+                    ? Math.max(currentResultLength, contextIndex + 1)
+                    : currentResultLength;
 
             result.push(...templateItems);
-
-            if (!context.expansionPath || context.expansionPath.length < 2) return;
 
             // Track indices and build path prefix for remapping
             for (let itemIndex = 0; itemIndex < templateItems.length; itemIndex++) {
@@ -1222,7 +1253,17 @@ class AzurePipelineParser {
                 pathPrefix = ['stages', context.stageIndex]; // jobs are under a stage
             } else if (parentKey === 'steps') {
                 pathPrefix = ['stages', context.stageIndex, 'jobs', context.jobIndex]; // steps are under a job
-            } else {
+            } else if (parentKey === 'variables') {
+                // variables can be at stage-level or job-level
+                if (context.jobIndex >= 0) {
+                    pathPrefix = ['stages', context.stageIndex, 'jobs', context.jobIndex];
+                } else if (context.expansionPath && context.expansionPath.length >= 2) {
+                    pathPrefix = context.expansionPath.slice(0, -2);
+                } else if (context.stageIndex >= 0) {
+                    // expansionPath missing (each-directive context) - infer job-level at index 0
+                    pathPrefix = ['stages', context.stageIndex, 'jobs', 0];
+                }
+            } else if (context.expansionPath && context.expansionPath.length >= 2) {
                 pathPrefix = context.expansionPath.slice(0, -2);
             }
 
@@ -1277,14 +1318,23 @@ class AzurePipelineParser {
             if (pathPart.startsWith('parameters.')) continue;
 
             // Extract the template index and property path
-            // e.g., "steps.1.displayName" -> index=1, propPath="displayName"
+            // The stored key may have a full path like "stages.0.jobs.0.steps.1.displayName"
+            // We need to find the segment matching parentKey and extract the index from there.
             const pathSegments = pathPart.split('.');
-            if (pathSegments[0] !== parentKey) continue;
+            // Find the last occurrence of parentKey in the path segments
+            let parentKeyIndex = -1;
+            for (let k = pathSegments.length - 1; k >= 0; k--) {
+                if (pathSegments[k] === parentKey) {
+                    parentKeyIndex = k;
+                    break;
+                }
+            }
+            if (parentKeyIndex === -1) continue;
 
-            const templateIndex = parseInt(pathSegments[1], 10);
+            const templateIndex = parseInt(pathSegments[parentKeyIndex + 1], 10);
             if (isNaN(templateIndex)) continue;
 
-            const propertyPath = pathSegments.slice(2).join('.');
+            const propertyPath = pathSegments.slice(parentKeyIndex + 2).join('.');
 
             // Find the matching item in templateItems by comparing the value at the property path
             // First, try to match by template index (for better accuracy with duplicate values)
@@ -1313,6 +1363,20 @@ class AzurePipelineParser {
                         break;
                     }
                 }
+            }
+
+            // If still not found and propertyPath is deep-nested (indices may have shifted
+            // during conditional expansion), try a recursive value search through the item.
+            if (matchedIndex === -1 && propertyPath && propertyPath.includes('.')) {
+                for (let i = 0; i < templateItems.length; i++) {
+                    const actualPath = this.findKeyValuePath(templateItems[i], valuePart);
+                    if (actualPath !== null) {
+                        const expandedPathArr = [...pathPrefix, parentKey, startIndex + i, ...actualPath];
+                        quoteStyles.set(`${expandedPathArr.join('.')}:${valuePart}`, style);
+                        break;
+                    }
+                }
+                continue;
             }
 
             if (matchedIndex === -1) continue; // No match found
@@ -1344,16 +1408,45 @@ class AzurePipelineParser {
     }
 
     /**
+     * Recursively search an object/array for a string value and return the path to it.
+     * Returns array of path segments (string keys and numeric indices) ending with the
+     * key whose value equals targetValue, or null if not found.
+     * @param {*} obj - Object to search
+     * @param {string} targetValue - String value to find
+     * @param {Array} pathSoFar - Accumulated path (used internally)
+     * @returns {Array|null} - Path segments to found value, or null
+     */
+    findKeyValuePath(obj, targetValue, pathSoFar = []) {
+        if (!obj || typeof obj !== 'object') return null;
+        if (Array.isArray(obj)) {
+            for (let i = 0; i < obj.length; i++) {
+                const found = this.findKeyValuePath(obj[i], targetValue, [...pathSoFar, i]);
+                if (found !== null) return found;
+            }
+        } else {
+            for (const key of Object.keys(obj)) {
+                if (typeof obj[key] === 'string' && obj[key] === targetValue) {
+                    return [...pathSoFar, key];
+                }
+                const found = this.findKeyValuePath(obj[key], targetValue, [...pathSoFar, key]);
+                if (found !== null) return found;
+            }
+        }
+        return null;
+    }
+
+    /**
      * Expand array items and append to result, handling template references and variable updates.
      * @param {array} items - Array of items to expand
      * @param {object} context - Expansion context
      * @param {array} result - Result array to append to
      * @param {boolean} isVarArray - Whether we're in a variables array
      */
-    expandAndAppendArrayItems(items, context, result, isVarArray) {
+    expandAndAppendArrayItems(items, context, result, isVarArray, parentKey = '') {
+        const effectiveParentKey = parentKey || (isVarArray ? 'variables' : '');
         for (const item of items) {
             if (this.isTemplateReference(item)) {
-                this.expandTemplateReferenceToResult(item, context, result, isVarArray);
+                this.expandTemplateReferenceToResult(item, context, result, effectiveParentKey);
             } else {
                 result.push(item);
                 this.updateVariableContext(item, isVarArray, context);
@@ -2896,7 +2989,7 @@ class AzurePipelineParser {
             );
         }
 
-        console.log(`Expanding template '${templatePath}' from file: ${resolvedPath}`);
+        //console.log(`Expanding template '${templatePath}' from file: ${resolvedPath}`);
         const templateSource = fs.readFileSync(resolvedPath, 'utf8');
         const identifier = repoRef ? `${repoRef.templatePath}@${repoRef.repository}` : templatePath;
 
@@ -2947,7 +3040,13 @@ class AzurePipelineParser {
 
         const parameterInfo = this.extractParameters(templateJson);
         const providedParameters = this.normalizeTemplateParameters(node.parameters, context);
-        const mergedParameters = { ...parameterInfo.parameters, ...providedParameters };
+        // Coerce call-site boolean values to strings for non-boolean-typed parameters,
+        // matching how Azure Pipelines treats untyped parameters as strings.
+        const mergedParameters = { ...parameterInfo.parameters };
+        for (const [name, value] of Object.entries(providedParameters)) {
+            const paramType = parameterInfo.parameterTypes[name] || 'string';
+            mergedParameters[name] = paramType !== 'boolean' && typeof value === 'boolean' ? String(value) : value;
+        }
         const templateDisplayPath = repoRef ? `${repoRef.templatePath}@${repoRef.repository}` : templatePath;
 
         // Build stack entry with path, resolved location, and line number
