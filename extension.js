@@ -1101,6 +1101,7 @@ function activate(context) {
         setTimeout(async () => {
             try {
                 const sourceText = document.getText();
+                lastRenderedDiagramSourceText = sourceText;
 
                 // Warn if document is very large
                 if (sourceText.length > 100000) {
@@ -1792,25 +1793,19 @@ ${mermaidDiagram
             return;
         }
 
-        // Diagram rendering can be expensive for large pipelines; allow opting in to live refresh while typing.
-        const diagramConfig = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
-        const refreshOnType = diagramConfig.get('diagram.refreshOnType', false);
-        if (!refreshOnType) {
-            return;
-        }
-
-        const configuredDelay = diagramConfig.get('diagram.refreshDelayMs', 1200);
-        const effectiveDelay = Number.isInteger(configuredDelay) && configuredDelay >= 0 ? configuredDelay : delayMs;
+        const configuredDelay = vscode.workspace
+            .getConfiguration('azurePipelineStudio', document.uri)
+            .get('diagram.refreshDelayMs', 500);
+        const effectiveDelay =
+            delayMs === 0 ? 0 : Number.isInteger(configuredDelay) && configuredDelay >= 0 ? configuredDelay : delayMs;
 
         pendingDependenciesDocument = document;
         clearTimeout(dependenciesDebounceTimer);
         clearTimeout(activeDependenciesDebounceTimer);
         dependenciesDebounceTimer = activeDependenciesDebounceTimer = setTimeout(() => {
-            // Check again if panel is still valid (might have been disposed)
             if (!dependenciesPanel || isDependenciesRendering) {
                 return;
             }
-
             const queuedDocument = pendingDependenciesDocument;
             pendingDependenciesDocument = null;
             if (queuedDocument) {
@@ -2030,26 +2025,17 @@ ${mermaidDiagram
             if (isRelevantDocument(document)) {
                 scheduleRender(document);
             }
-
-            // Refresh dependencies panel even if not the expanded document
-            scheduleDependenciesRefresh(document);
         })
     );
 
     context.subscriptions.push(
         vscode.workspace.onDidSaveTextDocument((document) => {
+            // Diagram panel refresh: runs independently of expansion panel
+            scheduleDependenciesRefresh(document, 0);
             if (!isRelevantDocument(document)) return;
             const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
             if (config.get('refreshOnSave', true)) {
                 scheduleRender(document, 0);
-            }
-
-            if (
-                dependenciesPanel &&
-                dependenciesDocumentUri &&
-                dependenciesDocumentUri.toString() === document.uri.toString()
-            ) {
-                void renderDependenciesPanel(document, { silent: true });
             }
         })
     );

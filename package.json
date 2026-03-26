@@ -47,11 +47,6 @@
           "minimum": 0,
           "type": "integer"
         },
-        "azurePipelineStudio.diagram.refreshOnType": {
-          "default": true,
-          "description": "Automatically refresh Pipeline Diagram while typing in YAML files. Disable for better extension host responsiveness on large pipelines.",
-          "type": "boolean"
-        },
         "azurePipelineStudio.expansion.refreshDelayMs": {
           "default": 500,
           "description": "Debounce delay (ms) before refreshing Expanded Pipeline view while typing when expansion.refreshOnType is enabled.",

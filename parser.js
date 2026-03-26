@@ -2918,7 +2918,9 @@ class AzurePipelineParser {
             const repoBaseDir = this.resolveRepoBaseDirectory(selfBaseDir, context);
             repoBaseDirForContext = repoBaseDir;
             const currentDir = context.baseDir || repoBaseDir;
-            resolvedPath = this.resolveRepoTemplate(repoRef.templatePath, currentDir, repoBaseDir);
+            resolvedPath = this.resolveRepoTemplate(repoRef.templatePath, currentDir, repoBaseDir, {
+                preferRepoBaseDir: false,
+            });
             if (!resolvedPath) {
                 throw new Error(
                     this.formatErrorWithStack(
@@ -2970,7 +2972,9 @@ class AzurePipelineParser {
             templateBaseDir = path.dirname(resolvedPath);
         } else {
             const repoBaseDir = context.repoBaseDir || undefined;
-            const candidatePath = this.resolveRepoTemplate(templatePath, context.baseDir, repoBaseDir);
+            const candidatePath = this.resolveRepoTemplate(templatePath, context.baseDir, repoBaseDir, {
+                preferRepoBaseDir: false,
+            });
             if (candidatePath) {
                 resolvedPath = candidatePath;
                 templateBaseDir = path.dirname(resolvedPath);
@@ -3222,7 +3226,7 @@ class AzurePipelineParser {
         return absoluteLocation;
     }
 
-    resolveRepoTemplate(templatePath, cwd, repoBaseDir) {
+    resolveRepoTemplate(templatePath, cwd, repoBaseDir, options = {}) {
         if (!templatePath) return undefined;
 
         const parts = String(templatePath)
@@ -3231,11 +3235,15 @@ class AzurePipelineParser {
             .filter((segment) => segment?.length);
 
         const candidateBases = [];
+        const preferRepoBaseDir = options.preferRepoBaseDir !== false;
 
-        if (repoBaseDir) candidateBases.push(repoBaseDir);
-
-        if (cwd && (!repoBaseDir || path.normalize(repoBaseDir) !== path.normalize(cwd))) {
-            candidateBases.push(cwd);
+        if (preferRepoBaseDir) {
+            if (repoBaseDir) candidateBases.push(repoBaseDir);
+            if (cwd && (!repoBaseDir || path.normalize(repoBaseDir) !== path.normalize(cwd))) candidateBases.push(cwd);
+        } else {
+            if (cwd) candidateBases.push(cwd);
+            if (repoBaseDir && (!cwd || path.normalize(repoBaseDir) !== path.normalize(cwd)))
+                candidateBases.push(repoBaseDir);
         }
 
         if (!candidateBases.length) return undefined;
