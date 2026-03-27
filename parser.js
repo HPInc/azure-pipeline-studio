@@ -274,6 +274,21 @@ class AzurePipelineParser {
                 yamlDoc = YAML.parseDocument(source);
             }
 
+            if (yamlDoc.errors && yamlDoc.errors.length > 0) {
+                // Only throw for errors that cause silent data corruption (block sequence used
+                // as an implicit map key triggers the mapAsMap warning and garbled output).
+                // Duplicate-key errors are intentional for Azure template expressions (${{ insert }}).
+                const corruptingErrors = yamlDoc.errors.filter((e) => {
+                    if (!e.message) return false;
+                    const msg = e.message.toLowerCase();
+                    return msg.includes('block sequence') && msg.includes('implicit map key');
+                });
+                if (corruptingErrors.length > 0) {
+                    const errorLines = corruptingErrors.map((e) => e.message.split('\n')[0]);
+                    throw new Error(errorLines.join('\n'));
+                }
+            }
+
             // Preserve float-valued scalars as their source string representation
             // (e.g. 1.0 must not become 1). Mutating node.value before toJSON() is
             // simpler than mapping and patching the JS object after the fact.

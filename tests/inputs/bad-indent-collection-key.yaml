@@ -1,0 +1,22 @@
+# aps-format=false (disabled to preserve the bad indentation as a test fixture)
+# Reproducer: bad indentation on a conditional expression causes the yaml parser
+# to treat the block sequence as an implicit map key. This triggers the
+# "mapAsMap" warning:
+#   Keys with collection values will be stringified due to JS Object restrictions
+#
+# The extra leading space before '- ${{ ... }}:' misaligns the conditional with
+# its sibling list items, causing the yaml parser to error with:
+#   A block sequence may not be used as an implicit map key
+#
+# Fix: align the conditional with the other list items under stages:
+#   - ${{ if eq(parameters.env, 'prod') }}:
+
+parameters:
+- name: env
+  type: string
+  default: prod
+
+stages:
+- ${{ if eq(parameters.env, 'prod') }}:
+  - stage: Deploy
+      jobs: []

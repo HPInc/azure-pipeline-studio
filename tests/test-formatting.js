@@ -590,6 +590,90 @@ steps:
     }
 });
 
+// Test 27: Sibling mapping key after conditional directive value block is caught
+const test27Pass = runTest('Test 27: Sibling mapping key after conditional value block is flagged', () => {
+    // jobs: [] is at the same indent as '- stage: Deploy', making it a sibling
+    // of the conditional rather than inside the conditional's value block.
+    const yaml = ['stages:', "- ${{ if eq(parameters.env, 'prod') }}:", '  - stage: Deploy', '  jobs: []'].join('\n');
+
+    const result = formatYaml(yaml, { suppressConsoleOutput: true });
+    const output = [result.error || '', result.warning || ''].join(' ');
+
+    if (!output.includes('sibling mapping key')) {
+        throw new Error('Should warn about sibling mapping key after conditional value block');
+    }
+});
+
+// Test 28: Correctly indented conditional value block produces no warning
+const test28Pass = runTest('Test 28: Correctly indented conditional value block passes without warning', () => {
+    const yaml = ['stages:', "- ${{ if eq(parameters.env, 'prod') }}:", '  - stage: Deploy', '    jobs: []'].join('\n');
+
+    const result = formatYaml(yaml, { suppressConsoleOutput: true });
+
+    if (result.error || result.warning) {
+        throw new Error(
+            `Should not produce error or warning for correct indentation, got: ${result.error || result.warning}`
+        );
+    }
+});
+
+// Test 29: Over-indented value block with intermediate-indent sibling is caught
+const test29Pass = runTest('Test 29: Over-indented value block with intermediate-indent sibling is flagged', () => {
+    // Value block starts at indent 3 (over-indented); jobs: [] at indent 2 is
+    // between condIndent(0) and valueIndent(3), making it an intermediate-level sibling.
+    const yaml = ['stages:', "- ${{ if eq(parameters.env, 'prod') }}:", '   - stage: Deploy', '  jobs: []'].join('\n');
+
+    const result = formatYaml(yaml, { suppressConsoleOutput: true });
+    const output = [result.error || '', result.warning || ''].join(' ');
+
+    if (!output.includes('sibling')) {
+        throw new Error('Should warn about intermediate-indent sibling key with over-indented value block');
+    }
+});
+
+// Test 30: Parser rejects YAML where block sequence is used as implicit map key
+const test30Pass = runTest('Test 30: Parser throws on block sequence used as implicit map key', () => {
+    // A leading space before - ${{ ... }}: misaligns the conditional, causing the
+    // YAML parser to treat the block sequence as an implicit map key (mapAsMap warning).
+    const yaml = ['stages:', " - ${{ if eq(parameters.env, 'prod') }}:", '- stage: Deploy', '  jobs: []'].join('\n');
+
+    const parser = new AzurePipelineParser();
+    let threw = false;
+    try {
+        parser.expandPipelineFromString(yaml, { suppressConsoleOutput: true });
+    } catch (e) {
+        threw = true;
+        if (
+            !e.message.includes('block sequence') &&
+            !e.message.includes('implicit map key') &&
+            !e.message.includes('Failed to parse')
+        ) {
+            throw new Error(`Expected block sequence / implicit map key error, got: ${e.message}`);
+        }
+    }
+    if (!threw) {
+        throw new Error('Parser should throw for block sequence used as implicit map key');
+    }
+});
+
+// Test 31: YAML explicit key indicator (?) before conditional is caught
+const test31Pass = runTest("Test 31: YAML explicit key indicator '?' before conditional is flagged", () => {
+    const yaml = [
+        'stages:',
+        "? - ${{ if eq(parameters.env, 'prod') }}:",
+        '  - stage: Deploy',
+        '    jobs: []',
+        ': value',
+    ].join('\n');
+
+    const result = formatYaml(yaml, { suppressConsoleOutput: true });
+    const output = [result.error || '', result.warning || ''].join(' ');
+
+    if (!output.includes('explicit key indicator')) {
+        throw new Error("Should warn about YAML explicit key indicator '?' before conditional");
+    }
+});
+
 // Summary
 const allTests = [
     test1Pass,
@@ -618,6 +702,11 @@ const allTests = [
     test24Pass,
     test25Pass,
     test26Pass,
+    test27Pass,
+    test28Pass,
+    test29Pass,
+    test30Pass,
+    test31Pass,
 ];
 const passed = allTests.filter((t) => t).length;
 const failed = allTests.length - passed;

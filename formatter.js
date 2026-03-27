@@ -676,6 +676,78 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
             }
         }
 
+        // Detect misindented value block after a conditional directive.
+        // After `- ${{ ... }}:`, the value block must start at condDashIndent + standard indent.
+        // Two cases are flagged:
+        //   1. Value starts deeper than condIndent+2 and a subsequent line at an intermediate
+        //      indent becomes an unintended sibling of the conditional.
+        //   2. Value starts at condIndent+2 (correct) but a subsequent plain mapping key at
+        //      the same indent is a sibling of the conditional — not inside the value block.
+        if (/^\s*-\s+(?:\$\{\{.*\}}|__EXPR_PLACEHOLDER_\d+__)\s*:\s*$/.test(line)) {
+            const condIndent = getIndent(line);
+            const expectedValueIndent = condIndent + 2;
+
+            let valueIndent = -1;
+            let valueLineNum = -1;
+            for (let j = i + 1; j < lines.length; j++) {
+                const next = lines[j];
+                if (next.trim() && !next.trim().startsWith('#')) {
+                    valueIndent = getIndent(next);
+                    valueLineNum = j;
+                    break;
+                }
+            }
+
+            if (valueIndent > expectedValueIndent) {
+                // Case 1: over-indented value block — look for intermediate-indent siblings
+                for (let j = valueLineNum + 1; j < lines.length; j++) {
+                    const checkLine = lines[j];
+                    const checkTrimmed = checkLine.trim();
+                    if (!checkTrimmed || checkTrimmed.startsWith('#')) continue;
+                    const checkIndent = getIndent(checkLine);
+                    if (checkIndent <= condIndent) break;
+                    if (checkIndent > condIndent && checkIndent < valueIndent) {
+                        hints.push(
+                            `line ${j + 1}: '${checkTrimmed}' is at indent ${checkIndent}, which is between the conditional directive's indent (${condIndent}) and its value block (indent ${valueIndent}, line ${valueLineNum + 1}). This makes it a sibling key of the conditional expression rather than inside it. Fix the value block to start at indent ${expectedValueIndent}.`
+                        );
+                        break;
+                    }
+                }
+            } else if (valueIndent === expectedValueIndent) {
+                // Case 2: value starts at the right indent — look for subsequent plain mapping
+                // keys at the same indent, which land in the outer mapping as siblings of the
+                // conditional rather than inside the conditional's value block.
+                for (let j = valueLineNum + 1; j < lines.length; j++) {
+                    const checkLine = lines[j];
+                    const checkTrimmed = checkLine.trim();
+                    if (!checkTrimmed || checkTrimmed.startsWith('#')) continue;
+                    const checkIndent = getIndent(checkLine);
+                    if (checkIndent <= condIndent) break;
+                    if (
+                        checkIndent === expectedValueIndent &&
+                        !checkTrimmed.startsWith('-') &&
+                        /\S:\s/.test(checkTrimmed + ' ')
+                    ) {
+                        hints.push(
+                            `line ${j + 1}: '${checkTrimmed}' is a sibling mapping key of the conditional expression, not inside its value block. Move it inside the value block (indent > ${expectedValueIndent}) or remove it from this context.`
+                        );
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Detect YAML explicit key indicator (?) used with a template expression list item.
+        // e.g. "? - ${{ if eq(...) }}:" makes a sequence the map key instead of a conditional directive.
+        // The correct form is "- ${{ if eq(...) }}:" (no leading ?).
+        if (/^\s*\?\s+-\s+(?:\$\{\{|__EXPR_PLACEHOLDER_)/.test(line)) {
+            hints.push(
+                'line ' +
+                    (i + 1) +
+                    ": YAML explicit key indicator ('?') before '- ${{ ... }}:' turns the template expression into a map key instead of a conditional directive. Remove the '?' and write it as: '- ${{ if ... }}'."
+            );
+        }
+
         // Validate template expressions on this line
         const expressionHints = validateTemplateExpressions(line, i + 1);
         hints.push(...expressionHints);
@@ -729,6 +801,12 @@ function enrichDuplicateKeyError(error, content, fileName = '') {
 
     const lowerMessage = error.message.toLowerCase();
     if (!lowerMessage.includes('map keys must be unique') && !lowerMessage.includes('duplicated mapping key')) {
+        if (lowerMessage.includes('block sequence') && lowerMessage.includes('implicit map key')) {
+            return (
+                error.message +
+                "\n  A '- ${{ ... }}:' conditional is being used as a map key due to bad indentation. Fix the indentation so the expression aligns with sibling list items. This is also what triggers the 'Keys with collection values will be stringified' (mapAsMap) warning."
+            );
+        }
         return error.message;
     }
 
@@ -816,7 +894,11 @@ function describeYamlSyntaxError(error, content, fileName = '') {
     // Specific friendly rewrites for common Azure expression mistakes
     const lowerReason = (baseMessage || '').toLowerCase();
     if (baseMessage) {
-        if (lowerReason.includes('implicit map key') || lowerReason.includes('mapping values are not allowed')) {
+        if (lowerReason.includes('block sequence') && lowerReason.includes('implicit map key')) {
+            hints.unshift(
+                "A '- ${{ ... }}:' conditional is being used as a map key due to bad indentation. Fix the indentation so the expression aligns with sibling list items. This is also what triggers the 'Keys with collection values will be stringified' (mapAsMap) warning."
+            );
+        } else if (lowerReason.includes('implicit map key') || lowerReason.includes('mapping values are not allowed')) {
             hints.unshift("Likely missing a ':' after an Azure expression used as a key (e.g., '- ${{ if ... }}:').");
         } else if (lowerReason.includes('bad indentation') || lowerReason.includes('incomplete explicit mapping')) {
             hints.unshift("Check indentation for list items and make sure expression lines start with '-'.");
@@ -2263,9 +2345,9 @@ function formatYaml(content, options = {}) {
 
         const { content: protectedContent, commentMap } = protectEmptyValues(preprocessedContent);
 
-        const preprocessedHints = analyzeTemplateHints(protectedContent, conditionalDirectives);
+        const preprocessedHints = analyzeTemplateHints(inputContent, conditionalDirectives);
+        let hintsBlock = preprocessedHints.length > 0 ? `\n  ${preprocessedHints.join('\n  ')}` : '';
         if (preprocessedHints.length > 0) {
-            const hintsBlock = `\n  ${preprocessedHints.join('\n  ')}`;
             const filePrefix = effective.fileName ? `[${effective.fileName}] ` : '';
             const lines = `YAML validation warnings:${hintsBlock}`.split('\n');
             const indented = lines.map((line, idx) => (idx === 0 ? line : '  ' + line)).join('\n');
@@ -2298,7 +2380,6 @@ function formatYaml(content, options = {}) {
                 if (!effective.suppressConsoleOutput) {
                     console.error(`${filePrefix}${indented}`);
                 }
-                const hintSuffix = hintsBlock;
                 // Don't truncate multi-line error messages (they contain important location info)
                 const hasNewlines = errorMessages.includes('\n');
                 return {
@@ -2306,8 +2387,8 @@ function formatYaml(content, options = {}) {
                     warning: hintsBlock || undefined,
                     error:
                         !hasNewlines && errorMessages.length > 100
-                            ? errorMessages.substring(0, 100) + '...' + hintSuffix
-                            : `${errorMessages}${hintSuffix}`,
+                            ? errorMessages.substring(0, 100) + '...' + hintsBlock
+                            : `${errorMessages}${hintsBlock}`,
                 };
             }
         }

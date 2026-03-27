@@ -1,4 +1,5 @@
 name: $(Date:yyyyMMdd)$(Rev:.r)
+
 trigger:
 - main
 
@@ -23,6 +24,7 @@ pool:
 variables:
   projectRoot: ./src
   isMain: $[eq(variables['Build.SourceBranch'], 'refs/heads/main')]
+
 
 stages:
 - stage: Setup
