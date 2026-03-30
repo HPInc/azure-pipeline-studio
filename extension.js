@@ -1599,8 +1599,8 @@ ${mermaidDiagram
                     </div>
                 </div>
                 
-                <!-- Collapsible Source Code Section -->
-                <div id="diagram-source-section" style="display: none; margin-top: 15px; background: #1e1e1e; border-radius: 4px; overflow: hidden; border-left: 4px solid #0078d4;">
+                <!-- Source Code Section (replaces diagram when visible) -->
+                <div id="diagram-source-section" style="display: none; background: #1e1e1e; border-radius: 4px; overflow: hidden; border-left: 4px solid #0078d4;">
                     <div style="padding: 15px; background: #2d2d2d; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #3e3e42;">
                         <h3 style="margin: 0; color: #ffffff; font-size: 1.1em;">📝 Mermaid Source Code</h3>
                         <div style="display: flex; gap: 10px;">
@@ -1676,13 +1676,15 @@ ${mermaidDiagram
             });
         })();
         
-        // Toggle diagram source visibility
+        // Toggle diagram source visibility (source replaces the diagram area)
         window.toggleDiagramSource = function() {
             const sourceSection = document.getElementById('diagram-source-section');
+            const diagramContainer = document.getElementById('diagram-container');
             const toggleBtn = document.getElementById('source-toggle-btn');
-            if (sourceSection && toggleBtn) {
+            if (sourceSection && diagramContainer && toggleBtn) {
                 const isVisible = sourceSection.style.display !== 'none';
                 sourceSection.style.display = isVisible ? 'none' : 'block';
+                diagramContainer.style.display = isVisible ? '' : 'none';
                 toggleBtn.textContent = isVisible ? '📝 View Source' : '🔼 Hide Source';
             }
         };
