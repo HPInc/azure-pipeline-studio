@@ -834,6 +834,86 @@ const test37Pass = runTest('Test 37: ${{ insert }} expansion with no conflicting
     }
 });
 
+// Test 38: Duplicate step name within a job is caught during expansion
+const test38Pass = runTest('Test 38: Duplicate step name within a job is caught during expansion', () => {
+    const yaml = [
+        'jobs:',
+        '- job: Build',
+        '  steps:',
+        '  - script: echo first',
+        '    name: myStep',
+        '  - script: echo second',
+        '    name: myStep',
+    ].join('\n');
+
+    let errorMsg = null;
+    try {
+        const parser = new AzurePipelineParser();
+        parser.expandPipelineFromString(yaml, {});
+    } catch (e) {
+        errorMsg = e.message;
+    }
+
+    if (!errorMsg || !errorMsg.includes("Duplicate step name 'myStep'")) {
+        throw new Error(`Expected duplicate step name error, got: ${errorMsg}`);
+    }
+});
+
+// Test 39: Steps with unique names in a job succeed
+const test39Pass = runTest('Test 39: Steps with unique names in a job succeed', () => {
+    const yaml = [
+        'jobs:',
+        '- job: Build',
+        '  steps:',
+        '  - script: echo first',
+        '    name: stepOne',
+        '  - script: echo second',
+        '    name: stepTwo',
+    ].join('\n');
+
+    let errorMsg = null;
+    try {
+        const parser = new AzurePipelineParser();
+        parser.expandPipelineFromString(yaml, {});
+    } catch (e) {
+        errorMsg = e.message;
+    }
+
+    if (errorMsg && errorMsg.toLowerCase().includes('duplicate step name')) {
+        throw new Error(`Should not flag unique step names as duplicates, got: ${errorMsg}`);
+    }
+});
+
+// Test 40: Steps with same displayName but different name do not trigger duplicate step name error
+const test40Pass = runTest(
+    'Test 40: Steps with same displayName but different name do not trigger duplicate error',
+    () => {
+        const yaml = [
+            'jobs:',
+            '- job: Build',
+            '  steps:',
+            '  - script: echo first',
+            '    displayName: My Step',
+            '    name: stepOne',
+            '  - script: echo second',
+            '    displayName: My Step',
+            '    name: stepTwo',
+        ].join('\n');
+
+        let errorMsg = null;
+        try {
+            const parser = new AzurePipelineParser();
+            parser.expandPipelineFromString(yaml, {});
+        } catch (e) {
+            errorMsg = e.message;
+        }
+
+        if (errorMsg && errorMsg.toLowerCase().includes('duplicate step name')) {
+            throw new Error(`Should not flag duplicate displayName as a duplicate step name error, got: ${errorMsg}`);
+        }
+    }
+);
+
 // Summary
 const allTests = [
     test1Pass,
@@ -873,6 +953,9 @@ const allTests = [
     test35Pass,
     test36Pass,
     test37Pass,
+    test38Pass,
+    test39Pass,
+    test40Pass,
 ];
 const passed = allTests.filter((t) => t).length;
 const failed = allTests.length - passed;

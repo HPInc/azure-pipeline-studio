@@ -59,14 +59,18 @@ class AzurePipelineParser {
 
         // Check if errors were collected during parsing and throw them all together
         if (context.errors.length > 0) {
-            // Deduplicate errors based on message content
+            // Deduplicate errors: normalize numeric values in the message portion (before the call
+            // stack) so the same logical error triggered from multiple template expansions is only
+            // reported once.
             const uniqueErrors = [];
-            const seenMessages = new Set();
+            const seenMessageKeys = new Set();
 
             for (const error of context.errors) {
-                if (!seenMessages.has(error.message)) {
+                const messageBody = error.message.split('\n  Template call stack:')[0];
+                const messageKey = messageBody.replace(/\d+/g, '#');
+                if (!seenMessageKeys.has(messageKey)) {
                     uniqueErrors.push(error.message);
-                    seenMessages.add(error.message);
+                    seenMessageKeys.add(messageKey);
                 }
             }
 
@@ -1235,6 +1239,30 @@ class AzurePipelineParser {
                     context.expansionPath.pop();
                 }
             }
+        }
+
+        if (parentKey === 'steps') {
+            const seenStepNames = new Map();
+            result.forEach((step, stepIndex) => {
+                if (step && typeof step === 'object' && typeof step.name === 'string' && step.name) {
+                    if (seenStepNames.has(step.name)) {
+                        context.errors.push({
+                            message: this.formatErrorWithStack(
+                                "Duplicate step name '" +
+                                    step.name +
+                                    "' found in job. Step names must be unique within a job (first occurrence at step index " +
+                                    (seenStepNames.get(step.name) + 1) +
+                                    ', duplicate at step index ' +
+                                    (stepIndex + 1) +
+                                    ').',
+                                context
+                            ),
+                        });
+                    } else {
+                        seenStepNames.set(step.name, stepIndex);
+                    }
+                }
+            });
         }
 
         return result;
