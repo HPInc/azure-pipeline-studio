@@ -4,7 +4,7 @@ const path = require('path');
 const YAML = require('yaml');
 const jsep = require('jsep');
 const adoFunctions = require('./ado-functions');
-const { analyzeTemplateHints } = require('./formatter');
+const { analyzeTemplateHints, findFirstKeyOccurrence } = require('./formatter');
 
 const CHECKOUT_TASK = '6d15af64-176c-496d-b583-fd2ae21d4df4@1';
 // Mapping of shorthand keys to Azure task identifiers
@@ -265,7 +265,7 @@ class AzurePipelineParser {
         try {
             let yamlDoc;
             try {
-                const docs = YAML.parseAllDocuments(source);
+                const docs = YAML.parseAllDocuments(source, { uniqueKeys: true });
                 yamlDoc = docs.find((doc) => doc.contents !== null && doc.contents !== undefined);
                 if (!yamlDoc) {
                     throw new Error('Empty YAML document');
@@ -275,17 +275,49 @@ class AzurePipelineParser {
             }
 
             if (yamlDoc.errors && yamlDoc.errors.length > 0) {
-                // Only throw for errors that cause silent data corruption (block sequence used
-                // as an implicit map key triggers the mapAsMap warning and garbled output).
-                // Duplicate-key errors are intentional for Azure template expressions (${{ insert }}).
-                const corruptingErrors = yamlDoc.errors.filter((e) => {
+                const sourceLines = source.split('\n');
+
+                // Block sequence as implicit map key — always a data-corrupting error.
+                const blockSequenceErrors = yamlDoc.errors.filter((e) => {
                     if (!e.message) return false;
                     const msg = e.message.toLowerCase();
                     return msg.includes('block sequence') && msg.includes('implicit map key');
                 });
-                if (corruptingErrors.length > 0) {
-                    const errorLines = corruptingErrors.map((e) => e.message.split('\n')[0]);
+                if (blockSequenceErrors.length > 0) {
+                    const errorLines = blockSequenceErrors.map((e) => e.message.split('\n')[0]);
                     throw new Error(errorLines.join('\n'));
+                }
+
+                // Duplicate keys — throw for genuine duplicates, but skip Azure template
+                // expression keys like ${{ insert }}, ${{ if ... }}, etc. which are valid.
+                const duplicateKeyErrors = yamlDoc.errors.filter((e) => {
+                    if (!e.message) return false;
+                    const msg = e.message.toLowerCase();
+                    if (!msg.includes('map keys must be unique')) return false;
+                    const lineMatch = e.message.match(/at line (\d+)/);
+                    if (!lineMatch) return true;
+                    const line = sourceLines[parseInt(lineMatch[1], 10) - 1] || '';
+                    return !line.includes('${{');
+                });
+                if (duplicateKeyErrors.length > 0) {
+                    const messages = duplicateKeyErrors.map((e) => {
+                        const locMatch = e.message.match(/at line (\d+), column (\d+)/);
+                        if (!locMatch) return e.message.split('\n')[0];
+                        const dupLine = parseInt(locMatch[1], 10) - 1;
+                        const dupCol = parseInt(locMatch[2], 10) - 1;
+                        const lineContent = sourceLines[dupLine] || '';
+                        const keyMatch = lineContent.slice(dupCol).match(/^([^:\s]+)/);
+                        const keyName = keyMatch ? keyMatch[1] : 'key';
+                        const filePrefix = identifier ? `${identifier}:` : '';
+                        const first = findFirstKeyOccurrence(source, dupLine, dupCol);
+                        const dupLocation = `${filePrefix}${dupLine + 1}:${dupCol + 1}`;
+                        if (first) {
+                            const firstLocation = `${filePrefix}${first.line + 1}:${first.column + 1}`;
+                            return `Duplicate key '${keyName}' detected\n  First defined at: ${firstLocation}\n  Duplicate found at: ${dupLocation}`;
+                        }
+                        return `Duplicate key '${keyName}' at ${dupLocation}`;
+                    });
+                    throw new Error(messages.join('\n\n'));
                 }
             }
 

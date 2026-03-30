@@ -674,6 +674,106 @@ const test31Pass = runTest("Test 31: YAML explicit key indicator '?' before cond
     }
 });
 
+// Test 32: Duplicate key is detected by formatter
+const test32Pass = runTest('Test 32: Duplicate mapping key is detected by formatter', () => {
+    const yaml = [
+        'stages:',
+        '- stage: Build',
+        '  pool:',
+        '    vmImage: ubuntu-latest',
+        '  pool:',
+        '    vmImage: windows-latest',
+    ].join('\n');
+
+    const result = formatYaml(yaml, { suppressConsoleOutput: true });
+    const output = [result.error || '', result.warning || ''].join(' ');
+
+    if (!output.includes("Duplicate key 'pool'")) {
+        throw new Error("Should detect duplicate key 'pool'");
+    }
+    if (!output.includes('First defined at') || !output.includes('Duplicate found at')) {
+        throw new Error('Should include first-defined and duplicate locations');
+    }
+});
+
+// Test 33: Azure expression keys are not flagged as duplicates by formatter
+const test33Pass = runTest('Test 33: Azure expression keys are not flagged as duplicates', () => {
+    const yaml = [
+        'jobs:',
+        "- ${{ if eq(parameters.env, 'prod') }}:",
+        '  - job: ProdJob',
+        "- ${{ if ne(parameters.env, 'prod') }}:",
+        '  - job: DevJob',
+    ].join('\n');
+
+    const result = formatYaml(yaml, { suppressConsoleOutput: true });
+
+    if (result.error && result.error.toLowerCase().includes('duplicate')) {
+        throw new Error('Should not flag Azure expression keys as duplicates');
+    }
+});
+
+// Test 34: Parser throws for duplicate key and includes location info
+const test34Pass = runTest('Test 34: Parser throws for duplicate key with location info', () => {
+    const yaml = [
+        'stages:',
+        '- stage: Build',
+        '  pool:',
+        '    vmImage: ubuntu-latest',
+        '  pool:',
+        '    vmImage: windows-latest',
+    ].join('\n');
+
+    let threw = false;
+    try {
+        const parser = new AzurePipelineParser();
+        parser.expandPipelineFromString(yaml, {});
+    } catch (e) {
+        threw = true;
+        if (!e.message.includes("Duplicate key 'pool'")) {
+            throw new Error(`Expected duplicate key error for 'pool', got: ${e.message}`);
+        }
+        if (!e.message.includes('First defined at') || !e.message.includes('Duplicate found at')) {
+            throw new Error('Expected first-defined and duplicate location info in error');
+        }
+    }
+    if (!threw) {
+        throw new Error('Parser should throw for duplicate key');
+    }
+});
+
+// Test 35: Parser allows Azure expression keys that appear multiple times
+const test35Pass = runTest('Test 35: Parser allows Azure expression keys that look like duplicates', () => {
+    const yaml = [
+        'parameters:',
+        '- name: env',
+        '  type: string',
+        '  default: dev',
+        '',
+        'stages:',
+        "- ${{ if eq(parameters.env, 'prod') }}:",
+        '  - stage: ProdDeploy',
+        '    jobs: []',
+        "- ${{ if ne(parameters.env, 'prod') }}:",
+        '  - stage: DevDeploy',
+        '    jobs: []',
+    ].join('\n');
+
+    // Should not throw a "duplicate key" error
+    // (may throw for other reasons like unresolved params, but not for ${{ }} duplication)
+    let errorMsg = null;
+    try {
+        const parser = new AzurePipelineParser();
+        parser.expandPipelineFromString(yaml, {});
+    } catch (e) {
+        errorMsg = e.message;
+    }
+
+    if (errorMsg && errorMsg.toLowerCase().includes('duplicate')) {
+        throw new Error(`Should not flag Azure expression keys as duplicates, got: ${errorMsg}`);
+    }
+});
+
 // Summary
 const allTests = [
     test1Pass,
@@ -707,6 +807,10 @@ const allTests = [
     test29Pass,
     test30Pass,
     test31Pass,
+    test32Pass,
+    test33Pass,
+    test34Pass,
+    test35Pass,
 ];
 const passed = allTests.filter((t) => t).length;
 const failed = allTests.length - passed;

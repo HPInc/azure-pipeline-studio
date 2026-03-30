@@ -2475,4 +2475,5 @@ module.exports = {
     restoreTemplateExpressions,
     analyzeTemplateHints,
     parseFormatDirectives,
+    findFirstKeyOccurrence,
 };
