@@ -774,6 +774,66 @@ const test35Pass = runTest('Test 35: Parser allows Azure expression keys that lo
     }
 });
 
+// Test 36: ${{ insert }} expansion that conflicts with an existing key is caught
+const test36Pass = runTest('Test 36: ${{ insert }} expansion that conflicts with existing key is caught', () => {
+    // parameters.extra expands to { pool: ... }, but pool already exists at root level
+    const yaml = [
+        'parameters:',
+        '- name: extra',
+        '  type: object',
+        '  default:',
+        '    pool:',
+        '      vmImage: windows-latest',
+        '',
+        'pool:',
+        '  vmImage: ubuntu-latest',
+        '',
+        '${{ insert }}: ${{ parameters.extra }}',
+    ].join('\n');
+
+    let threw = false;
+    try {
+        const parser = new AzurePipelineParser();
+        parser.expandPipelineFromString(yaml, {});
+    } catch (e) {
+        threw = true;
+        if (!e.message.includes("Duplicate key 'pool'") || !e.message.includes('insert')) {
+            throw new Error(`Expected duplicate key 'pool' from insert, got: ${e.message.substring(0, 150)}`);
+        }
+    }
+    if (!threw) {
+        throw new Error('Parser should throw when ${{ insert }} introduces a duplicate key');
+    }
+});
+
+// Test 37: ${{ insert }} expansion with no conflicting keys succeeds
+const test37Pass = runTest('Test 37: ${{ insert }} expansion with no conflicting keys succeeds', () => {
+    const yaml = [
+        'parameters:',
+        '- name: extra',
+        '  type: object',
+        '  default:',
+        '    timeout: 60',
+        '',
+        'pool:',
+        '  vmImage: ubuntu-latest',
+        '',
+        '${{ insert }}: ${{ parameters.extra }}',
+    ].join('\n');
+
+    let errorMsg = null;
+    try {
+        const parser = new AzurePipelineParser();
+        parser.expandPipelineFromString(yaml, {});
+    } catch (e) {
+        errorMsg = e.message;
+    }
+
+    if (errorMsg && errorMsg.toLowerCase().includes('duplicate')) {
+        throw new Error(`Should not flag non-conflicting insert as duplicate, got: ${errorMsg}`);
+    }
+});
+
 // Summary
 const allTests = [
     test1Pass,
@@ -811,6 +871,8 @@ const allTests = [
     test33Pass,
     test34Pass,
     test35Pass,
+    test36Pass,
+    test37Pass,
 ];
 const passed = allTests.filter((t) => t).length;
 const failed = allTests.length - passed;

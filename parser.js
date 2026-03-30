@@ -1792,6 +1792,21 @@ class AzurePipelineParser {
             } else if (this.isInsertDirective(rawKey)) {
                 const expandedValue = this.expandNodePreservingTemplates(value, context);
                 if (this.isNonArrayObject(expandedValue)) {
+                    const duplicateKeys = Object.keys(expandedValue).filter((k) =>
+                        Object.prototype.hasOwnProperty.call(result, k)
+                    );
+                    if (duplicateKeys.length > 0 && context && context.errors) {
+                        for (const dupKey of duplicateKeys) {
+                            context.errors.push({
+                                message: this.formatErrorWithStack(
+                                    "Duplicate key '" +
+                                        dupKey +
+                                        "' introduced by ${{ insert }} expansion conflicts with an existing key.",
+                                    context
+                                ),
+                            });
+                        }
+                    }
                     Object.assign(result, expandedValue);
                 }
                 continue;
@@ -3409,6 +3424,21 @@ class AzurePipelineParser {
             if (this.isInsertDirective(key)) {
                 const expandedValue = this.expandNodePreservingTemplates(value, context);
                 if (expandedValue && this.isNonArrayObject(expandedValue)) {
+                    const duplicateKeys = Object.keys(expandedValue).filter((k) =>
+                        Object.prototype.hasOwnProperty.call(result, k)
+                    );
+                    if (duplicateKeys.length > 0 && context && context.errors) {
+                        for (const dupKey of duplicateKeys) {
+                            context.errors.push({
+                                message: this.formatErrorWithStack(
+                                    "Duplicate key '" +
+                                        dupKey +
+                                        "' introduced by ${{ insert }} expansion conflicts with an existing key.",
+                                    context
+                                ),
+                            });
+                        }
+                    }
                     Object.assign(result, expandedValue);
                 }
                 i++;
