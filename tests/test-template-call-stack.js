@@ -206,9 +206,8 @@ const test6Pass = runErrorTestCase(
     "Undefined template parameter 'missing'",
     (errorMsg) => {
         // Should show the root file with line number
-        // "error-root-param-undefined.yaml:12" (line number updated after formatter added blank lines)
-        if (!errorMsg.includes('error-root-param-undefined.yaml:12')) {
-            throw new Error('Call stack missing root file line number (expected :12)');
+        if (!errorMsg.includes('error-root-param-undefined.yaml:11')) {
+            throw new Error('Call stack missing root file line number (expected :11)');
         }
     }
 );
@@ -244,9 +243,9 @@ const test8Pass = runErrorTestCase(
             throw new Error('Call stack missing root file line number (expected :2)');
         }
 
-        // Intermediate calls missing at line 5 (line number updated after formatter added blank line before steps:)
-        if (!errorMsg.includes('nested-missing-caller.yaml:5')) {
-            throw new Error('Call stack missing intermediate file line number (expected :5)');
+        // Intermediate calls missing at line 4
+        if (!errorMsg.includes('nested-missing-caller.yaml:4')) {
+            throw new Error('Call stack missing intermediate file line number (expected :4)');
         }
     }
 );
