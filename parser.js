@@ -3033,6 +3033,7 @@ class AzurePipelineParser {
         let resolvedPath;
         let templateBaseDir;
         let repoBaseDirForContext = context.repoBaseDir || undefined;
+        let inheritedRepoAlias = null;
 
         if (isSelfRepo) {
             const selfBaseDir = context.rootRepoBaseDir || context.repoBaseDir;
@@ -3093,12 +3094,11 @@ class AzurePipelineParser {
             templateBaseDir = path.dirname(resolvedPath);
         } else {
             const repoBaseDir = context.repoBaseDir || undefined;
-            // Absolute paths (starting with /) are repo-root-relative per Azure Pipelines convention.
-            // If we're already inside a repo-sourced template (currentRepoAlias is set), an absolute
-            // path with no @repo qualifier inherits that same repo — matching Azure's behaviour.
-            // Relative paths resolve from the calling file's directory (same directory as current file).
+            // Absolute paths (starting with /) are repo-root-relative. Relative paths (including ../)
+            // resolve from the calling template's directory. Either way, if we're inside a repo-sourced
+            // template, the path inherits that repo alias — matching Azure Pipelines' behaviour.
             const isAbsoluteTmpl = typeof templatePath === 'string' && templatePath.startsWith('/');
-            const inheritedRepoAlias = isAbsoluteTmpl ? context.currentRepoAlias || null : null;
+            inheritedRepoAlias = context.currentRepoAlias || null;
             const candidatePath = this.resolveRepoTemplate(templatePath, context.baseDir, repoBaseDir, {
                 preferRepoBaseDir: isAbsoluteTmpl,
             });
@@ -3111,17 +3111,26 @@ class AzurePipelineParser {
                 resolvedPath = path.isAbsolute(templatePath) ? templatePath : path.resolve(baseDir, templatePath);
                 templateBaseDir = path.dirname(resolvedPath);
             }
+        }
 
-            if (!fs.existsSync(resolvedPath)) {
-                const identifier = inheritedRepoAlias ? `${templatePath}@${inheritedRepoAlias}` : templatePath;
-                throw new Error(
-                    this.formatErrorWithStack(
-                        `Template file not found: ${identifier} (${resolvedPath})`,
-                        context,
-                        templateLineNumber
-                    )
-                );
+        if (!fs.existsSync(resolvedPath)) {
+            let identifier;
+            if (repoRef) {
+                identifier = `${repoRef.templatePath}@${repoRef.repository}`;
+            } else if (inheritedRepoAlias && repoBaseDirForContext) {
+                // Normalize to repo-root-relative path and append @alias, matching Azure error format
+                const repoRelative = path.relative(repoBaseDirForContext, resolvedPath).replace(/\\/g, '/');
+                identifier = `/${repoRelative}@${inheritedRepoAlias}`;
+            } else {
+                identifier = templatePath;
             }
+            throw new Error(
+                this.formatErrorWithStack(
+                    `Template file not found: ${identifier} (${resolvedPath})`,
+                    context,
+                    templateLineNumber
+                )
+            );
         }
 
         const templateTimingLabel = context.timing
@@ -3187,8 +3196,8 @@ class AzurePipelineParser {
         }
         const templateDisplayPath = repoRef
             ? `${repoRef.templatePath}@${repoRef.repository}`
-            : typeof templatePath === 'string' && templatePath.startsWith('/') && context.currentRepoAlias
-              ? `${templatePath}@${context.currentRepoAlias}`
+            : inheritedRepoAlias && repoBaseDirForContext
+              ? `/${path.relative(repoBaseDirForContext, resolvedPath).replace(/\\/g, '/')}@${inheritedRepoAlias}`
               : templatePath;
 
         // Build stack entry with path, resolved location, and line number
