@@ -2873,6 +2873,8 @@ class AzurePipelineParser {
             baseDir: baseDir || parent.baseDir,
             repoBaseDir: options.repoBaseDir !== undefined ? options.repoBaseDir : parent.repoBaseDir,
             rootRepoBaseDir: parent.rootRepoBaseDir,
+            currentRepoAlias:
+                options.currentRepoAlias !== undefined ? options.currentRepoAlias : parent.currentRepoAlias,
             resourceLocations: parent.resourceLocations || {},
             templateStack: parent.templateStack || [],
             templateQuoteStyles: parent.templateQuoteStyles, // Preserve template quote styles map
@@ -3091,8 +3093,14 @@ class AzurePipelineParser {
             templateBaseDir = path.dirname(resolvedPath);
         } else {
             const repoBaseDir = context.repoBaseDir || undefined;
+            // Absolute paths (starting with /) are repo-root-relative per Azure Pipelines convention.
+            // If we're already inside a repo-sourced template (currentRepoAlias is set), an absolute
+            // path with no @repo qualifier inherits that same repo — matching Azure's behaviour.
+            // Relative paths resolve from the calling file's directory (same directory as current file).
+            const isAbsoluteTmpl = typeof templatePath === 'string' && templatePath.startsWith('/');
+            const inheritedRepoAlias = isAbsoluteTmpl ? context.currentRepoAlias || null : null;
             const candidatePath = this.resolveRepoTemplate(templatePath, context.baseDir, repoBaseDir, {
-                preferRepoBaseDir: false,
+                preferRepoBaseDir: isAbsoluteTmpl,
             });
             if (candidatePath) {
                 resolvedPath = candidatePath;
@@ -3103,13 +3111,17 @@ class AzurePipelineParser {
                 resolvedPath = path.isAbsolute(templatePath) ? templatePath : path.resolve(baseDir, templatePath);
                 templateBaseDir = path.dirname(resolvedPath);
             }
-        }
 
-        if (!fs.existsSync(resolvedPath)) {
-            const identifier = repoRef ? `${repoRef.templatePath}@${repoRef.repository}` : templatePath;
-            throw new Error(
-                this.formatErrorWithStack(`Template file not found: ${identifier}`, context, templateLineNumber)
-            );
+            if (!fs.existsSync(resolvedPath)) {
+                const identifier = inheritedRepoAlias ? `${templatePath}@${inheritedRepoAlias}` : templatePath;
+                throw new Error(
+                    this.formatErrorWithStack(
+                        `Template file not found: ${identifier} (${resolvedPath})`,
+                        context,
+                        templateLineNumber
+                    )
+                );
+            }
         }
 
         const templateTimingLabel = context.timing
@@ -3173,7 +3185,11 @@ class AzurePipelineParser {
             const paramType = parameterInfo.parameterTypes[name] || 'string';
             mergedParameters[name] = paramType !== 'boolean' && typeof value === 'boolean' ? String(value) : value;
         }
-        const templateDisplayPath = repoRef ? `${repoRef.templatePath}@${repoRef.repository}` : templatePath;
+        const templateDisplayPath = repoRef
+            ? `${repoRef.templatePath}@${repoRef.repository}`
+            : typeof templatePath === 'string' && templatePath.startsWith('/') && context.currentRepoAlias
+              ? `${templatePath}@${context.currentRepoAlias}`
+              : templatePath;
 
         // Build stack entry with path, resolved location, and line number
         // Always include resolved path in parentheses for clickable navigation
@@ -3199,6 +3215,7 @@ class AzurePipelineParser {
         const templateContext = this.createTemplateContext(updatedContext, mergedParameters, templateBaseDir, {
             repoBaseDir: repoBaseDirForContext,
             templateFile: resolvedPath, // Pass the resolved template file path for scoping
+            currentRepoAlias: repoRef ? repoRef.repository : context.currentRepoAlias,
         });
 
         // Update source lines to the template file so nested templates can find their line numbers

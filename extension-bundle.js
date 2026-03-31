@@ -1599,8 +1599,8 @@ ${mermaidDiagram
                     </div>
                 </div>
                 
-                <!-- Collapsible Source Code Section -->
-                <div id="diagram-source-section" style="display: none; margin-top: 15px; background: #1e1e1e; border-radius: 4px; overflow: hidden; border-left: 4px solid #0078d4;">
+                <!-- Source Code Section (replaces diagram when visible) -->
+                <div id="diagram-source-section" style="display: none; background: #1e1e1e; border-radius: 4px; overflow: hidden; border-left: 4px solid #0078d4;">
                     <div style="padding: 15px; background: #2d2d2d; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #3e3e42;">
                         <h3 style="margin: 0; color: #ffffff; font-size: 1.1em;">📝 Mermaid Source Code</h3>
                         <div style="display: flex; gap: 10px;">
@@ -1676,13 +1676,15 @@ ${mermaidDiagram
             });
         })();
         
-        // Toggle diagram source visibility
+        // Toggle diagram source visibility (source replaces the diagram area)
         window.toggleDiagramSource = function() {
             const sourceSection = document.getElementById('diagram-source-section');
+            const diagramContainer = document.getElementById('diagram-container');
             const toggleBtn = document.getElementById('source-toggle-btn');
-            if (sourceSection && toggleBtn) {
+            if (sourceSection && diagramContainer && toggleBtn) {
                 const isVisible = sourceSection.style.display !== 'none';
                 sourceSection.style.display = isVisible ? 'none' : 'block';
+                diagramContainer.style.display = isVisible ? '' : 'none';
                 toggleBtn.textContent = isVisible ? '📝 View Source' : '🔼 Hide Source';
             }
         };
@@ -1703,7 +1705,6 @@ ${mermaidDiagram
                 });
             }
         };
-        
         
         // Initialize Mermaid with error handling
         mermaid.initialize({ 
@@ -1794,8 +1795,11 @@ ${mermaidDiagram
             return;
         }
 
-        const configuredDelay = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri).get('diagram.refreshDelayMs', 500);
-        const effectiveDelay = delayMs === 0 ? 0 : (Number.isInteger(configuredDelay) && configuredDelay >= 0 ? configuredDelay : delayMs);
+        const configuredDelay = vscode.workspace
+            .getConfiguration('azurePipelineStudio', document.uri)
+            .get('diagram.refreshDelayMs', 500);
+        const effectiveDelay =
+            delayMs === 0 ? 0 : Number.isInteger(configuredDelay) && configuredDelay >= 0 ? configuredDelay : delayMs;
 
         pendingDependenciesDocument = document;
         clearTimeout(dependenciesDebounceTimer);
@@ -2303,11 +2307,12 @@ function runCli(args) {
         '  -x, --expand-templates       Expand Azure Pipeline template expressions (${{}},$[],$())\n' +
         '  -a, --azure-compatible       Use Azure-compatible expansion mode (adds blank lines, etc.)\n' +
         '  -s, --skip-syntax-check      Skip syntax checking during expansion\n' +
-        '  -d, --debug                  Print files being formatted';
+        '  -d, --debug                  Print files being formatted\n' +
+        '  -t, --timing                 Print timing breakdown for each expansion phase';
 
     const argv = minimist(args, {
         string: ['output', 'repo', 'format-option', 'format-recursive', 'extension', 'variables', 'mock-catalog'],
-        boolean: ['help', 'expand-templates', 'azure-compatible', 'skip-syntax-check', 'debug', 'simulate'],
+        boolean: ['help', 'expand-templates', 'azure-compatible', 'skip-syntax-check', 'debug', 'simulate', 'timing'],
         alias: {
             h: 'help',
             o: 'output',
@@ -2320,6 +2325,7 @@ function runCli(args) {
             a: 'azure-compatible',
             s: 'skip-syntax-check',
             d: 'debug',
+            t: 'timing',
         },
         default: {
             extension: [],
@@ -2328,6 +2334,7 @@ function runCli(args) {
             'skip-syntax-check': false,
             debug: false,
             simulate: false,
+            timing: false,
         },
     });
 
@@ -2538,6 +2545,7 @@ function runCli(args) {
                     fileName: absolutePath,
                     azureCompatible: argv['azure-compatible'] || false,
                     skipSyntaxCheck: argv['skip-syntax-check'] || false,
+                    timing: argv.timing || false,
                 };
                 if (repositories) {
                     // Convert repository mappings to resourceLocations format
