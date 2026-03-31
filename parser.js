@@ -3114,23 +3114,26 @@ class AzurePipelineParser {
         }
 
         if (!fs.existsSync(resolvedPath)) {
-            let identifier;
+            let message;
             if (repoRef) {
-                identifier = `${repoRef.templatePath}@${repoRef.repository}`;
+                const identifier = `${repoRef.templatePath}@${repoRef.repository}`;
+                message = `Template file not found: ${identifier} (${resolvedPath})`;
             } else if (inheritedRepoAlias && repoBaseDirForContext) {
-                // Normalize to repo-root-relative path and append @alias, matching Azure error format
+                // Normalize to repo-root-relative path, matching Azure's error format:
+                // "{callerTemplate}@{repo}: Could not find {missingPath} in repository {alias}"
                 const repoRelative = path.relative(repoBaseDirForContext, resolvedPath).replace(/\\/g, '/');
-                identifier = `/${repoRelative}@${inheritedRepoAlias}`;
+                const missingPath = `/${repoRelative}`;
+                const callerDisplayPath =
+                    context.currentFile && context.repoBaseDir
+                        ? `/${path.relative(context.repoBaseDir, context.currentFile).replace(/\\/g, '/')}@${inheritedRepoAlias}`
+                        : null;
+                message = callerDisplayPath
+                    ? `${callerDisplayPath}: Could not find ${missingPath} in repository ${inheritedRepoAlias} (${resolvedPath})`
+                    : `Template file not found: ${missingPath}@${inheritedRepoAlias} (${resolvedPath})`;
             } else {
-                identifier = templatePath;
+                message = `Template file not found: ${templatePath} (${resolvedPath})`;
             }
-            throw new Error(
-                this.formatErrorWithStack(
-                    `Template file not found: ${identifier} (${resolvedPath})`,
-                    context,
-                    templateLineNumber
-                )
-            );
+            throw new Error(this.formatErrorWithStack(message, context, templateLineNumber));
         }
 
         const templateTimingLabel = context.timing
