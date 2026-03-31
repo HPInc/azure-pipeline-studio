@@ -2307,11 +2307,12 @@ function runCli(args) {
         '  -x, --expand-templates       Expand Azure Pipeline template expressions (${{}},$[],$())\n' +
         '  -a, --azure-compatible       Use Azure-compatible expansion mode (adds blank lines, etc.)\n' +
         '  -s, --skip-syntax-check      Skip syntax checking during expansion\n' +
-        '  -d, --debug                  Print files being formatted';
+        '  -d, --debug                  Print files being formatted\n' +
+        '  -t, --timing                 Print timing breakdown for each expansion phase';
 
     const argv = minimist(args, {
         string: ['output', 'repo', 'format-option', 'format-recursive', 'extension', 'variables', 'mock-catalog'],
-        boolean: ['help', 'expand-templates', 'azure-compatible', 'skip-syntax-check', 'debug', 'simulate'],
+        boolean: ['help', 'expand-templates', 'azure-compatible', 'skip-syntax-check', 'debug', 'simulate', 'timing'],
         alias: {
             h: 'help',
             o: 'output',
@@ -2324,6 +2325,7 @@ function runCli(args) {
             a: 'azure-compatible',
             s: 'skip-syntax-check',
             d: 'debug',
+            t: 'timing',
         },
         default: {
             extension: [],
@@ -2332,6 +2334,7 @@ function runCli(args) {
             'skip-syntax-check': false,
             debug: false,
             simulate: false,
+            timing: false,
         },
     });
 
@@ -2542,6 +2545,7 @@ function runCli(args) {
                     fileName: absolutePath,
                     azureCompatible: argv['azure-compatible'] || false,
                     skipSyntaxCheck: argv['skip-syntax-check'] || false,
+                    timing: argv.timing || false,
                 };
                 if (repositories) {
                     // Convert repository mappings to resourceLocations format

@@ -42,8 +42,19 @@ class AzurePipelineParser {
 
     expandPipeline(sourceText, overrides = {}) {
         const skipSyntax = overrides.skipSyntax !== undefined ? overrides.skipSyntax : this.skipSyntax;
-        const { yamlDoc, jsonDoc } = this.parseYamlDocument(sourceText, undefined, skipSyntax);
+        const timing = overrides.timing || false;
+        const t = (label) => timing && console.time('[aps] ' + label);
+        const te = (label) => timing && console.timeEnd('[aps] ' + label);
+        const startTime = timing ? Date.now() : 0;
+        if (timing) {
+            console.log('[aps] start: ' + new Date(startTime).toISOString());
+        }
 
+        t('1. parseYamlDocument');
+        const { yamlDoc, jsonDoc } = this.parseYamlDocument(sourceText, undefined, skipSyntax);
+        te('1. parseYamlDocument');
+
+        t('2. buildExecutionContext + captureQuoteStyles');
         const context = this.buildExecutionContext(jsonDoc, overrides);
         context.errors = []; // Add error collection array
         context.sourceLines = sourceText.split('\n'); // Store source lines for line number info
@@ -54,8 +65,12 @@ class AzurePipelineParser {
         context.quoteResult.fullParameterExpressions = new Set();
         context.azureCompatible = overrides.azureCompatible || false;
         context.templateQuoteStyles = new Map();
+        context.timing = timing;
+        te('2. buildExecutionContext + captureQuoteStyles');
 
+        t('3. expandNode (template expansion)');
         const expandedDocument = this.expandNode(jsonDoc, context);
+        te('3. expandNode (template expansion)');
 
         // Check if errors were collected during parsing and throw them all together
         if (context.errors.length > 0) {
@@ -79,14 +94,21 @@ class AzurePipelineParser {
         }
 
         // Convert variables from object format to array format while preserving quotes
+        t('4. convertVariablesToArrayFormat');
         this.convertVariablesToArrayFormat(expandedDocument, context);
+        te('4. convertVariablesToArrayFormat');
 
+        t('5. YAML.parseDocument + restoreQuoteStyles');
         const finalYamlDoc = YAML.parseDocument(YAML.stringify(expandedDocument));
         this.restoreQuoteStyles(finalYamlDoc.contents, [], context);
+        te('5. YAML.parseDocument + restoreQuoteStyles');
 
         console.log(`Azure Compatibility mode: ${context.azureCompatible}`);
+        t('6. applyBlockScalarStyles');
         this.applyBlockScalarStyles(finalYamlDoc.contents, context);
+        te('6. applyBlockScalarStyles');
 
+        t('7. finalYamlDoc.toString + post-processing');
         let output = finalYamlDoc.toString({
             lineWidth: 0,
             indent: 2,
@@ -128,6 +150,13 @@ class AzurePipelineParser {
 
         if (context.azureCompatible) {
             output = this.addHeredocListSpacing(output);
+        }
+
+        te('7. finalYamlDoc.toString + post-processing');
+        if (timing) {
+            const endTime = Date.now();
+            console.log('[aps] end:   ' + new Date(endTime).toISOString());
+            console.log('[aps] total: ' + (endTime - startTime) + 'ms');
         }
 
         // Return both the expanded JS document and the final YAML string
@@ -3083,7 +3112,10 @@ class AzurePipelineParser {
             );
         }
 
-        //console.log(`Expanding template '${templatePath}' from file: ${resolvedPath}`);
+        const templateTimingLabel = context.timing
+            ? 'template: ' + (repoRef ? repoRef.templatePath + '@' + repoRef.repository : templatePath)
+            : null;
+        if (templateTimingLabel) console.time('[aps] ' + templateTimingLabel);
         const templateSource = fs.readFileSync(resolvedPath, 'utf8');
         const identifier = repoRef ? `${repoRef.templatePath}@${repoRef.repository}` : templatePath;
 
@@ -3178,6 +3210,8 @@ class AzurePipelineParser {
         this.convertVariablesToArrayFormat(expandedTemplate, templateContext);
 
         const body = this.extractTemplateBody(expandedTemplate);
+
+        if (templateTimingLabel) console.timeEnd('[aps] ' + templateTimingLabel);
 
         return body;
     }
