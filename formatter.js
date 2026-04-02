@@ -238,7 +238,13 @@ function parseFormatDirectives(content) {
         const trimmed = line.trim();
 
         // Check for disable directive
-        if (isComment(line) && (trimmed === '# aps-format=false' || trimmed === '# aps-format: false')) {
+        if (
+            isComment(line) &&
+            (trimmed.startsWith('# aps-format=false') ||
+                trimmed.startsWith('# aps-format: false') ||
+                trimmed.startsWith('#aps-format=false') ||
+                trimmed.startsWith('#aps-format: false'))
+        ) {
             result.disabled = true;
             return result;
         }
