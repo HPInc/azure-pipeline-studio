@@ -1,6 +1,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { execSync, spawnSync } = require('child_process');
 const YAML = require('yaml');
 const jsep = require('jsep');
 const adoFunctions = require('./ado-functions');
@@ -3113,7 +3114,8 @@ class AzurePipelineParser {
             }
         }
 
-        if (!fs.existsSync(resolvedPath)) {
+        resolvedPath = this.resolveSymlink(resolvedPath);
+        if (!this.isReadableFile(resolvedPath)) {
             let message;
             if (repoRef) {
                 const identifier = `${repoRef.templatePath}@${repoRef.repository}`;
@@ -3140,7 +3142,7 @@ class AzurePipelineParser {
             ? 'template: ' + (repoRef ? repoRef.templatePath + '@' + repoRef.repository : templatePath)
             : null;
         if (templateTimingLabel) console.time('[aps] ' + templateTimingLabel);
-        const templateSource = fs.readFileSync(resolvedPath, 'utf8');
+        const templateSource = this.readFileContent(resolvedPath, 'utf8');
         const identifier = repoRef ? `${repoRef.templatePath}@${repoRef.repository}` : templatePath;
 
         let templateJson;
@@ -3406,15 +3408,72 @@ class AzurePipelineParser {
         );
 
         for (const candidate of candidateFiles) {
-            try {
-                const stat = fs.statSync(candidate);
-                if (stat.isFile()) return path.normalize(candidate);
-            } catch (error) {
-                // Candidate does not exist relative to this base; continue searching
-            }
+            const resolved = this.resolveSymlink(candidate);
+            if (this.isReadableFile(resolved)) return path.normalize(resolved);
         }
 
-        return candidateFiles[0];
+        return this.resolveSymlink(candidateFiles[0]);
+    }
+
+    isReadableFile(filePath) {
+        if (!filePath) return false;
+        try {
+            return fs.statSync(filePath).isFile();
+        } catch {
+            return false;
+        }
+    }
+
+    readFileContent(filePath, encoding = 'utf8') {
+        return fs.readFileSync(filePath, encoding);
+    }
+
+    /**
+     * Resolve symlinks. On Windows, WSL Linux symlinks appear as directory reparse points
+     * and lstatSync throws EISDIR. When that happens we call `wsl.exe readlink -f` with
+     * cwd set to os.tmpdir() (a real Windows path) so WSL interop launches correctly.
+     * The resolved canonical path is a regular file that statSync/readFileSync can access.
+     */
+    resolveSymlink(filePath) {
+        if (!filePath) return filePath;
+        try {
+            const lstat = fs.lstatSync(filePath);
+            if (!lstat.isSymbolicLink()) return filePath;
+            // Native Linux symlink
+            const linkTarget = fs.readlinkSync(filePath);
+            return path.resolve(path.dirname(filePath), linkTarget);
+        } catch (e) {
+            if (e.code !== 'EISDIR') return filePath;
+
+            // EISDIR on Windows means this is a WSL Linux symlink reparse point.
+            // Use wsl.exe readlink -f to resolve it to the canonical path.
+            if (!this._symlinkCache) this._symlinkCache = new Map();
+            if (this._symlinkCache.has(filePath)) return this._symlinkCache.get(filePath);
+
+            const wslMatch = filePath.match(/^\\\\wsl(?:\.localhost|\$)\\([^\\]+)(\\.*)?$/i);
+            if (!wslMatch) {
+                this._symlinkCache.set(filePath, filePath);
+                return filePath;
+            }
+
+            const distro = wslMatch[1];
+            const linuxPath = (wslMatch[2] || '\\').replace(/\\/g, '/');
+            const result = spawnSync('wsl.exe', ['-d', distro, '--', 'readlink', '-f', linuxPath], {
+                encoding: 'utf8',
+                timeout: 10000,
+                cwd: os.tmpdir(), // must be a native Windows path — UNC CWD breaks WSL interop
+            });
+
+            if (result.status === 0 && result.stdout?.trim()) {
+                const resolvedLinux = result.stdout.trim();
+                const resolved = `\\\\wsl.localhost\\${distro}${resolvedLinux.replace(/\//g, '\\')}`;
+                this._symlinkCache.set(filePath, resolved);
+                return resolved;
+            }
+
+            this._symlinkCache.set(filePath, filePath);
+            return filePath;
+        }
     }
 
     expandNodePreservingTemplates(node, context) {
