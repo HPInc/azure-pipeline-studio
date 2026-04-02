@@ -249,6 +249,54 @@ function activate(context) {
                 .replace(/'/g, '&#039;');
         };
 
+        // Collect repo root base dirs for resolving absolute-style template paths
+        // Primary: parse call stack pairs (/rel/path.yaml, \\unc\path.yaml) and strip the template
+        // suffix from the UNC path to derive the exact repo root.
+        // Fallback: use the parent directory of any bare UNC path found in the error text.
+        const templateResolveBaseDirs = [];
+        const errorText = normalizedError.message || String(normalizedError);
+
+        // Extract (templateRelPath, uncPath) pairs from call stack entries.
+        const stackPairRegex = /([^\s\(]+\.ya?ml(?:@[^:\s]+)?)(?::\d+)?\s+\((\\\\[^\)]+\.ya?ml)\)/g;
+        let stackPairMatch;
+        while ((stackPairMatch = stackPairRegex.exec(errorText)) !== null) {
+            const templateRef = stackPairMatch[1].split('@')[0]; // strip @repo suffix
+            const uncPath = stackPairMatch[2];
+            // Normalize separators to compare suffix
+            const uncNorm = uncPath.replace(/\\/g, '/');
+            const tmplNorm = templateRef.replace(/\\/g, '/');
+            if (uncNorm.endsWith(tmplNorm)) {
+                const root = uncPath.slice(0, uncPath.length - templateRef.length).replace(/[/\\]+$/, '');
+                if (root && !templateResolveBaseDirs.includes(root)) templateResolveBaseDirs.push(root);
+            }
+        }
+
+        // Fallback: use the immediate parent directory of any bare UNC path in the error text.
+        for (const uncFilePath of [...errorText.matchAll(/(\\\\[^\s\n\)]+\.ya?ml)/g)].map((m) => m[1])) {
+            const dir = path.dirname(uncFilePath);
+            if (dir && !templateResolveBaseDirs.includes(dir)) templateResolveBaseDirs.push(dir);
+        }
+
+        if (lastRenderedDocument) {
+            try {
+                const resourceOverrides = buildResourceOverridesForDocument(lastRenderedDocument);
+                if (resourceOverrides?.repositories) {
+                    for (const entry of Object.values(resourceOverrides.repositories)) {
+                        const loc = entry?.location;
+                        if (loc && typeof loc === 'string' && !templateResolveBaseDirs.includes(loc)) {
+                            templateResolveBaseDirs.push(loc);
+                        }
+                    }
+                }
+                const wf = vscode.workspace.getWorkspaceFolder(lastRenderedDocument.uri);
+                if (wf?.uri?.fsPath && !templateResolveBaseDirs.includes(wf.uri.fsPath)) {
+                    templateResolveBaseDirs.push(wf.uri.fsPath);
+                }
+            } catch (e) {
+                /* ignore */
+            }
+        }
+
         // Convert file paths in text to clickable links
         const makePathsClickable = (text) => {
             const placeholders = [];
@@ -286,12 +334,26 @@ function activate(context) {
             text = text.replace(
                 pathRegex,
                 (match, uncPath, uncLine, uncCol, winPath, winLine, winCol, unixPath, unixLine, unixCol) => {
-                    const filePath = uncPath || winPath || unixPath;
+                    let filePath = uncPath || winPath || unixPath;
                     const lineNumber = uncLine || winLine || unixLine;
 
                     // Skip extension bundle paths
                     if (filePath && filePath.includes('extension-bundle.js')) {
                         return match;
+                    }
+
+                    // For absolute-style template paths, resolve against known repository roots so the link points to the actual file on disk.
+                    if (unixPath && templateResolveBaseDirs.length) {
+                        const resolved = templateResolveBaseDirs
+                            .map((base) => path.join(base, unixPath))
+                            .find((candidate) => {
+                                try {
+                                    return fs.existsSync(candidate);
+                                } catch {
+                                    return false;
+                                }
+                            });
+                        if (resolved) filePath = resolved;
                     }
 
                     if (filePath) {
@@ -1039,6 +1101,7 @@ function activate(context) {
         setTimeout(async () => {
             try {
                 const sourceText = document.getText();
+                lastRenderedDiagramSourceText = sourceText;
 
                 // Warn if document is very large
                 if (sourceText.length > 100000) {
@@ -1536,8 +1599,8 @@ ${mermaidDiagram
                     </div>
                 </div>
                 
-                <!-- Collapsible Source Code Section -->
-                <div id="diagram-source-section" style="display: none; margin-top: 15px; background: #1e1e1e; border-radius: 4px; overflow: hidden; border-left: 4px solid #0078d4;">
+                <!-- Source Code Section (replaces diagram when visible) -->
+                <div id="diagram-source-section" style="display: none; background: #1e1e1e; border-radius: 4px; overflow: hidden; border-left: 4px solid #0078d4;">
                     <div style="padding: 15px; background: #2d2d2d; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #3e3e42;">
                         <h3 style="margin: 0; color: #ffffff; font-size: 1.1em;">📝 Mermaid Source Code</h3>
                         <div style="display: flex; gap: 10px;">
@@ -1613,13 +1676,15 @@ ${mermaidDiagram
             });
         })();
         
-        // Toggle diagram source visibility
+        // Toggle diagram source visibility (source replaces the diagram area)
         window.toggleDiagramSource = function() {
             const sourceSection = document.getElementById('diagram-source-section');
+            const diagramContainer = document.getElementById('diagram-container');
             const toggleBtn = document.getElementById('source-toggle-btn');
-            if (sourceSection && toggleBtn) {
+            if (sourceSection && diagramContainer && toggleBtn) {
                 const isVisible = sourceSection.style.display !== 'none';
                 sourceSection.style.display = isVisible ? 'none' : 'block';
+                diagramContainer.style.display = isVisible ? '' : 'none';
                 toggleBtn.textContent = isVisible ? '📝 View Source' : '🔼 Hide Source';
             }
         };
@@ -1730,25 +1795,19 @@ ${mermaidDiagram
             return;
         }
 
-        // Diagram rendering can be expensive for large pipelines; allow opting in to live refresh while typing.
-        const diagramConfig = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
-        const refreshOnType = diagramConfig.get('diagram.refreshOnType', false);
-        if (!refreshOnType) {
-            return;
-        }
-
-        const configuredDelay = diagramConfig.get('diagram.refreshDelayMs', 1200);
-        const effectiveDelay = Number.isInteger(configuredDelay) && configuredDelay >= 0 ? configuredDelay : delayMs;
+        const configuredDelay = vscode.workspace
+            .getConfiguration('azurePipelineStudio', document.uri)
+            .get('diagram.refreshDelayMs', 500);
+        const effectiveDelay =
+            delayMs === 0 ? 0 : Number.isInteger(configuredDelay) && configuredDelay >= 0 ? configuredDelay : delayMs;
 
         pendingDependenciesDocument = document;
         clearTimeout(dependenciesDebounceTimer);
         clearTimeout(activeDependenciesDebounceTimer);
         dependenciesDebounceTimer = activeDependenciesDebounceTimer = setTimeout(() => {
-            // Check again if panel is still valid (might have been disposed)
             if (!dependenciesPanel || isDependenciesRendering) {
                 return;
             }
-
             const queuedDocument = pendingDependenciesDocument;
             pendingDependenciesDocument = null;
             if (queuedDocument) {
@@ -1968,26 +2027,17 @@ ${mermaidDiagram
             if (isRelevantDocument(document)) {
                 scheduleRender(document);
             }
-
-            // Refresh dependencies panel even if not the expanded document
-            scheduleDependenciesRefresh(document);
         })
     );
 
     context.subscriptions.push(
         vscode.workspace.onDidSaveTextDocument((document) => {
+            // Diagram panel refresh: runs independently of expansion panel
+            scheduleDependenciesRefresh(document, 0);
             if (!isRelevantDocument(document)) return;
             const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
             if (config.get('refreshOnSave', true)) {
                 scheduleRender(document, 0);
-            }
-
-            if (
-                dependenciesPanel &&
-                dependenciesDocumentUri &&
-                dependenciesDocumentUri.toString() === document.uri.toString()
-            ) {
-                void renderDependenciesPanel(document, { silent: true });
             }
         })
     );
@@ -2257,11 +2307,12 @@ function runCli(args) {
         '  -x, --expand-templates       Expand Azure Pipeline template expressions (${{}},$[],$())\n' +
         '  -a, --azure-compatible       Use Azure-compatible expansion mode (adds blank lines, etc.)\n' +
         '  -s, --skip-syntax-check      Skip syntax checking during expansion\n' +
-        '  -d, --debug                  Print files being formatted';
+        '  -d, --debug                  Print files being formatted\n' +
+        '  -t, --timing                 Print timing breakdown for each expansion phase';
 
     const argv = minimist(args, {
         string: ['output', 'repo', 'format-option', 'format-recursive', 'extension', 'variables', 'mock-catalog'],
-        boolean: ['help', 'expand-templates', 'azure-compatible', 'skip-syntax-check', 'debug', 'simulate'],
+        boolean: ['help', 'expand-templates', 'azure-compatible', 'skip-syntax-check', 'debug', 'simulate', 'timing'],
         alias: {
             h: 'help',
             o: 'output',
@@ -2274,6 +2325,7 @@ function runCli(args) {
             a: 'azure-compatible',
             s: 'skip-syntax-check',
             d: 'debug',
+            t: 'timing',
         },
         default: {
             extension: [],
@@ -2282,6 +2334,7 @@ function runCli(args) {
             'skip-syntax-check': false,
             debug: false,
             simulate: false,
+            timing: false,
         },
     });
 
@@ -2492,6 +2545,7 @@ function runCli(args) {
                     fileName: absolutePath,
                     azureCompatible: argv['azure-compatible'] || false,
                     skipSyntaxCheck: argv['skip-syntax-check'] || false,
+                    timing: argv.timing || false,
                 };
                 if (repositories) {
                     // Convert repository mappings to resourceLocations format

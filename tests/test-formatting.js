@@ -590,6 +590,330 @@ steps:
     }
 });
 
+// Test 27: Sibling mapping key after conditional directive value block is caught
+const test27Pass = runTest('Test 27: Sibling mapping key after conditional value block is flagged', () => {
+    // jobs: [] is at the same indent as '- stage: Deploy', making it a sibling
+    // of the conditional rather than inside the conditional's value block.
+    const yaml = ['stages:', "- ${{ if eq(parameters.env, 'prod') }}:", '  - stage: Deploy', '  jobs: []'].join('\n');
+
+    const result = formatYaml(yaml, { suppressConsoleOutput: true });
+    const output = [result.error || '', result.warning || ''].join(' ');
+
+    if (!output.includes('sibling mapping key')) {
+        throw new Error('Should warn about sibling mapping key after conditional value block');
+    }
+});
+
+// Test 28: Correctly indented conditional value block produces no warning
+const test28Pass = runTest('Test 28: Correctly indented conditional value block passes without warning', () => {
+    const yaml = ['stages:', "- ${{ if eq(parameters.env, 'prod') }}:", '  - stage: Deploy', '    jobs: []'].join('\n');
+
+    const result = formatYaml(yaml, { suppressConsoleOutput: true });
+
+    if (result.error || result.warning) {
+        throw new Error(
+            `Should not produce error or warning for correct indentation, got: ${result.error || result.warning}`
+        );
+    }
+});
+
+// Test 29: Over-indented value block with intermediate-indent sibling is caught
+const test29Pass = runTest('Test 29: Over-indented value block with intermediate-indent sibling is flagged', () => {
+    // Value block starts at indent 3 (over-indented); jobs: [] at indent 2 is
+    // between condIndent(0) and valueIndent(3), making it an intermediate-level sibling.
+    const yaml = ['stages:', "- ${{ if eq(parameters.env, 'prod') }}:", '   - stage: Deploy', '  jobs: []'].join('\n');
+
+    const result = formatYaml(yaml, { suppressConsoleOutput: true });
+    const output = [result.error || '', result.warning || ''].join(' ');
+
+    if (!output.includes('sibling')) {
+        throw new Error('Should warn about intermediate-indent sibling key with over-indented value block');
+    }
+});
+
+// Test 30: Parser rejects YAML where block sequence is used as implicit map key
+const test30Pass = runTest('Test 30: Parser throws on block sequence used as implicit map key', () => {
+    // A leading space before - ${{ ... }}: misaligns the conditional, causing the
+    // YAML parser to treat the block sequence as an implicit map key (mapAsMap warning).
+    const yaml = ['stages:', " - ${{ if eq(parameters.env, 'prod') }}:", '- stage: Deploy', '  jobs: []'].join('\n');
+
+    const parser = new AzurePipelineParser();
+    let threw = false;
+    try {
+        parser.expandPipelineFromString(yaml, { suppressConsoleOutput: true });
+    } catch (e) {
+        threw = true;
+        if (
+            !e.message.includes('block sequence') &&
+            !e.message.includes('implicit map key') &&
+            !e.message.includes('Failed to parse')
+        ) {
+            throw new Error(`Expected block sequence / implicit map key error, got: ${e.message}`);
+        }
+    }
+    if (!threw) {
+        throw new Error('Parser should throw for block sequence used as implicit map key');
+    }
+});
+
+// Test 31: YAML explicit key indicator (?) before conditional is caught
+const test31Pass = runTest("Test 31: YAML explicit key indicator '?' before conditional is flagged", () => {
+    const yaml = [
+        'stages:',
+        "? - ${{ if eq(parameters.env, 'prod') }}:",
+        '  - stage: Deploy',
+        '    jobs: []',
+        ': value',
+    ].join('\n');
+
+    const result = formatYaml(yaml, { suppressConsoleOutput: true });
+    const output = [result.error || '', result.warning || ''].join(' ');
+
+    if (!output.includes('explicit key indicator')) {
+        throw new Error("Should warn about YAML explicit key indicator '?' before conditional");
+    }
+});
+
+// Test 32: Duplicate key is detected by formatter
+const test32Pass = runTest('Test 32: Duplicate mapping key is detected by formatter', () => {
+    const yaml = [
+        'stages:',
+        '- stage: Build',
+        '  pool:',
+        '    vmImage: ubuntu-latest',
+        '  pool:',
+        '    vmImage: windows-latest',
+    ].join('\n');
+
+    const result = formatYaml(yaml, { suppressConsoleOutput: true });
+    const output = [result.error || '', result.warning || ''].join(' ');
+
+    if (!output.includes("Duplicate key 'pool'")) {
+        throw new Error("Should detect duplicate key 'pool'");
+    }
+    if (!output.includes('First defined at') || !output.includes('Duplicate found at')) {
+        throw new Error('Should include first-defined and duplicate locations');
+    }
+});
+
+// Test 33: Azure expression keys are not flagged as duplicates by formatter
+const test33Pass = runTest('Test 33: Azure expression keys are not flagged as duplicates', () => {
+    const yaml = [
+        'jobs:',
+        "- ${{ if eq(parameters.env, 'prod') }}:",
+        '  - job: ProdJob',
+        "- ${{ if ne(parameters.env, 'prod') }}:",
+        '  - job: DevJob',
+    ].join('\n');
+
+    const result = formatYaml(yaml, { suppressConsoleOutput: true });
+
+    if (result.error && result.error.toLowerCase().includes('duplicate')) {
+        throw new Error('Should not flag Azure expression keys as duplicates');
+    }
+});
+
+// Test 34: Parser throws for duplicate key and includes location info
+const test34Pass = runTest('Test 34: Parser throws for duplicate key with location info', () => {
+    const yaml = [
+        'stages:',
+        '- stage: Build',
+        '  pool:',
+        '    vmImage: ubuntu-latest',
+        '  pool:',
+        '    vmImage: windows-latest',
+    ].join('\n');
+
+    let threw = false;
+    try {
+        const parser = new AzurePipelineParser();
+        parser.expandPipelineFromString(yaml, {});
+    } catch (e) {
+        threw = true;
+        if (!e.message.includes("Duplicate key 'pool'")) {
+            throw new Error(`Expected duplicate key error for 'pool', got: ${e.message}`);
+        }
+        if (!e.message.includes('First defined at') || !e.message.includes('Duplicate found at')) {
+            throw new Error('Expected first-defined and duplicate location info in error');
+        }
+    }
+    if (!threw) {
+        throw new Error('Parser should throw for duplicate key');
+    }
+});
+
+// Test 35: Parser allows Azure expression keys that appear multiple times
+const test35Pass = runTest('Test 35: Parser allows Azure expression keys that look like duplicates', () => {
+    const yaml = [
+        'parameters:',
+        '- name: env',
+        '  type: string',
+        '  default: dev',
+        '',
+        'stages:',
+        "- ${{ if eq(parameters.env, 'prod') }}:",
+        '  - stage: ProdDeploy',
+        '    jobs: []',
+        "- ${{ if ne(parameters.env, 'prod') }}:",
+        '  - stage: DevDeploy',
+        '    jobs: []',
+    ].join('\n');
+
+    // Should not throw a "duplicate key" error
+    // (may throw for other reasons like unresolved params, but not for ${{ }} duplication)
+    let errorMsg = null;
+    try {
+        const parser = new AzurePipelineParser();
+        parser.expandPipelineFromString(yaml, {});
+    } catch (e) {
+        errorMsg = e.message;
+    }
+
+    if (errorMsg && errorMsg.toLowerCase().includes('duplicate')) {
+        throw new Error(`Should not flag Azure expression keys as duplicates, got: ${errorMsg}`);
+    }
+});
+
+// Test 36: ${{ insert }} expansion that conflicts with an existing key is caught
+const test36Pass = runTest('Test 36: ${{ insert }} expansion that conflicts with existing key is caught', () => {
+    // parameters.extra expands to { pool: ... }, but pool already exists at root level
+    const yaml = [
+        'parameters:',
+        '- name: extra',
+        '  type: object',
+        '  default:',
+        '    pool:',
+        '      vmImage: windows-latest',
+        '',
+        'pool:',
+        '  vmImage: ubuntu-latest',
+        '',
+        '${{ insert }}: ${{ parameters.extra }}',
+    ].join('\n');
+
+    let threw = false;
+    try {
+        const parser = new AzurePipelineParser();
+        parser.expandPipelineFromString(yaml, {});
+    } catch (e) {
+        threw = true;
+        if (!e.message.includes("Duplicate key 'pool'") || !e.message.includes('insert')) {
+            throw new Error(`Expected duplicate key 'pool' from insert, got: ${e.message.substring(0, 150)}`);
+        }
+    }
+    if (!threw) {
+        throw new Error('Parser should throw when ${{ insert }} introduces a duplicate key');
+    }
+});
+
+// Test 37: ${{ insert }} expansion with no conflicting keys succeeds
+const test37Pass = runTest('Test 37: ${{ insert }} expansion with no conflicting keys succeeds', () => {
+    const yaml = [
+        'parameters:',
+        '- name: extra',
+        '  type: object',
+        '  default:',
+        '    timeout: 60',
+        '',
+        'pool:',
+        '  vmImage: ubuntu-latest',
+        '',
+        '${{ insert }}: ${{ parameters.extra }}',
+    ].join('\n');
+
+    let errorMsg = null;
+    try {
+        const parser = new AzurePipelineParser();
+        parser.expandPipelineFromString(yaml, {});
+    } catch (e) {
+        errorMsg = e.message;
+    }
+
+    if (errorMsg && errorMsg.toLowerCase().includes('duplicate')) {
+        throw new Error(`Should not flag non-conflicting insert as duplicate, got: ${errorMsg}`);
+    }
+});
+
+// Test 38: Duplicate step name within a job is caught during expansion
+const test38Pass = runTest('Test 38: Duplicate step name within a job is caught during expansion', () => {
+    const yaml = [
+        'jobs:',
+        '- job: Build',
+        '  steps:',
+        '  - script: echo first',
+        '    name: myStep',
+        '  - script: echo second',
+        '    name: myStep',
+    ].join('\n');
+
+    let errorMsg = null;
+    try {
+        const parser = new AzurePipelineParser();
+        parser.expandPipelineFromString(yaml, {});
+    } catch (e) {
+        errorMsg = e.message;
+    }
+
+    if (!errorMsg || !errorMsg.includes("Duplicate step name 'myStep'")) {
+        throw new Error(`Expected duplicate step name error, got: ${errorMsg}`);
+    }
+});
+
+// Test 39: Steps with unique names in a job succeed
+const test39Pass = runTest('Test 39: Steps with unique names in a job succeed', () => {
+    const yaml = [
+        'jobs:',
+        '- job: Build',
+        '  steps:',
+        '  - script: echo first',
+        '    name: stepOne',
+        '  - script: echo second',
+        '    name: stepTwo',
+    ].join('\n');
+
+    let errorMsg = null;
+    try {
+        const parser = new AzurePipelineParser();
+        parser.expandPipelineFromString(yaml, {});
+    } catch (e) {
+        errorMsg = e.message;
+    }
+
+    if (errorMsg && errorMsg.toLowerCase().includes('duplicate step name')) {
+        throw new Error(`Should not flag unique step names as duplicates, got: ${errorMsg}`);
+    }
+});
+
+// Test 40: Steps with same displayName but different name do not trigger duplicate step name error
+const test40Pass = runTest(
+    'Test 40: Steps with same displayName but different name do not trigger duplicate error',
+    () => {
+        const yaml = [
+            'jobs:',
+            '- job: Build',
+            '  steps:',
+            '  - script: echo first',
+            '    displayName: My Step',
+            '    name: stepOne',
+            '  - script: echo second',
+            '    displayName: My Step',
+            '    name: stepTwo',
+        ].join('\n');
+
+        let errorMsg = null;
+        try {
+            const parser = new AzurePipelineParser();
+            parser.expandPipelineFromString(yaml, {});
+        } catch (e) {
+            errorMsg = e.message;
+        }
+
+        if (errorMsg && errorMsg.toLowerCase().includes('duplicate step name')) {
+            throw new Error(`Should not flag duplicate displayName as a duplicate step name error, got: ${errorMsg}`);
+        }
+    }
+);
+
 // Summary
 const allTests = [
     test1Pass,
@@ -618,6 +942,20 @@ const allTests = [
     test24Pass,
     test25Pass,
     test26Pass,
+    test27Pass,
+    test28Pass,
+    test29Pass,
+    test30Pass,
+    test31Pass,
+    test32Pass,
+    test33Pass,
+    test34Pass,
+    test35Pass,
+    test36Pass,
+    test37Pass,
+    test38Pass,
+    test39Pass,
+    test40Pass,
 ];
 const passed = allTests.filter((t) => t).length;
 const failed = allTests.length - passed;

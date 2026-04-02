@@ -1,5 +1,4 @@
 stages:
 - job: Build
-
   steps:
   - template: truly-missing-template.yaml

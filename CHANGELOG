@@ -5,6 +5,25 @@ All notable changes to Azure Pipeline Studio will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-04-02
+
+### Added
+- **Repo alias inheritance for unqualified absolute paths**: Template paths that start with `/` inside a repo template now inherit the calling template's repo alias, matching Azure Pipelines behaviour. Previously such paths were resolved against the default repo.
+- **`--timing` flag**: New CLI flag that prints per-phase timing for the expansion pass, useful for profiling large pipelines.
+- **View Source in diagram area**: "View Source" now replaces the diagram panel content instead of appending below it.
+- **Duplicate step name detection**: Duplicate step `displayName` values within a job are now flagged during expansion.
+- **Duplicate key detection**: Duplicate YAML keys (including those introduced by `${{ insert }}` expansion) are detected and reported. Azure expression syntax keys are allowed through without false positives.
+
+### Fixed
+- **WSL symlink resolution on Windows**: Template files that are WSL Linux symlinks are now resolved correctly when accessed from Windows via `\\wsl.localhost\...` UNC paths. Resolution uses `wsl.exe readlink -f` with a native Windows CWD to avoid WSL interop failures, and results are cached per parser instance.
+- **Azure error format for missing repo templates**: Error messages when a template cannot be found inside a repo context now match Azure's format: `{caller}@{repo}: Could not find {path} in repository {alias}`.
+- **Path normalisation in repo error messages**: `../` and absolute paths inside repo templates are normalised to `@alias` form in error messages, matching Azure's display style.
+- **`mapAsMap` warning for bad-indent collection keys**: A YAML collection key with bad indentation no longer produces a spurious `mapAsMap` warning.
+- **Diagram panel re-rendering on save**: Fixed the diagram panel re-rendering unnecessarily on every save.
+- **Clickable links for absolute template paths in error panel**: Absolute template paths in the error panel are now correctly linkified.
+
+[1.2.0]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.2.0
+
 ## [1.1.2] - 2026-03-25
 
 ### Fixed

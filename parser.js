@@ -1,10 +1,11 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { execSync, spawnSync } = require('child_process');
 const YAML = require('yaml');
 const jsep = require('jsep');
 const adoFunctions = require('./ado-functions');
-const { analyzeTemplateHints } = require('./formatter');
+const { analyzeTemplateHints, findFirstKeyOccurrence } = require('./formatter');
 
 const CHECKOUT_TASK = '6d15af64-176c-496d-b583-fd2ae21d4df4@1';
 // Mapping of shorthand keys to Azure task identifiers
@@ -42,8 +43,19 @@ class AzurePipelineParser {
 
     expandPipeline(sourceText, overrides = {}) {
         const skipSyntax = overrides.skipSyntax !== undefined ? overrides.skipSyntax : this.skipSyntax;
-        const { yamlDoc, jsonDoc } = this.parseYamlDocument(sourceText, undefined, skipSyntax);
+        const timing = overrides.timing || false;
+        const t = (label) => timing && console.time('[aps] ' + label);
+        const te = (label) => timing && console.timeEnd('[aps] ' + label);
+        const startTime = timing ? Date.now() : 0;
+        if (timing) {
+            console.log('[aps] start: ' + new Date(startTime).toISOString());
+        }
 
+        t('1. parseYamlDocument');
+        const { yamlDoc, jsonDoc } = this.parseYamlDocument(sourceText, undefined, skipSyntax);
+        te('1. parseYamlDocument');
+
+        t('2. buildExecutionContext + captureQuoteStyles');
         const context = this.buildExecutionContext(jsonDoc, overrides);
         context.errors = []; // Add error collection array
         context.sourceLines = sourceText.split('\n'); // Store source lines for line number info
@@ -54,19 +66,27 @@ class AzurePipelineParser {
         context.quoteResult.fullParameterExpressions = new Set();
         context.azureCompatible = overrides.azureCompatible || false;
         context.templateQuoteStyles = new Map();
+        context.timing = timing;
+        te('2. buildExecutionContext + captureQuoteStyles');
 
+        t('3. expandNode (template expansion)');
         const expandedDocument = this.expandNode(jsonDoc, context);
+        te('3. expandNode (template expansion)');
 
         // Check if errors were collected during parsing and throw them all together
         if (context.errors.length > 0) {
-            // Deduplicate errors based on message content
+            // Deduplicate errors: normalize numeric values in the message portion (before the call
+            // stack) so the same logical error triggered from multiple template expansions is only
+            // reported once.
             const uniqueErrors = [];
-            const seenMessages = new Set();
+            const seenMessageKeys = new Set();
 
             for (const error of context.errors) {
-                if (!seenMessages.has(error.message)) {
+                const messageBody = error.message.split('\n  Template call stack:')[0];
+                const messageKey = messageBody.replace(/\d+/g, '#');
+                if (!seenMessageKeys.has(messageKey)) {
                     uniqueErrors.push(error.message);
-                    seenMessages.add(error.message);
+                    seenMessageKeys.add(messageKey);
                 }
             }
 
@@ -75,14 +95,21 @@ class AzurePipelineParser {
         }
 
         // Convert variables from object format to array format while preserving quotes
+        t('4. convertVariablesToArrayFormat');
         this.convertVariablesToArrayFormat(expandedDocument, context);
+        te('4. convertVariablesToArrayFormat');
 
+        t('5. YAML.parseDocument + restoreQuoteStyles');
         const finalYamlDoc = YAML.parseDocument(YAML.stringify(expandedDocument));
         this.restoreQuoteStyles(finalYamlDoc.contents, [], context);
+        te('5. YAML.parseDocument + restoreQuoteStyles');
 
         console.log(`Azure Compatibility mode: ${context.azureCompatible}`);
+        t('6. applyBlockScalarStyles');
         this.applyBlockScalarStyles(finalYamlDoc.contents, context);
+        te('6. applyBlockScalarStyles');
 
+        t('7. finalYamlDoc.toString + post-processing');
         let output = finalYamlDoc.toString({
             lineWidth: 0,
             indent: 2,
@@ -124,6 +151,13 @@ class AzurePipelineParser {
 
         if (context.azureCompatible) {
             output = this.addHeredocListSpacing(output);
+        }
+
+        te('7. finalYamlDoc.toString + post-processing');
+        if (timing) {
+            const endTime = Date.now();
+            console.log('[aps] end:   ' + new Date(endTime).toISOString());
+            console.log('[aps] total: ' + (endTime - startTime) + 'ms');
         }
 
         // Return both the expanded JS document and the final YAML string
@@ -265,13 +299,60 @@ class AzurePipelineParser {
         try {
             let yamlDoc;
             try {
-                const docs = YAML.parseAllDocuments(source);
+                const docs = YAML.parseAllDocuments(source, { uniqueKeys: true });
                 yamlDoc = docs.find((doc) => doc.contents !== null && doc.contents !== undefined);
                 if (!yamlDoc) {
                     throw new Error('Empty YAML document');
                 }
             } catch (parseError) {
                 yamlDoc = YAML.parseDocument(source);
+            }
+
+            if (yamlDoc.errors && yamlDoc.errors.length > 0) {
+                const sourceLines = source.split('\n');
+
+                // Block sequence as implicit map key — always a data-corrupting error.
+                const blockSequenceErrors = yamlDoc.errors.filter((e) => {
+                    if (!e.message) return false;
+                    const msg = e.message.toLowerCase();
+                    return msg.includes('block sequence') && msg.includes('implicit map key');
+                });
+                if (blockSequenceErrors.length > 0) {
+                    const errorLines = blockSequenceErrors.map((e) => e.message.split('\n')[0]);
+                    throw new Error(errorLines.join('\n'));
+                }
+
+                // Duplicate keys — throw for genuine duplicates, but skip Azure template
+                // expression keys like ${{ insert }}, ${{ if ... }}, etc. which are valid.
+                const duplicateKeyErrors = yamlDoc.errors.filter((e) => {
+                    if (!e.message) return false;
+                    const msg = e.message.toLowerCase();
+                    if (!msg.includes('map keys must be unique')) return false;
+                    const lineMatch = e.message.match(/at line (\d+)/);
+                    if (!lineMatch) return true;
+                    const line = sourceLines[parseInt(lineMatch[1], 10) - 1] || '';
+                    return !line.includes('${{');
+                });
+                if (duplicateKeyErrors.length > 0) {
+                    const messages = duplicateKeyErrors.map((e) => {
+                        const locMatch = e.message.match(/at line (\d+), column (\d+)/);
+                        if (!locMatch) return e.message.split('\n')[0];
+                        const dupLine = parseInt(locMatch[1], 10) - 1;
+                        const dupCol = parseInt(locMatch[2], 10) - 1;
+                        const lineContent = sourceLines[dupLine] || '';
+                        const keyMatch = lineContent.slice(dupCol).match(/^([^:\s]+)/);
+                        const keyName = keyMatch ? keyMatch[1] : 'key';
+                        const filePrefix = identifier ? `${identifier}:` : '';
+                        const first = findFirstKeyOccurrence(source, dupLine, dupCol);
+                        const dupLocation = `${filePrefix}${dupLine + 1}:${dupCol + 1}`;
+                        if (first) {
+                            const firstLocation = `${filePrefix}${first.line + 1}:${first.column + 1}`;
+                            return `Duplicate key '${keyName}' detected\n  First defined at: ${firstLocation}\n  Duplicate found at: ${dupLocation}`;
+                        }
+                        return `Duplicate key '${keyName}' at ${dupLocation}`;
+                    });
+                    throw new Error(messages.join('\n\n'));
+                }
             }
 
             // Preserve float-valued scalars as their source string representation
@@ -1190,6 +1271,30 @@ class AzurePipelineParser {
             }
         }
 
+        if (parentKey === 'steps') {
+            const seenStepNames = new Map();
+            result.forEach((step, stepIndex) => {
+                if (step && typeof step === 'object' && typeof step.name === 'string' && step.name) {
+                    if (seenStepNames.has(step.name)) {
+                        context.errors.push({
+                            message: this.formatErrorWithStack(
+                                "Duplicate step name '" +
+                                    step.name +
+                                    "' found in job. Step names must be unique within a job (first occurrence at step index " +
+                                    (seenStepNames.get(step.name) + 1) +
+                                    ', duplicate at step index ' +
+                                    (stepIndex + 1) +
+                                    ').',
+                                context
+                            ),
+                        });
+                    } else {
+                        seenStepNames.set(step.name, stepIndex);
+                    }
+                }
+            });
+        }
+
         return result;
     }
 
@@ -1745,6 +1850,21 @@ class AzurePipelineParser {
             } else if (this.isInsertDirective(rawKey)) {
                 const expandedValue = this.expandNodePreservingTemplates(value, context);
                 if (this.isNonArrayObject(expandedValue)) {
+                    const duplicateKeys = Object.keys(expandedValue).filter((k) =>
+                        Object.prototype.hasOwnProperty.call(result, k)
+                    );
+                    if (duplicateKeys.length > 0 && context && context.errors) {
+                        for (const dupKey of duplicateKeys) {
+                            context.errors.push({
+                                message: this.formatErrorWithStack(
+                                    "Duplicate key '" +
+                                        dupKey +
+                                        "' introduced by ${{ insert }} expansion conflicts with an existing key.",
+                                    context
+                                ),
+                            });
+                        }
+                    }
                     Object.assign(result, expandedValue);
                 }
                 continue;
@@ -2754,6 +2874,8 @@ class AzurePipelineParser {
             baseDir: baseDir || parent.baseDir,
             repoBaseDir: options.repoBaseDir !== undefined ? options.repoBaseDir : parent.repoBaseDir,
             rootRepoBaseDir: parent.rootRepoBaseDir,
+            currentRepoAlias:
+                options.currentRepoAlias !== undefined ? options.currentRepoAlias : parent.currentRepoAlias,
             resourceLocations: parent.resourceLocations || {},
             templateStack: parent.templateStack || [],
             templateQuoteStyles: parent.templateQuoteStyles, // Preserve template quote styles map
@@ -2912,13 +3034,16 @@ class AzurePipelineParser {
         let resolvedPath;
         let templateBaseDir;
         let repoBaseDirForContext = context.repoBaseDir || undefined;
+        let inheritedRepoAlias = null;
 
         if (isSelfRepo) {
             const selfBaseDir = context.rootRepoBaseDir || context.repoBaseDir;
             const repoBaseDir = this.resolveRepoBaseDirectory(selfBaseDir, context);
             repoBaseDirForContext = repoBaseDir;
             const currentDir = context.baseDir || repoBaseDir;
-            resolvedPath = this.resolveRepoTemplate(repoRef.templatePath, currentDir, repoBaseDir);
+            resolvedPath = this.resolveRepoTemplate(repoRef.templatePath, currentDir, repoBaseDir, {
+                preferRepoBaseDir: false,
+            });
             if (!resolvedPath) {
                 throw new Error(
                     this.formatErrorWithStack(
@@ -2970,7 +3095,14 @@ class AzurePipelineParser {
             templateBaseDir = path.dirname(resolvedPath);
         } else {
             const repoBaseDir = context.repoBaseDir || undefined;
-            const candidatePath = this.resolveRepoTemplate(templatePath, context.baseDir, repoBaseDir);
+            // Absolute paths (starting with /) are repo-root-relative. Relative paths (including ../)
+            // resolve from the calling template's directory. Either way, if we're inside a repo-sourced
+            // template, the path inherits that repo alias — matching Azure Pipelines' behaviour.
+            const isAbsoluteTmpl = typeof templatePath === 'string' && templatePath.startsWith('/');
+            inheritedRepoAlias = context.currentRepoAlias || null;
+            const candidatePath = this.resolveRepoTemplate(templatePath, context.baseDir, repoBaseDir, {
+                preferRepoBaseDir: isAbsoluteTmpl,
+            });
             if (candidatePath) {
                 resolvedPath = candidatePath;
                 templateBaseDir = path.dirname(resolvedPath);
@@ -2982,15 +3114,35 @@ class AzurePipelineParser {
             }
         }
 
-        if (!fs.existsSync(resolvedPath)) {
-            const identifier = repoRef ? `${repoRef.templatePath}@${repoRef.repository}` : templatePath;
-            throw new Error(
-                this.formatErrorWithStack(`Template file not found: ${identifier}`, context, templateLineNumber)
-            );
+        resolvedPath = this.resolveSymlink(resolvedPath);
+        if (!this.isReadableFile(resolvedPath)) {
+            let message;
+            if (repoRef) {
+                const identifier = `${repoRef.templatePath}@${repoRef.repository}`;
+                message = `Template file not found: ${identifier} (${resolvedPath})`;
+            } else if (inheritedRepoAlias && repoBaseDirForContext) {
+                // Normalize to repo-root-relative path, matching Azure's error format:
+                // "{callerTemplate}@{repo}: Could not find {missingPath} in repository {alias}"
+                const repoRelative = path.relative(repoBaseDirForContext, resolvedPath).replace(/\\/g, '/');
+                const missingPath = `/${repoRelative}`;
+                const callerDisplayPath =
+                    context.currentFile && context.repoBaseDir
+                        ? `/${path.relative(context.repoBaseDir, context.currentFile).replace(/\\/g, '/')}@${inheritedRepoAlias}`
+                        : null;
+                message = callerDisplayPath
+                    ? `${callerDisplayPath}: Could not find ${missingPath} in repository ${inheritedRepoAlias} (${resolvedPath})`
+                    : `Template file not found: ${missingPath}@${inheritedRepoAlias} (${resolvedPath})`;
+            } else {
+                message = `Template file not found: ${templatePath} (${resolvedPath})`;
+            }
+            throw new Error(this.formatErrorWithStack(message, context, templateLineNumber));
         }
 
-        //console.log(`Expanding template '${templatePath}' from file: ${resolvedPath}`);
-        const templateSource = fs.readFileSync(resolvedPath, 'utf8');
+        const templateTimingLabel = context.timing
+            ? 'template: ' + (repoRef ? repoRef.templatePath + '@' + repoRef.repository : templatePath)
+            : null;
+        if (templateTimingLabel) console.time('[aps] ' + templateTimingLabel);
+        const templateSource = this.readFileContent(resolvedPath, 'utf8');
         const identifier = repoRef ? `${repoRef.templatePath}@${repoRef.repository}` : templatePath;
 
         let templateJson;
@@ -3047,7 +3199,11 @@ class AzurePipelineParser {
             const paramType = parameterInfo.parameterTypes[name] || 'string';
             mergedParameters[name] = paramType !== 'boolean' && typeof value === 'boolean' ? String(value) : value;
         }
-        const templateDisplayPath = repoRef ? `${repoRef.templatePath}@${repoRef.repository}` : templatePath;
+        const templateDisplayPath = repoRef
+            ? `${repoRef.templatePath}@${repoRef.repository}`
+            : inheritedRepoAlias && repoBaseDirForContext
+              ? `/${path.relative(repoBaseDirForContext, resolvedPath).replace(/\\/g, '/')}@${inheritedRepoAlias}`
+              : templatePath;
 
         // Build stack entry with path, resolved location, and line number
         // Always include resolved path in parentheses for clickable navigation
@@ -3073,6 +3229,7 @@ class AzurePipelineParser {
         const templateContext = this.createTemplateContext(updatedContext, mergedParameters, templateBaseDir, {
             repoBaseDir: repoBaseDirForContext,
             templateFile: resolvedPath, // Pass the resolved template file path for scoping
+            currentRepoAlias: repoRef ? repoRef.repository : context.currentRepoAlias,
         });
 
         // Update source lines to the template file so nested templates can find their line numbers
@@ -3084,6 +3241,8 @@ class AzurePipelineParser {
         this.convertVariablesToArrayFormat(expandedTemplate, templateContext);
 
         const body = this.extractTemplateBody(expandedTemplate);
+
+        if (templateTimingLabel) console.timeEnd('[aps] ' + templateTimingLabel);
 
         return body;
     }
@@ -3222,7 +3381,7 @@ class AzurePipelineParser {
         return absoluteLocation;
     }
 
-    resolveRepoTemplate(templatePath, cwd, repoBaseDir) {
+    resolveRepoTemplate(templatePath, cwd, repoBaseDir, options = {}) {
         if (!templatePath) return undefined;
 
         const parts = String(templatePath)
@@ -3231,11 +3390,15 @@ class AzurePipelineParser {
             .filter((segment) => segment?.length);
 
         const candidateBases = [];
+        const preferRepoBaseDir = options.preferRepoBaseDir !== false;
 
-        if (repoBaseDir) candidateBases.push(repoBaseDir);
-
-        if (cwd && (!repoBaseDir || path.normalize(repoBaseDir) !== path.normalize(cwd))) {
-            candidateBases.push(cwd);
+        if (preferRepoBaseDir) {
+            if (repoBaseDir) candidateBases.push(repoBaseDir);
+            if (cwd && (!repoBaseDir || path.normalize(repoBaseDir) !== path.normalize(cwd))) candidateBases.push(cwd);
+        } else {
+            if (cwd) candidateBases.push(cwd);
+            if (repoBaseDir && (!cwd || path.normalize(repoBaseDir) !== path.normalize(cwd)))
+                candidateBases.push(repoBaseDir);
         }
 
         if (!candidateBases.length) return undefined;
@@ -3245,15 +3408,72 @@ class AzurePipelineParser {
         );
 
         for (const candidate of candidateFiles) {
-            try {
-                const stat = fs.statSync(candidate);
-                if (stat.isFile()) return path.normalize(candidate);
-            } catch (error) {
-                // Candidate does not exist relative to this base; continue searching
-            }
+            const resolved = this.resolveSymlink(candidate);
+            if (this.isReadableFile(resolved)) return path.normalize(resolved);
         }
 
-        return candidateFiles[0];
+        return this.resolveSymlink(candidateFiles[0]);
+    }
+
+    isReadableFile(filePath) {
+        if (!filePath) return false;
+        try {
+            return fs.statSync(filePath).isFile();
+        } catch {
+            return false;
+        }
+    }
+
+    readFileContent(filePath, encoding = 'utf8') {
+        return fs.readFileSync(filePath, encoding);
+    }
+
+    /**
+     * Resolve symlinks. On Windows, WSL Linux symlinks appear as directory reparse points
+     * and lstatSync throws EISDIR. When that happens we call `wsl.exe readlink -f` with
+     * cwd set to os.tmpdir() (a real Windows path) so WSL interop launches correctly.
+     * The resolved canonical path is a regular file that statSync/readFileSync can access.
+     */
+    resolveSymlink(filePath) {
+        if (!filePath) return filePath;
+        try {
+            const lstat = fs.lstatSync(filePath);
+            if (!lstat.isSymbolicLink()) return filePath;
+            // Native Linux symlink
+            const linkTarget = fs.readlinkSync(filePath);
+            return path.resolve(path.dirname(filePath), linkTarget);
+        } catch (e) {
+            if (e.code !== 'EISDIR') return filePath;
+
+            // EISDIR on Windows means this is a WSL Linux symlink reparse point.
+            // Use wsl.exe readlink -f to resolve it to the canonical path.
+            if (!this._symlinkCache) this._symlinkCache = new Map();
+            if (this._symlinkCache.has(filePath)) return this._symlinkCache.get(filePath);
+
+            const wslMatch = filePath.match(/^\\\\wsl(?:\.localhost|\$)\\([^\\]+)(\\.*)?$/i);
+            if (!wslMatch) {
+                this._symlinkCache.set(filePath, filePath);
+                return filePath;
+            }
+
+            const distro = wslMatch[1];
+            const linuxPath = (wslMatch[2] || '\\').replace(/\\/g, '/');
+            const result = spawnSync('wsl.exe', ['-d', distro, '--', 'readlink', '-f', linuxPath], {
+                encoding: 'utf8',
+                timeout: 10000,
+                cwd: os.tmpdir(), // must be a native Windows path — UNC CWD breaks WSL interop
+            });
+
+            if (result.status === 0 && result.stdout?.trim()) {
+                const resolvedLinux = result.stdout.trim();
+                const resolved = `\\\\wsl.localhost\\${distro}${resolvedLinux.replace(/\//g, '\\')}`;
+                this._symlinkCache.set(filePath, resolved);
+                return resolved;
+            }
+
+            this._symlinkCache.set(filePath, filePath);
+            return filePath;
+        }
     }
 
     expandNodePreservingTemplates(node, context) {
@@ -3354,6 +3574,21 @@ class AzurePipelineParser {
             if (this.isInsertDirective(key)) {
                 const expandedValue = this.expandNodePreservingTemplates(value, context);
                 if (expandedValue && this.isNonArrayObject(expandedValue)) {
+                    const duplicateKeys = Object.keys(expandedValue).filter((k) =>
+                        Object.prototype.hasOwnProperty.call(result, k)
+                    );
+                    if (duplicateKeys.length > 0 && context && context.errors) {
+                        for (const dupKey of duplicateKeys) {
+                            context.errors.push({
+                                message: this.formatErrorWithStack(
+                                    "Duplicate key '" +
+                                        dupKey +
+                                        "' introduced by ${{ insert }} expansion conflicts with an existing key.",
+                                    context
+                                ),
+                            });
+                        }
+                    }
                     Object.assign(result, expandedValue);
                 }
                 i++;

@@ -8,6 +8,5 @@ steps:
   displayName: Step 1
 
 # Line 9
-
 - script: echo ${{ parameters.missing }}
   displayName: Step 2
