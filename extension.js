@@ -2301,6 +2301,8 @@ function runCli(args) {
         '  -o, --output <file>          Write output to file (default: in-place, only with single file)\n' +
         '  -r, --repo <alias=path>      Map repository alias to local path\n' +
         '  -v, --variables <key=value>  Set compile-time variables (e.g., Build.Reason=Manual)\n' +
+        '  -l, --library-variable <group.variable=value>  Set ADO library variable values for simulation\n' +
+        '  -L, --library-variables-file <file>            Load ADO library variable groups from JSON file\n' +
         '  -f, --format-option <key=value>  Set format option (e.g., indent=4)\n' +
         '  -R, --format-recursive <path>    Format files recursively in directory (when used, all paths are treated as recursive targets)\n' +
         '  -e, --extension <ext>        File extensions to format (default: .yml, .yaml)\n' +
@@ -2311,7 +2313,17 @@ function runCli(args) {
         '  -t, --timing                 Print timing breakdown for each expansion phase';
 
     const argv = minimist(args, {
-        string: ['output', 'repo', 'format-option', 'format-recursive', 'extension', 'variables', 'mock-catalog'],
+        string: [
+            'output',
+            'repo',
+            'format-option',
+            'format-recursive',
+            'extension',
+            'variables',
+            'mock-catalog',
+            'library-variable',
+            'library-variables-file',
+        ],
         boolean: ['help', 'expand-templates', 'azure-compatible', 'skip-syntax-check', 'debug', 'simulate', 'timing'],
         alias: {
             h: 'help',
@@ -2321,6 +2333,8 @@ function runCli(args) {
             R: 'format-recursive',
             e: 'extension',
             v: 'variables',
+            l: 'library-variable',
+            L: 'library-variables-file',
             x: 'expand-templates',
             a: 'azure-compatible',
             s: 'skip-syntax-check',
@@ -2346,6 +2360,8 @@ function runCli(args) {
     const toArray = (val) => [].concat(val || []);
     const repo = toArray(argv.repo);
     const variables = toArray(argv.variables);
+    const libraryVariableEntries = toArray(argv['library-variable']);
+    const libraryVariablesFile = pickFirstString(argv['library-variables-file']);
     const formatOption = toArray(argv['format-option']);
     const formatRecursiveRaw = argv['format-recursive'];
     const formatRecursiveValues = toArray(formatRecursiveRaw).filter(
@@ -2356,7 +2372,40 @@ function runCli(args) {
     const extension = toArray(argv.extension);
     const repositoryEntries = [];
     const variablesMap = {};
+    const libraryVariablesMap = {};
     const errors = [];
+    let debugLibVars = process.env.DEBUG_LIB_VARS === 'true';
+
+    const mergeLibraryVariables = (sourceMap) => {
+        if (!sourceMap || typeof sourceMap !== 'object' || Array.isArray(sourceMap)) return;
+        for (const [groupName, groupVariables] of Object.entries(sourceMap)) {
+            if (typeof groupName !== 'string' || !groupName.trim()) continue;
+            if (!groupVariables || typeof groupVariables !== 'object' || Array.isArray(groupVariables)) continue;
+            const groupKey = groupName.trim();
+            libraryVariablesMap[groupKey] = libraryVariablesMap[groupKey] || {};
+            for (const [variableName, variableValue] of Object.entries(groupVariables)) {
+                if (typeof variableName !== 'string' || !variableName.trim()) continue;
+                libraryVariablesMap[groupKey][variableName.trim()] =
+                    variableValue === undefined || variableValue === null ? '' : String(variableValue);
+            }
+        }
+    };
+
+    if (libraryVariablesFile) {
+        const resolvedLibraryFile = path.resolve(process.cwd(), libraryVariablesFile);
+        try {
+            const parsed = JSON.parse(fs.readFileSync(resolvedLibraryFile, 'utf8'));
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                errors.push(
+                    `Invalid library variables file "${libraryVariablesFile}". Expected a JSON object with group names as keys.`
+                );
+            } else {
+                mergeLibraryVariables(parsed);
+            }
+        } catch (err) {
+            errors.push(`Invalid library variables file "${libraryVariablesFile}": ${err.message}`);
+        }
+    }
 
     for (const entry of repo) {
         const [alias, ...pathParts] = entry.split('=');
@@ -2375,6 +2424,32 @@ function runCli(args) {
             continue;
         }
         variablesMap[key.trim()] = value;
+    }
+    for (const entry of libraryVariableEntries) {
+        const [groupAndVariable, ...valueParts] = entry.split('=');
+        const value = valueParts.join('=').trim();
+        if (!groupAndVariable || !groupAndVariable.trim() || value === undefined) {
+            errors.push(`Invalid library variable "${entry}". Expected format "group.variable=value".`);
+            continue;
+        }
+        const separatorIndex = groupAndVariable.indexOf('.');
+        if (separatorIndex <= 0 || separatorIndex === groupAndVariable.length - 1) {
+            errors.push(`Invalid library variable "${entry}". Expected format "group.variable=value".`);
+            continue;
+        }
+
+        const groupName = groupAndVariable.slice(0, separatorIndex).trim();
+        const variableName = groupAndVariable.slice(separatorIndex + 1).trim();
+        if (!groupName || !variableName) {
+            errors.push(`Invalid library variable "${entry}". Expected format "group.variable=value".`);
+            continue;
+        }
+
+        libraryVariablesMap[groupName] = libraryVariablesMap[groupName] || {};
+        libraryVariablesMap[groupName][variableName] = value;
+        if (debugLibVars) {
+            console.log(`[DEBUG] Library variable set: ${groupName}.${variableName} = ${value}`);
+        }
     }
     for (const entry of formatOption) {
         if (!entry.includes('=')) {
@@ -2496,7 +2571,13 @@ function runCli(args) {
         try {
             const { document } = simulateParser.expandPipeline(simulateSource, simulateParserOptions);
             const simulator = new PipelineSimulator({ mockCatalog });
-            const results = simulator.simulate(document, { variables: variablesMap });
+            if (debugLibVars) {
+                console.log('[DEBUG] Library Variables Map:', JSON.stringify(libraryVariablesMap, null, 2));
+            }
+            const results = simulator.simulate(document, {
+                variables: variablesMap,
+                libraryVariables: libraryVariablesMap,
+            });
             printSimulationResults(results);
             if (results.totalFailed > 0) {
                 process.exitCode = 1;

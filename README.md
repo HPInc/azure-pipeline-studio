@@ -30,6 +30,15 @@ node extension-bundle.js pipeline.yml -x \
   -v "Build.SourceBranch=refs/heads/main" \
   -o expanded.yml
 
+# Define library variable group values
+node extension-bundle.js pipeline.yml --simulate \
+  -l "GHE_Credentials.ghe_user=myuser" \
+  -l "win-svc-voice-group.SonarProjectPrefix=myprefix"
+
+# Load library variables from JSON file
+node extension-bundle.js pipeline.yml --simulate \
+  -L library-variables.json
+
 # Recursive format
 node extension-bundle.js -R ./pipelines -f indent=4
 
@@ -79,6 +88,7 @@ pre-commit run azure-pipeline-formatter --all-files
 
 - **Template Expansion**: Expand pipelines with shared templates and repository resources
 - **Compile-Time Variables**: Set Azure Pipeline variables (Build.Reason, Build.SourceBranch, etc.) to test different build scenarios (see [docs/COMPILE_TIME_VARIABLES.md](docs/COMPILE_TIME_VARIABLES.md))
+- **Library Variables**: Define Azure DevOps library variable group values during simulation (see [docs/LIBRARY_VARIABLES.md](docs/LIBRARY_VARIABLES.md))
 - **Dependency Visualization**: View stage and job dependencies in a clear, structured format
 - **Parameter Validation**: Automatic validation ensures all required template parameters are provided
 - **Expression Evaluation**: All 33 Azure DevOps expression functions (`${{ }}`, `$[]`, `$()`)

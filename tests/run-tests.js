@@ -28,6 +28,7 @@ const tests = [
     'test-conditional-steps.js',
     'test-trailing-newlines.js',
     'test-runtime-variables.js',
+    'test-simulator-library-variables.js',
     'test-multilevel-templates.js',
     'test-nested-quote-remapping.js',
     'test-parameter-scoping.js',

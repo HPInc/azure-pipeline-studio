@@ -1,4 +1,4 @@
-# aps-format=false (disabled to preserve the bad indentation as a test fixture)
+# aps-format=false
 # Reproducer: bad indentation on a conditional expression causes the yaml parser
 # to treat the block sequence as an implicit map key. This triggers the
 # "mapAsMap" warning:
