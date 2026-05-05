@@ -147,6 +147,11 @@ function convertToJsonHelper(value) {
             value,
             (k, v) => {
                 if (typeof v === 'boolean') return v ? 'True' : 'False';
+                if (typeof v === 'string') {
+                    const lowered = v.toLowerCase();
+                    if (lowered === '__true__' || lowered === 'true') return 'True';
+                    if (lowered === '__false__' || lowered === 'false') return 'False';
+                }
                 if (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v)) return parseFloat(v);
                 return v;
             },

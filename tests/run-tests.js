@@ -29,6 +29,7 @@ const tests = [
     'test-trailing-newlines.js',
     'test-runtime-variables.js',
     'test-simulator-library-variables.js',
+    'test-simulator-artifact-paths.js',
     'test-multilevel-templates.js',
     'test-nested-quote-remapping.js',
     'test-parameter-scoping.js',

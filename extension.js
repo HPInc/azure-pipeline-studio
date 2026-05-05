@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const minimist = require('minimist');
+const yaml = require('yaml');
 
 // Import utility functions and formatter
 const { pickFirstString, resolveConfiguredPath, normalizeExtension } = require('./utils');
@@ -2302,7 +2303,8 @@ function runCli(args) {
         '  -r, --repo <alias=path>      Map repository alias to local path\n' +
         '  -v, --variables <key=value>  Set compile-time variables (e.g., Build.Reason=Manual)\n' +
         '  -l, --library-variable <group.variable=value>  Set ADO library variable values for simulation\n' +
-        '  -L, --library-variables-file <file>            Load ADO library variable groups from JSON file\n' +
+        '  -L, --library-variables-file <file>            Load ADO library variable groups from YAML file\n' +
+        '  -g, --git <path|url>         Local path or remote git location for simulation checkout\n' +
         '  -f, --format-option <key=value>  Set format option (e.g., indent=4)\n' +
         '  -R, --format-recursive <path>    Format files recursively in directory (when used, all paths are treated as recursive targets)\n' +
         '  -e, --extension <ext>        File extensions to format (default: .yml, .yaml)\n' +
@@ -2319,6 +2321,7 @@ function runCli(args) {
             'format-option',
             'format-recursive',
             'extension',
+            'git',
             'variables',
             'mock-catalog',
             'library-variable',
@@ -2332,6 +2335,7 @@ function runCli(args) {
             f: 'format-option',
             R: 'format-recursive',
             e: 'extension',
+            g: 'git',
             v: 'variables',
             l: 'library-variable',
             L: 'library-variables-file',
@@ -2394,10 +2398,10 @@ function runCli(args) {
     if (libraryVariablesFile) {
         const resolvedLibraryFile = path.resolve(process.cwd(), libraryVariablesFile);
         try {
-            const parsed = JSON.parse(fs.readFileSync(resolvedLibraryFile, 'utf8'));
+            const parsed = yaml.parse(fs.readFileSync(resolvedLibraryFile, 'utf8'));
             if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
                 errors.push(
-                    `Invalid library variables file "${libraryVariablesFile}". Expected a JSON object with group names as keys.`
+                    `Invalid library variables file "${libraryVariablesFile}". Expected a YAML object with group names as keys.`
                 );
             } else {
                 mergeLibraryVariables(parsed);
@@ -2526,6 +2530,23 @@ function runCli(args) {
     const repositories = buildRepositoryOverridesFromCliEntries(repositoryEntries, process.cwd());
     const cliVariables = Object.keys(variablesMap).length > 0 ? variablesMap : undefined;
 
+    const parseSimulationCheckoutConfig = (gitOptionRaw) => {
+        if (gitOptionRaw !== undefined) {
+            const raw = String(gitOptionRaw).trim();
+
+            const isRemoteUrl = /^(https?:\/\/|ssh:\/\/|git@)/i.test(raw);
+            if (isRemoteUrl) {
+                return { checkoutSource: 'git', checkoutRepository: raw };
+            }
+
+            return { checkoutSource: 'local', checkoutRepository: path.resolve(process.cwd(), raw) };
+        }
+
+        return { checkoutSource: 'local', checkoutRepository: '' };
+    };
+
+    const checkoutConfig = parseSimulationCheckoutConfig(argv.git);
+
     if (argv.simulate) {
         if (filesToFormat.length === 0) {
             console.error('Error: --simulate requires a pipeline file argument.');
@@ -2537,6 +2558,25 @@ function runCli(args) {
         const simulateFile = path.resolve(process.cwd(), filesToFormat[0]);
         const simulateSource = fs.readFileSync(simulateFile, 'utf8');
         const simulateParser = new AzurePipelineParser({ skipSyntax: argv['skip-syntax-check'] || false });
+        const simulationRoot = path.resolve(process.cwd(), path.join(path.dirname(simulateFile), 'simulation'));
+        fs.rmSync(simulationRoot, { recursive: true, force: true });
+        const simulationVariables = {
+            'Build.Repository.LocalPath': path.dirname(simulateFile),
+            'Build.SourcesDirectory': path.dirname(simulateFile),
+            'Build.ArtifactStagingDirectory': path.join(simulationRoot, 'artifacts'),
+            'Build.StagingDirectory': path.join(simulationRoot, 'staging'),
+            'Build.BinariesDirectory': path.join(simulationRoot, 'binaries'),
+            'Pipeline.Workspace': path.join(simulationRoot, 'workspace'),
+            'Agent.WorkFolder': path.join(simulationRoot, 'agent', 'work'),
+            'Agent.BuildDirectory': path.join(simulationRoot, 'agent', 'build'),
+            'Agent.TempDirectory': path.join(simulationRoot, 'agent', 'temp'),
+            'Agent.ToolsDirectory': path.join(simulationRoot, 'agent', 'tools'),
+            'Agent.HomeDirectory': path.join(simulationRoot, 'agent', 'home'),
+            'Simulator.OutputRoot': simulationRoot,
+            'Simulator.CheckoutSource': checkoutConfig.checkoutSource,
+            'Simulator.CheckoutRepository': checkoutConfig.checkoutRepository,
+            'Simulator.RepositoryRoot': checkoutConfig.checkoutRepository || path.dirname(simulateFile),
+        };
 
         const simulateParserOptions = {
             fileName: simulateFile,
@@ -2570,15 +2610,38 @@ function runCli(args) {
 
         try {
             const { document } = simulateParser.expandPipeline(simulateSource, simulateParserOptions);
-            const simulator = new PipelineSimulator({ mockCatalog });
+            const simulator = new PipelineSimulator({ mockCatalog, outputRoot: simulationRoot });
             if (debugLibVars) {
                 console.log('[DEBUG] Library Variables Map:', JSON.stringify(libraryVariablesMap, null, 2));
             }
             const results = simulator.simulate(document, {
-                variables: variablesMap,
+                defaultVariables: simulationVariables,
+                variables: { ...simulationVariables, ...variablesMap },
                 libraryVariables: libraryVariablesMap,
+                workingDirectory: path.dirname(simulateFile),
+                checkoutSource: checkoutConfig.checkoutSource,
+                checkoutRepository: checkoutConfig.checkoutRepository,
             });
             printSimulationResults(results);
+            console.log(`[sim] output root: ${simulationRoot}`);
+            if (results.publishedArtifacts.length > 0) {
+                console.log(`[sim] pipeline-artifacts:  ${path.join(simulationRoot, 'pipeline-artifacts')}`);
+                console.log(
+                    `[sim] pipeline manifest:   ${path.join(simulationRoot, 'pipeline-artifacts', 'published-artifacts.json')}`
+                );
+            }
+            console.log(`[sim] feed-publishes:      ${path.join(simulationRoot, 'feed-publishes')}`);
+            console.log(
+                `[sim] feed manifest:       ${path.join(simulationRoot, 'feed-publishes', 'feed-publishes.json')}`
+            );
+            if (results.feedPublishes && results.feedPublishes.length > 0) {
+                const nugetPublishes = results.feedPublishes.filter((entry) => entry.type === 'nuget');
+                if (nugetPublishes.length > 0) {
+                    for (const publish of nugetPublishes) {
+                        console.log(`[sim] published nuget feed: ${publish.feedIdentifier} -> ${publish.feedPath}`);
+                    }
+                }
+            }
             if (results.totalFailed > 0) {
                 process.exitCode = 1;
             }
