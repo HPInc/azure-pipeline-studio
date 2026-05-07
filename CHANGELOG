@@ -5,6 +5,26 @@ All notable changes to Azure Pipeline Studio will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-05-08
+
+### Added
+- **Pipeline Simulator**: New `--simulate` / `-s` CLI mode that executes an expanded pipeline locally, running bash/script steps, simulating artifact publishing, NuGet pack/push, Veracode scan steps, and checkout from local or remote git repositories.
+- **Library variable groups in simulation**: `--library-variables` / `-l` flag injects ADO variable group values into simulation runs, allowing realistic local testing of pipelines that depend on library variables.
+- **Artifact path simulation**: Pipeline publish steps produce real file artifacts in a local `simulation/` directory during simulation runs; a manifest (`published-artifacts.json`) lists all published artifacts.
+- **NuGet feed simulation**: `NuGetCommand@2` pack and push steps are simulated, producing a `feed-publishes.json` manifest under `simulation/feed-publishes/`.
+- **Git checkout simulation**: `checkout:` steps can clone a remote repository (`--git <url>`) or use the local source directory, making multi-repo pipeline simulation possible.
+- **Default compile-time variables**: `Build.Reason` (Manual) and `Build.SourceBranch` (refs/heads/main) are applied automatically when not supplied via `--variables`, matching typical local expansion needs without requiring explicit flags.
+- **`--debug-lib-vars` flag**: Prints the resolved library variables map to stdout for debugging simulation runs.
+
+### Fixed
+- **Block scalar style preservation for source-defined variables**: Variables declared with `|` (literal block) in the source pipeline YAML now correctly keep their `|` style after template expansion. Previously, template-generated variables that also contained `${{ }}` expressions could incorrectly override the source style with `>` (folded), adding unwanted blank lines.
+- **Folded style (`>`) for env vars expanded from single-line full expressions**: Environment variable values that are a single `${{ parameters.x }}` expression expanding to multiline content now correctly use `>` style, matching Azure Pipelines' canonical output format.
+- **Error display in VS Code UI mode**: Expansion errors now surface correctly in the error webview panel; previously the panel could fail to update when the active document changed rapidly.
+- **Inherited variables in template file scope**: Variables supplied by the caller are now available inside included template files without leaking the caller's full variable scope into template-local resolution.
+- **Boolean normalisation in `convertToBoolean`**: The `convertToBoolean` ADO function now correctly converts `__true__`/`__false__` sentinel values (used internally for boolean coercion) to `True`/`False` strings.
+
+[1.3.0]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.3.0
+
 ## [1.2.0] - 2026-04-02
 
 ### Added
