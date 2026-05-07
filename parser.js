@@ -558,22 +558,26 @@ class AzurePipelineParser {
      * Uses heuristics to choose between > (folded) and | (literal).
      * Our heuristic priority:
      * - Keep > (folded) if source already uses it
+     * - For variable definitions, preserve the original | from source
      * - Use > (folded) if content originally had ${{}} expressions (tracked during expansion)
      * - Use | (literal) otherwise for scripts - preserves newlines
      * @param {object} node - YAML AST node
      * @param {object} context - Expansion context
+     * @param {array} path - Current path in the document (for path-based detection)
      */
-    applyBlockScalarStyles(node, context = {}) {
+    applyBlockScalarStyles(node, context = {}, path = []) {
         if (!node) return;
         if (node.items && node.constructor.name === 'YAMLMap') {
             for (const pair of node.items) {
                 if (!pair.key?.value || !pair.value) continue;
 
                 const { value } = pair;
+                const keyName = pair.key.value;
+                const currentPath = [...path, keyName];
 
                 // Recurse for non-multiline or non-string values
                 if (!this.isMultilineString(value.value)) {
-                    this.applyBlockScalarStyles(value, context);
+                    this.applyBlockScalarStyles(value, context, currentPath);
                     continue;
                 }
 
@@ -585,19 +589,52 @@ class AzurePipelineParser {
                     if (preserveDoubleQuote) {
                         value.type = 'QUOTE_DOUBLE';
                     }
-                    this.applyBlockScalarStyles(value, context);
+                    this.applyBlockScalarStyles(value, context, currentPath);
                     continue;
                 }
 
-                const trimmedKey = content.replace(/\s+$/, '');
-                const hadExpression = context.scriptsWithExpressions?.has(trimmedKey);
-                value.type = hadExpression && context.azureCompatible ? 'BLOCK_FOLDED' : 'BLOCK_LITERAL';
+                const normalizedContent = content.replace(/\s+$/, '');
+                const hadExpression = context.scriptsWithExpressions?.has(normalizedContent);
+
+                // Check if we're in a variable definition (variables[N].value) and preserve its original type
+                const isVariableValue =
+                    currentPath.length >= 2 &&
+                    currentPath[0] === 'variables' &&
+                    currentPath[currentPath.length - 1] === 'value';
+                if (isVariableValue && (value.type === 'BLOCK_LITERAL' || value.type === 'BLOCK_FOLDED')) {
+                    // Already has correct type from source; leave it
+                } else if (hadExpression && context.azureCompatible) {
+                    value.type = 'BLOCK_FOLDED';
+                } else {
+                    value.type = 'BLOCK_LITERAL';
+                }
                 value.value = this.normalizeTrailingNewlines(content, context.azureCompatible);
-                this.applyBlockScalarStyles(value, context);
+                this.applyBlockScalarStyles(value, context, currentPath);
             }
         } else if (node.items && node.constructor.name === 'YAMLSeq') {
-            for (const item of node.items) this.applyBlockScalarStyles(item, context);
+            node.items.forEach((item, index) => this.applyBlockScalarStyles(item, context, [...path, index]));
         }
+    }
+
+    getExpansionValuePath(context) {
+        if (!context?.expansionPath) {
+            return [];
+        }
+
+        if (context.stepIndex >= 0) {
+            const path = this.relativePathAfterKey(context.expansionPath, 'steps');
+            return ['stages', context.stageIndex, 'jobs', context.jobIndex, 'steps', context.stepIndex, ...path];
+        }
+        if (context.jobIndex >= 0) {
+            const path = this.relativePathAfterKey(context.expansionPath, 'jobs');
+            return ['stages', context.stageIndex, 'jobs', context.jobIndex, ...path];
+        }
+        if (context.stageIndex >= 0) {
+            const path = this.relativePathAfterKey(context.expansionPath, 'stages');
+            return ['stages', context.stageIndex, ...path];
+        }
+
+        return [...context.expansionPath];
     }
 
     buildExecutionContext(document, overrides) {
@@ -632,6 +669,7 @@ class AzurePipelineParser {
             parameters: { ...parameters, ...overrideParameters },
             parameterMap: { ...parameterMap },
             variables: { ...variables, ...overrideVariables },
+            inheritedVariables: { ...overrideVariables },
             globalVariables: { ...variables, ...overrideVariables }, // Global-level variables
             stageVariables: {}, // Stage-level variables (reset for each stage)
             jobVariables: {}, // Job-level variables (reset for each job)
@@ -1629,14 +1667,27 @@ class AzurePipelineParser {
 
     /**
      * Track a string value that had template expressions for quote and script handling.
+     * Only track embedded expressions, not full-expression parameter references.
      * @param {string} expandedValue - The expanded string value
      * @param {object} context - Expansion context
      * @param {object} flags - Object with tracking flags
+     * @param {string} originalValue - The original template value before expansion
      */
-    trackExpressionValue(expandedValue, context, flags) {
+    trackExpressionValue(expandedValue, context, flags, originalValue) {
         const { hadMultilineExpr, lastLineHadExpression } = flags;
 
         if (!hadMultilineExpr || typeof expandedValue !== 'string') return;
+
+        // Don't track if the original value is a full expression (like ${{ parameters.x }})
+        // followed by static content. This is a parameter reference, not embedded code.
+        if (typeof originalValue === 'string') {
+            const trimmed = originalValue.trim();
+            const firstLine = trimmed.split('\n')[0];
+            // If first line is a full expression, don't track as script with expressions
+            if (this.isFullExpression(firstLine)) {
+                return;
+            }
+        }
 
         const contentKey = expandedValue.replace(/\s+$/, '');
 
@@ -1662,23 +1713,7 @@ class AzurePipelineParser {
         const quoteStyles = this.getQuoteStylesMap(context);
 
         // Build full path including stage/job/step indices like in remapTemplateQuoteStylesByValue
-        let fullPath = [];
-        if (context.stepIndex >= 0) {
-            // We're in a step context - find where 'steps' appears in expansionPath and skip that portion
-            const path = this.relativePathAfterKey(context.expansionPath, 'steps');
-            fullPath = ['stages', context.stageIndex, 'jobs', context.jobIndex, 'steps', context.stepIndex, ...path];
-        } else if (context.jobIndex >= 0) {
-            // We're in a job context - find where 'jobs' appears in expansionPath and skip that portion
-            const path = this.relativePathAfterKey(context.expansionPath, 'jobs');
-            fullPath = ['stages', context.stageIndex, 'jobs', context.jobIndex, ...path];
-        } else if (context.stageIndex >= 0) {
-            // We're in a stage context - find where 'stages' appears in expansionPath and skip that portion
-            const path = this.relativePathAfterKey(context.expansionPath, 'stages');
-            fullPath = ['stages', context.stageIndex, ...path];
-        } else {
-            // Root level or variable context
-            fullPath = [...context.expansionPath];
-        }
+        const fullPath = this.getExpansionValuePath(context);
 
         const expansionPathKey = this.getQuoteStyleUniqueKey(fullPath, expandedValue);
 
@@ -1890,14 +1925,7 @@ class AzurePipelineParser {
                 if (expandedValue === undefined) continue;
 
                 this.trackQuoteStylesForExpressions(expandedValue, value, context, flags);
-                this.trackExpressionValue(expandedValue, context, flags);
-
-                // Track single-line full expressions that expanded to multiline
-                if (flags.isSingleLineFullExpression && this.isMultilineString(expandedValue)) {
-                    const contentKey = expandedValue.replace(/\s+$/, '');
-                    context.scriptsWithExpressions.add(contentKey);
-                    context.scriptsWithLastLineExpressions.add(contentKey);
-                }
+                this.trackExpressionValue(expandedValue, context, flags, value);
 
                 result[key] = expandedValue;
             } finally {
@@ -2865,7 +2893,8 @@ class AzurePipelineParser {
         return {
             parameters: { ...parameterOverrides }, // Only use template's own parameters - don't inherit parent's
             parameterMap: { ...parent.parameterMap }, // Preserve parameterMap for this template expansion
-            variables: {}, // Template starts with empty variables - complete file isolation
+            variables: { ...(parent.inheritedVariables || {}) }, // Templates can read externally supplied variables without leaking caller file variables
+            inheritedVariables: { ...(parent.inheritedVariables || {}) },
             globalVariables: parent.globalVariables, // Preserve for stage/job scoping
             stageVariables: parent.stageVariables, // Preserve for job scoping
             jobVariables: parent.jobVariables, // Preserve current job scope
