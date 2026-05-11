@@ -5,6 +5,18 @@ All notable changes to Azure Pipeline Studio will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-05-11
+
+### Added
+- **Unsupported CLI option detection**: Unknown flags are now caught before parsing and reported with the full usage text instead of being silently ignored.
+- **Error window replaced by expansion on fix**: When an expansion error is corrected, the error panel is automatically replaced by the expansion view instead of leaving the panel empty.
+
+### Changed
+- **Panel open policy**: Expansion and error panels no longer auto-open from typing, save, or background refresh. Only the explicit "Expand Pipeline" menu commands can open a closed panel, except error-recovery refreshes now reopen the render panel when a previously shown expansion error is fixed; all other triggers only refresh an already-open panel.
+- **Scalar block expansion parity fix**: Corrected expansion comparison behavior for scalar blocks so rendered output aligns with Azure expectations.
+
+[1.3.0]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.3.0
+
 ## [1.2.0] - 2026-04-02
 
 ### Added
