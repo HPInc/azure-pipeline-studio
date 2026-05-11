@@ -22,6 +22,44 @@ let activeDebounceTimer;
 let activeErrorDebounceTimer;
 let activeDependenciesDebounceTimer;
 let activeDependenciesPanel;
+let extensionRuntimeGeneration = 0;
+
+const DEFAULT_COMPILE_TIME_VARIABLES = Object.freeze({
+    'Build.Reason': 'Manual',
+    'Build.SourceBranch': 'refs/heads/main',
+});
+
+function normalizeCompileTimeVariables(input) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+        return {};
+    }
+    return Object.fromEntries(Object.entries(input));
+}
+
+function applyDefaultBuildVariables(baseVariables) {
+    const settingsOrCliVariables = normalizeCompileTimeVariables(baseVariables);
+    const result = { ...settingsOrCliVariables };
+
+    Object.entries(DEFAULT_COMPILE_TIME_VARIABLES).forEach(([key, defaultValue]) => {
+        if (!Object.prototype.hasOwnProperty.call(result, key)) {
+            result[key] = defaultValue;
+        }
+    });
+
+    return result;
+}
+
+function printCompileTimeVariableSources(contextLabel, settingsVariables, commandLineVariables, effectiveVariables) {
+    const report = {
+        defaults: { ...DEFAULT_COMPILE_TIME_VARIABLES },
+        settingsJson: normalizeCompileTimeVariables(settingsVariables),
+        commandLine: normalizeCompileTimeVariables(commandLineVariables),
+        effective: normalizeCompileTimeVariables(effectiveVariables),
+    };
+
+    const formattedReport = JSON.stringify(report, null, 2);
+    console.error(`[APS] Compile-time variable sources (${contextLabel}):\n${formattedReport}`);
+}
 
 function activate(context) {
     if (!vscode) {
@@ -30,7 +68,7 @@ function activate(context) {
     }
 
     console.log('Azure Pipeline YAML Parser extension is now active!');
-
+    const runtimeGeneration = ++extensionRuntimeGeneration;
     const parser = new AzurePipelineParser();
     const dependencyAnalyzer = new DependencyAnalyzer(parser);
     let lastRenderedDocument;
@@ -49,6 +87,7 @@ function activate(context) {
     let dependenciesDebounceTimer;
     let isDependenciesRendering = false;
     let pendingDependenciesDocument = null;
+    const canUseVsCodeUi = () => !!vscode && runtimeGeneration === extensionRuntimeGeneration;
 
     context.subscriptions.push(renderedEmitter);
     context.subscriptions.push(
@@ -200,6 +239,9 @@ function activate(context) {
     );
 
     const showErrorWebviewNow = (error, context, errorType = 'expansion') => {
+        if (!canUseVsCodeUi()) {
+            return;
+        }
         const normalizedError = error instanceof Error ? error : new Error(String(error));
         const errorStackText = normalizedError.stack || '';
         // Dispose of existing error panel before creating a new one
@@ -662,6 +704,7 @@ function activate(context) {
         clearTimeout(errorDebounceTimer);
         clearTimeout(activeErrorDebounceTimer);
         errorDebounceTimer = activeErrorDebounceTimer = setTimeout(() => {
+            if (!canUseVsCodeUi()) return;
             if (!pendingError) return;
             if (isRendering) {
                 scheduleErrorDisplay(delayMs);
@@ -674,7 +717,19 @@ function activate(context) {
         }, delayMs);
     };
 
-    const showErrorWebview = (error, context, errorType = 'expansion') => {
+    const showErrorWebview = (error, context, errorType = 'expansion', options = {}) => {
+        const immediate = options.immediate === true;
+        const normalizedError = error instanceof Error ? error : new Error(String(error));
+
+        if (immediate) {
+            clearTimeout(errorDebounceTimer);
+            clearTimeout(activeErrorDebounceTimer);
+            errorDebounceTimer = activeErrorDebounceTimer = undefined;
+            pendingError = null;
+            showErrorWebviewNow(normalizedError, context, errorType);
+            return;
+        }
+
         pendingError = { error, context, errorType };
         scheduleErrorDisplay();
     };
@@ -716,6 +771,7 @@ function activate(context) {
         clearTimeout(debounceTimer);
         clearTimeout(activeDebounceTimer);
         debounceTimer = activeDebounceTimer = setTimeout(() => {
+            if (!canUseVsCodeUi()) return;
             if (isRendering) return;
             const doc = pendingDocument;
             pendingDocument = null;
@@ -774,9 +830,8 @@ function activate(context) {
 
     const renderYamlDocument = async (document, options = {}) => {
         if (!document) return;
-        if (errorPanelOpen) {
-            closeErrorPanel();
-        }
+        if (!canUseVsCodeUi()) return;
+        const shouldRevealAfterSuccess = !options.silent || errorPanelOpen;
 
         lastRenderedDocument = document;
         const sourceText = document.getText();
@@ -784,17 +839,36 @@ function activate(context) {
         isRendering = true;
         try {
             const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
-            const compileTimeVariables = config.get('expansion.variables', {});
-            const skipSyntaxCheck = config.get('expansion.skipSyntaxCheck', false);
+            const settingsCompileTimeVariables = config.get('expansion.variables', {});
+            const effectiveCompileTimeVariables = applyDefaultBuildVariables(settingsCompileTimeVariables);
+            printCompileTimeVariableSources(
+                'VS Code Expand Pipeline',
+                settingsCompileTimeVariables,
+                {},
+                effectiveCompileTimeVariables
+            );
+
+            const configuredSkipSyntaxCheck = config.get('expansion.skipSyntaxCheck', false);
+            const skipSyntaxCheck = options.silent ? configuredSkipSyntaxCheck : false;
             const resourceOverrides = buildResourceOverridesForDocument(document);
             const azureCompatible = options.azureCompatible ?? false;
+
+            const resourceLocations =
+                resourceOverrides?.repositories && typeof resourceOverrides.repositories === 'object'
+                    ? Object.fromEntries(
+                          Object.entries(resourceOverrides.repositories)
+                              .map(([alias, entry]) => [alias, entry?.location])
+                              .filter(([, location]) => typeof location === 'string' && location.trim().length)
+                      )
+                    : undefined;
 
             const parserOverrides = {
                 fileName: document.fileName,
                 azureCompatible,
                 skipSyntaxCheck,
                 ...(resourceOverrides && { resources: resourceOverrides }),
-                ...(Object.keys(compileTimeVariables).length && { variables: compileTimeVariables }),
+                ...(resourceLocations && { resourceLocations }),
+                ...(Object.keys(effectiveCompileTimeVariables).length && { variables: effectiveCompileTimeVariables }),
             };
 
             const expandedYaml = parser.expandPipelineFromString(sourceText, parserOverrides);
@@ -803,6 +877,20 @@ function activate(context) {
             formatOptions.fileName = document.fileName;
             formatOptions.wasExpanded = true;
             const formatted = formatYaml(expandedYaml, formatOptions);
+
+            if (formatted.error) {
+                const errorValue =
+                    formatted.error instanceof Error ? formatted.error : new Error(String(formatted.error));
+                try {
+                    showErrorWebviewNow(errorValue, context, 'expansion');
+                } catch (displayError) {
+                    console.error('[Azure Pipeline Studio] Failed to render expansion error webview:', displayError);
+                }
+                if (canUseVsCodeUi()) {
+                    vscode.window.showErrorMessage(errorValue.message || 'Pipeline expansion failed.');
+                }
+                return;
+            }
 
             const targetUri = getRenderTargetUri(document);
             renderedContent.set(targetUri.toString(), formatted.text);
@@ -816,7 +904,7 @@ function activate(context) {
             // Close error panel on successful expansion
             closeErrorPanel();
 
-            if (!options.silent) {
+            if (shouldRevealAfterSuccess) {
                 const targetDoc = await vscode.workspace.openTextDocument(targetUri);
                 await vscode.window.showTextDocument(targetDoc, {
                     viewColumn: vscode.ViewColumn.Two,
@@ -826,10 +914,16 @@ function activate(context) {
             }
         } catch (error) {
             console.error('Error expanding pipeline:', error);
-            const errorMessage = error.message || String(error);
-            const enhancedError = new Error(`Error Expanding Azure Pipeline:\n\n${errorMessage}`);
+            const enhancedError = new Error(formatTemplateExpansionError(document.fileName, error));
             enhancedError.stack = error.stack;
-            showErrorWebview(enhancedError, context, 'expansion');
+            try {
+                showErrorWebviewNow(enhancedError, context, 'expansion');
+            } catch (displayError) {
+                console.error('[Azure Pipeline Studio] Failed to render expansion error webview:', displayError);
+            }
+            if (canUseVsCodeUi()) {
+                vscode.window.showErrorMessage(enhancedError.message || 'Pipeline expansion failed.');
+            }
         } finally {
             isRendering = false;
             pendingDocument && scheduleRender(pendingDocument, 0);
@@ -1003,6 +1097,9 @@ function activate(context) {
     };
 
     const ensureDependenciesPanel = () => {
+        if (!canUseVsCodeUi()) {
+            return null;
+        }
         if (dependenciesPanel) {
             return dependenciesPanel;
         }
@@ -1099,6 +1196,10 @@ function activate(context) {
         // setImmediate runs before I/O, setTimeout allows UI updates to process
         // Increased delay to ensure loading state is visible before heavy work starts
         setTimeout(async () => {
+            if (!canUseVsCodeUi()) {
+                isDependenciesRendering = false;
+                return;
+            }
             try {
                 const sourceText = document.getText();
                 lastRenderedDiagramSourceText = sourceText;
@@ -1119,7 +1220,14 @@ function activate(context) {
                 }
 
                 const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
-                const compileTimeVariables = config.get('expansion.variables', {});
+                const settingsCompileTimeVariables = config.get('expansion.variables', {});
+                const effectiveCompileTimeVariables = applyDefaultBuildVariables(settingsCompileTimeVariables);
+                printCompileTimeVariableSources(
+                    'VS Code Dependency Diagram',
+                    settingsCompileTimeVariables,
+                    {},
+                    effectiveCompileTimeVariables
+                );
                 const skipSyntaxCheck = config.get('expansion.skipSyntaxCheck', false);
                 const resourceOverrides = buildResourceOverridesForDocument(document);
 
@@ -1128,7 +1236,9 @@ function activate(context) {
                     azureCompatible: false,
                     skipSyntaxCheck,
                     ...(resourceOverrides && { resources: resourceOverrides }),
-                    ...(Object.keys(compileTimeVariables).length && { variables: compileTimeVariables }),
+                    ...(Object.keys(effectiveCompileTimeVariables).length && {
+                        variables: effectiveCompileTimeVariables,
+                    }),
                 };
 
                 if (!silent) {
@@ -2044,6 +2154,7 @@ ${mermaidDiagram
 }
 
 function deactivate() {
+    extensionRuntimeGeneration++;
     // Clear any pending timers to prevent operations after disposal
     clearTimeout(activeDebounceTimer);
     clearTimeout(activeErrorDebounceTimer);
@@ -2063,6 +2174,27 @@ function deactivate() {
         }
         activeDependenciesPanel = null;
     }
+}
+
+function formatTemplateExpansionError(displayPath, expandError) {
+    const msg = typeof expandError?.message === 'string' ? expandError.message : String(expandError);
+    const potentialIssuesMatch = msg.match(/Template\s+'([^']+)'\s+potential issues:([\s\S]*)/);
+    if (potentialIssuesMatch) {
+        const tmpl = potentialIssuesMatch[1];
+        const tail = (potentialIssuesMatch[2] || '').trimEnd();
+        return `[${displayPath}] Template(${tmpl}) expansion failed. Potential issues:${tail ? `${tail}` : ''}`;
+    }
+
+    const lines = msg.split('\n');
+    const firstLine = lines[0];
+    const restLines = lines
+        .slice(1)
+        .map((line) => '  ' + line)
+        .join('\n');
+
+    return restLines
+        ? `[${displayPath}] Template expansion failed\n  ${firstLine}\n${restLines}`
+        : `[${displayPath}] Template expansion failed\n  ${firstLine}`;
 }
 
 module.exports = {
@@ -2450,6 +2582,11 @@ function runCli(args) {
 
     const repositories = buildRepositoryOverridesFromCliEntries(repositoryEntries, process.cwd());
     const cliVariables = Object.keys(variablesMap).length > 0 ? variablesMap : undefined;
+    const effectiveCliVariables = applyDefaultBuildVariables(cliVariables || {});
+
+    if (argv['expand-templates'] && argv.debug) {
+        printCompileTimeVariableSources('CLI', {}, cliVariables || {}, effectiveCliVariables);
+    }
 
     if (argv.simulate) {
         if (filesToFormat.length === 0) {
@@ -2462,7 +2599,6 @@ function runCli(args) {
         const simulateFile = path.resolve(process.cwd(), filesToFormat[0]);
         const simulateSource = fs.readFileSync(simulateFile, 'utf8');
         const simulateParser = new AzurePipelineParser({ skipSyntax: argv['skip-syntax-check'] || false });
-
         const simulateParserOptions = {
             fileName: simulateFile,
             baseDir: path.dirname(simulateFile),
@@ -2558,36 +2694,14 @@ function runCli(args) {
                         console.log('[DEBUG] Resource locations:', JSON.stringify(resourceLocations, null, 2));
                     }
                 }
-                if (cliVariables) {
-                    parserOptions.variables = cliVariables;
-                    if (argv.debug) {
-                        console.log('[DEBUG] Compile-time variables:', JSON.stringify(cliVariables, null, 2));
-                    }
+                if (Object.keys(effectiveCliVariables).length > 0) {
+                    parserOptions.variables = effectiveCliVariables;
                 }
                 try {
                     expandedYaml = cliParser.expandPipelineFromString(sourceText, parserOptions);
                     yamlToFormat = expandedYaml;
                 } catch (expandError) {
-                    // Refine template hint errors to desired phrasing
-                    const msg = typeof expandError?.message === 'string' ? expandError.message : String(expandError);
-                    const potentialIssuesMatch = msg.match(/Template\s+'([^']+)'\s+potential issues:([\s\S]*)/);
-                    if (potentialIssuesMatch) {
-                        const tmpl = potentialIssuesMatch[1];
-                        const tail = (potentialIssuesMatch[2] || '').trimEnd();
-                        const refined = `[${filePath}] Template(${tmpl}) expansion failed. Potential issues:${tail ? `${tail}` : ''}`;
-                        console.error(refined);
-                    } else {
-                        const lines = msg.split('\n');
-                        const firstLine = lines[0];
-                        const restLines = lines
-                            .slice(1)
-                            .map((line) => '  ' + line)
-                            .join('\n');
-                        const formatted = restLines
-                            ? `[${filePath}] Template expansion failed\n  ${firstLine}\n${restLines}`
-                            : `[${filePath}] Template expansion failed\n  ${firstLine}`;
-                        console.error(formatted);
-                    }
+                    console.error(formatTemplateExpansionError(filePath, expandError));
                     if (argv.debug) {
                         console.error('[DEBUG] Full error:', expandError);
                     }
