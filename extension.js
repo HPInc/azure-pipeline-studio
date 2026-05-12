@@ -2570,6 +2570,8 @@ function runCli(args) {
         '  -o, --output <file>          Write output to file (default: in-place, only with single file)\n' +
         '  -r, --repo <alias=path>      Map repository alias to local path\n' +
         '  -v, --variables <key=value>  Set compile-time variables (e.g., Build.Reason=Manual)\n' +
+        '  -l, --library-variable <group.variable=value>  Set ADO library variable values for simulation\n' +
+        '  -L, --library-variables-file <file>            Load ADO library variable groups from YAML file\n' +
         '  -f, --format-option <key=value>  Set format option (e.g., indent=4)\n' +
         '  -R, --format-recursive <path>    Format files recursively in directory (when used, all paths are treated as recursive targets)\n' +
         '  -e, --extension <ext>        File extensions to format (default: .yml, .yaml)\n' +
@@ -2600,7 +2602,17 @@ function runCli(args) {
     };
 
     const argv = minimist(args, {
-        string: ['output', 'repo', 'format-option', 'format-recursive', 'extension', 'variables', 'mock-catalog'],
+        string: [
+            'output',
+            'repo',
+            'format-option',
+            'format-recursive',
+            'extension',
+            'variables',
+            'mock-catalog',
+            'library-variable',
+            'library-variables-file',
+        ],
         boolean: ['help', 'expand-templates', 'azure-compatible', 'skip-syntax-check', 'debug', 'simulate', 'timing'],
         alias: {
             h: 'help',
@@ -2610,6 +2622,8 @@ function runCli(args) {
             R: 'format-recursive',
             e: 'extension',
             v: 'variables',
+            l: 'library-variable',
+            L: 'library-variables-file',
             x: 'expand-templates',
             a: 'azure-compatible',
             s: 'skip-syntax-check',
@@ -2649,6 +2663,10 @@ function runCli(args) {
         'extension',
         'e',
         'mock-catalog',
+        'library-variable',
+        'l',
+        'library-variables-file',
+        'L',
         'expand-templates',
         'x',
         'azure-compatible',
@@ -2697,11 +2715,65 @@ function runCli(args) {
     const { map: repoMap, errors: repoErrors } = parseKeyValue(toArray(argv.repo), 'repository mapping');
     const repositoryEntries = Object.entries(repoMap).map(([alias, path]) => ({ alias, path }));
 
+    const libraryVariablesMap = {};
+    const libraryVariableErrors = [];
+    const mergeLibraryVariables = (sourceMap) => {
+        if (!sourceMap || typeof sourceMap !== 'object' || Array.isArray(sourceMap)) return;
+        for (const [groupName, groupVariables] of Object.entries(sourceMap)) {
+            if (typeof groupName !== 'string' || !groupName.trim()) continue;
+            if (!groupVariables || typeof groupVariables !== 'object' || Array.isArray(groupVariables)) continue;
+            const groupKey = groupName.trim();
+            libraryVariablesMap[groupKey] = libraryVariablesMap[groupKey] || {};
+            for (const [variableName, variableValue] of Object.entries(groupVariables)) {
+                if (typeof variableName !== 'string' || !variableName.trim()) continue;
+                libraryVariablesMap[groupKey][variableName.trim()] =
+                    variableValue === undefined || variableValue === null ? '' : String(variableValue);
+            }
+        }
+    };
+    const libraryVariablesFile = pickFirstString(argv['library-variables-file']);
+    if (libraryVariablesFile) {
+        const resolvedLibraryFile = path.resolve(process.cwd(), libraryVariablesFile);
+        try {
+            const parsed = yaml.parse(fs.readFileSync(resolvedLibraryFile, 'utf8'));
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                libraryVariableErrors.push(
+                    `Invalid library variables file "${libraryVariablesFile}". Expected a YAML object with group names as keys.`
+                );
+            } else {
+                mergeLibraryVariables(parsed);
+            }
+        } catch (err) {
+            libraryVariableErrors.push(`Invalid library variables file "${libraryVariablesFile}": ${err.message}`);
+        }
+    }
+    for (const entry of toArray(argv['library-variable'])) {
+        const [groupAndVariable, ...valueParts] = entry.split('=');
+        const value = valueParts.join('=').trim();
+        if (!groupAndVariable || !groupAndVariable.trim() || value === undefined) {
+            libraryVariableErrors.push(`Invalid library variable "${entry}". Expected format "group.variable=value".`);
+            continue;
+        }
+        const separatorIndex = groupAndVariable.indexOf('.');
+        if (separatorIndex <= 0 || separatorIndex === groupAndVariable.length - 1) {
+            libraryVariableErrors.push(`Invalid library variable "${entry}". Expected format "group.variable=value".`);
+            continue;
+        }
+        const groupName = groupAndVariable.slice(0, separatorIndex).trim();
+        const variableName = groupAndVariable.slice(separatorIndex + 1).trim();
+        if (!groupName || !variableName) {
+            libraryVariableErrors.push(`Invalid library variable "${entry}". Expected format "group.variable=value".`);
+            continue;
+        }
+        libraryVariablesMap[groupName] = libraryVariablesMap[groupName] || {};
+        libraryVariablesMap[groupName][variableName] = value;
+    }
+
     const formatOptionErrors = formatOption
         .filter((entry) => !entry.includes('='))
         .map((entry) => `Invalid format option "${entry}". Expected format "key=value".`);
 
-    const allErrors = [...repoErrors, ...variableErrors, ...formatOptionErrors];
+    const allErrors = [...repoErrors, ...variableErrors, ...formatOptionErrors, ...libraryVariableErrors];
     if (allErrors.length) {
         allErrors.forEach((message) => console.error(message));
         failWithUsage();
@@ -2793,7 +2865,11 @@ function runCli(args) {
         try {
             const { document } = simulateParser.expandPipeline(simulateSource, simulateParserOptions);
             const simulator = new PipelineSimulator({ mockCatalog });
-            const results = simulator.simulate(document, { variables: variablesMap });
+            const results = simulator.simulate(document, {
+                variables: variablesMap,
+                libraryVariables: libraryVariablesMap,
+                workingDirectory: path.dirname(simulateFile),
+            });
             printSimulationResults(results);
             if (results.totalFailed > 0) {
                 process.exitCode = 1;
