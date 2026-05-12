@@ -1,2 +1,2925 @@
-#!/usr/bin/env node
-(()=>{var e={9031(e){"use strict";function isNumber(e){return"number"==typeof e||(!!/^0x[0-9a-f]+$/i.test(e)||/^[-+]?(?:\d+(?:\.\d*)?|\.\d+)(e[-+]?\d+)?$/.test(e))}function isConstructorOrProto(e,n){return"constructor"===n&&"function"==typeof e[n]||"__proto__"===n}e.exports=function(e,n){n||(n={});var s={bools:{},strings:{},unknownFn:null};"function"==typeof n.unknown&&(s.unknownFn=n.unknown),"boolean"==typeof n.boolean&&n.boolean?s.allBools=!0:[].concat(n.boolean).filter(Boolean).forEach(function(e){s.bools[e]=!0});var i={};function aliasIsBoolean(e){return i[e].some(function(e){return s.bools[e]})}Object.keys(n.alias||{}).forEach(function(e){i[e]=[].concat(n.alias[e]),i[e].forEach(function(n){i[n]=[e].concat(i[e].filter(function(e){return n!==e}))})}),[].concat(n.string).filter(Boolean).forEach(function(e){s.strings[e]=!0,i[e]&&[].concat(i[e]).forEach(function(e){s.strings[e]=!0})});var r=n.default||{},o={_:[]};function setKey(e,n,i){for(var r=e,o=0;o<n.length-1;o++){var a=n[o];if(isConstructorOrProto(r,a))return;void 0===r[a]&&(r[a]={}),r[a]!==Object.prototype&&r[a]!==Number.prototype&&r[a]!==String.prototype||(r[a]={}),r[a]===Array.prototype&&(r[a]=[]),r=r[a]}var l=n[n.length-1];isConstructorOrProto(r,l)||(r!==Object.prototype&&r!==Number.prototype&&r!==String.prototype||(r={}),r===Array.prototype&&(r=[]),void 0===r[l]||s.bools[l]||"boolean"==typeof r[l]?r[l]=i:Array.isArray(r[l])?r[l].push(i):r[l]=[r[l],i])}function setArg(e,n,r){if(!r||!s.unknownFn||function argDefined(e,n){return s.allBools&&/^--[^=]+$/.test(n)||s.strings[e]||s.bools[e]||i[e]}(e,r)||!1!==s.unknownFn(r)){var a=!s.strings[e]&&isNumber(n)?Number(n):n;setKey(o,e.split("."),a),(i[e]||[]).forEach(function(e){setKey(o,e.split("."),a)})}}Object.keys(s.bools).forEach(function(e){setArg(e,void 0!==r[e]&&r[e])});var a=[];-1!==e.indexOf("--")&&(a=e.slice(e.indexOf("--")+1),e=e.slice(0,e.indexOf("--")));for(var l=0;l<e.length;l++){var c,u,p=e[l];if(/^--.+=/.test(p)){var d=p.match(/^--([^=]+)=([\s\S]*)$/);c=d[1];var f=d[2];s.bools[c]&&(f="false"!==f),setArg(c,f,p)}else if(/^--no-.+/.test(p))setArg(c=p.match(/^--no-(.+)/)[1],!1,p);else if(/^--.+/.test(p))c=p.match(/^--(.+)/)[1],void 0===(u=e[l+1])||/^(-|--)[^-]/.test(u)||s.bools[c]||s.allBools||i[c]&&aliasIsBoolean(c)?/^(true|false)$/.test(u)?(setArg(c,"true"===u,p),l+=1):setArg(c,!s.strings[c]||"",p):(setArg(c,u,p),l+=1);else if(/^-[^-]+/.test(p)){for(var h=p.slice(1,-1).split(""),m=!1,g=0;g<h.length;g++)if("-"!==(u=p.slice(g+2))){if(/[A-Za-z]/.test(h[g])&&"="===u[0]){setArg(h[g],u.slice(1),p),m=!0;break}if(/[A-Za-z]/.test(h[g])&&/-?\d+(\.\d*)?(e-?\d+)?$/.test(u)){setArg(h[g],u,p),m=!0;break}if(h[g+1]&&h[g+1].match(/\W/)){setArg(h[g],p.slice(g+2),p),m=!0;break}setArg(h[g],!s.strings[h[g]]||"",p)}else setArg(h[g],u,p);c=p.slice(-1)[0],m||"-"===c||(!e[l+1]||/^(-|--)[^-]/.test(e[l+1])||s.bools[c]||i[c]&&aliasIsBoolean(c)?e[l+1]&&/^(true|false)$/.test(e[l+1])?(setArg(c,"true"===e[l+1],p),l+=1):setArg(c,!s.strings[c]||"",p):(setArg(c,e[l+1],p),l+=1))}else if(s.unknownFn&&!1===s.unknownFn(p)||o._.push(s.strings._||!isNumber(p)?p:Number(p)),n.stopEarly){o._.push.apply(o._,e.slice(l+1));break}}return Object.keys(r).forEach(function(e){(function hasKey(e,n){var s=e;return n.slice(0,-1).forEach(function(e){s=s[e]||{}}),n[n.length-1]in s})(o,e.split("."))||(setKey(o,e.split("."),r[e]),(i[e]||[]).forEach(function(n){setKey(o,n.split("."),r[e])}))}),n["--"]?o["--"]=a.slice():a.forEach(function(e){o._.push(e)}),o}},1398(e){"use strict";e.exports=require("vscode")},181(e){"use strict";e.exports=require("buffer")},5317(e){"use strict";e.exports=require("child_process")},2250(e){"use strict";e.exports=require("dns")},9896(e){"use strict";e.exports=require("fs")},857(e){"use strict";e.exports=require("os")},6928(e){"use strict";e.exports=require("path")},932(e){"use strict";e.exports=require("process")},948(e){function returnBoolean(e){return e?"__TRUE__":"__FALSE__"}function toLogicalBoolean(e){if("string"==typeof e){const n=e.toLowerCase();return"__true__"===n||"__false__"===n?toBoolean(n):e.length>0}return toBoolean(e)}function toBoolean(e){if("boolean"==typeof e)return e;if("number"==typeof e)return 0!==e;if("string"==typeof e){const n=e.toLowerCase();if("__true__"===n||"true"===n)return!0;if("__false__"===n||"false"===n||0===n.length)return!1}return Boolean(e)}function compareValues(e,n){const normalize=e=>{if(null==e)return"";if("string"==typeof e){const n=e.trim();if(0===n.length)return"";const s=n.toLowerCase();return"true"===s||"__true__"===s||"false"!==s&&"__false__"!==s&&(/^-?\d+(?:\.\d+)?$/.test(n)?Number(n):n)}return e},s=normalize(e),i=normalize(n);if(s===i)return 0;if(typeof s==typeof i&&("number"==typeof s||"boolean"==typeof s))return s>i?1:-1;const r=String(s),o=String(i);return r===o?0:r>o?1:-1}function formatString(e){if(!e||0===e.length)return"";let n=String(e[0]);const s=e.slice(1);return n=n.replace(/\{(\d+)(?::([^}]+))?\}/g,(e,n,i)=>{const r=parseInt(n,10);if(r>=s.length)return e;let o=s[r];return i&&o instanceof Date?function formatDateTime(e,n){const pad=(e,n=2)=>String(e).padStart(n,"0");return n.replace(/yyyy/g,e.getFullYear()).replace(/yy/g,String(e.getFullYear()).slice(-2)).replace(/MM/g,pad(e.getMonth()+1)).replace(/M/g,e.getMonth()+1).replace(/dd/g,pad(e.getDate())).replace(/d/g,e.getDate()).replace(/HH/g,pad(e.getHours())).replace(/H/g,e.getHours()).replace(/mm/g,pad(e.getMinutes())).replace(/m/g,e.getMinutes()).replace(/ss/g,pad(e.getSeconds())).replace(/s/g,e.getSeconds()).replace(/ffff/g,pad(e.getMilliseconds(),4)).replace(/ff/g,pad(Math.floor(e.getMilliseconds()/10))).replace(/f/g,Math.floor(e.getMilliseconds()/100))}(o,i):null==o?"":String(o)}),n=n.replace(/\{\{/g,"{").replace(/\}\}/g,"}"),n}const n=new Map;const s={returnBoolean,toBoolean,eq:function eq(e){return returnBoolean(0===compareValues(e[0],e[1]))},ne:function ne(e){return returnBoolean(0!==compareValues(e[0],e[1]))},gt:function gt(e){return returnBoolean(compareValues(e[0],e[1])>0)},ge:function ge(e){return returnBoolean(compareValues(e[0],e[1])>=0)},lt:function lt(e){return returnBoolean(compareValues(e[0],e[1])<0)},le:function le(e){return returnBoolean(compareValues(e[0],e[1])<=0)},and:function and(e){return returnBoolean((e||[]).every(e=>toLogicalBoolean(e)))},or:function or(e){return returnBoolean((e||[]).some(e=>toLogicalBoolean(e)))},not:function not(e){return returnBoolean(!toLogicalBoolean(e[0]))},xor:function xor(e){return returnBoolean(toLogicalBoolean(e[0])!==toLogicalBoolean(e[1]))},coalesce:function coalesce(e){const n=e||[],s=n.find(e=>null!=e&&""!==e);return void 0!==s?s:n.find(e=>null!=e)},contains:function containsFn(e){return returnBoolean(function containsHelper(e,n){return"string"==typeof e?"string"==typeof n&&e.includes(n):Array.isArray(e)?e.some(e=>0===compareValues(e,n)):!(!e||"object"!=typeof e)&&Object.prototype.hasOwnProperty.call(e,n)}(e[0],e[1]))},containsValue:function containsValue(e){return returnBoolean(function containsValueHelper(e,n){return Array.isArray(e)?e.some(e=>0===compareValues(e,n)):!(!e||"object"!=typeof e)&&Object.values(e).some(e=>0===compareValues(e,n))}(e[0],e[1]))},in:function inFn(e){return returnBoolean((e||[]).slice(1).some(n=>0===compareValues(e[0],n)))},notIn:function notIn(e){return returnBoolean(!(e||[]).slice(1).some(n=>0===compareValues(e[0],n)))},lower:function lower(e){return"string"==typeof e[0]?e[0].toLowerCase():e[0]},upper:function upper(e){return"string"==typeof e[0]?e[0].toUpperCase():e[0]},startsWith:function startsWith(e){return returnBoolean(function startsWithHelper(e,n){return"string"==typeof e&&"string"==typeof n&&e.toLowerCase().startsWith(n.toLowerCase())}(e[0],e[1]))},endsWith:function endsWith(e){return returnBoolean(function endsWithHelper(e,n){return"string"==typeof e&&"string"==typeof n&&e.toLowerCase().endsWith(n.toLowerCase())}(e[0],e[1]))},trim:function trim(e){return"string"==typeof e[0]?e[0].trim():e[0]},replace:function replace(e){return function replaceString(e,n,s){return"string"!=typeof e?e:("string"!=typeof n&&(n=String(n)),"string"!=typeof s&&(s=String(s)),e.split(n).join(s))}(e[0],e[1],e[2])},split:function split(e){return function splitString(e,n){return"string"!=typeof e?[e]:("string"!=typeof n&&(n=String(n)),e.split(n))}(e[0],e[1])},join:function join(e){return function joinArray(e,n){return Array.isArray(n)?("string"!=typeof e&&(e=String(e)),n.map(e=>null==e||"object"==typeof e?"":String(e)).join(e)):"string"==typeof n?n:String(n)}(e[0],e[1])},format:function format(e){return formatString(e)},length:function length(e){return"string"==typeof e[0]||Array.isArray(e[0])?e[0].length:e[0]&&"object"==typeof e[0]?Object.keys(e[0]).length:0},convertToJson:function convertToJson(e){return function convertToJsonHelper(e){if(void 0===e)return"null";try{return JSON.stringify(e,(e,n)=>"boolean"==typeof n?n?"True":"False":"string"==typeof n&&/^-?\d+(\.\d+)?$/.test(n)?parseFloat(n):n,2)}catch(n){return String(e)}}(e[0])},counter:function counterFn(e){return function counter(e,s){const i=String(e||""),r="number"==typeof s?s:parseInt(s,10)||0;n.has(i)||n.set(i,r);const o=n.get(i);return n.set(i,o+1),o}(e[0],e[1])},iif:function iif(e){return toBoolean(e[0])?e[1]:e[2]},if:function ifFn(e){return toBoolean(e[0])?e[1]:e[2]},elseif:function elseif(e){return toBoolean(e[0])?e[1]:e[2]},always:function always(e){return returnBoolean(!0)},canceled:function canceled(e){return returnBoolean(!1)},failed:function failed(e){return returnBoolean(!1)},succeeded:function succeeded(e){return returnBoolean(!0)},succeededOrFailed:function succeededOrFailed(e){return returnBoolean(!0)}};e.exports=s},5580(e,n,s){s(1198);e.exports={DependencyAnalyzer:class DependencyAnalyzer{constructor(e){this._parser=e}analyzeDependencies(e,n,s={}){return this.analyzePipeline(n,s)}analyzePipeline(e,n={}){try{const{yamlDoc:n,jsonDoc:s}=this._parser.parseYamlDocument(e,void 0,!1),i={stages:[],jobs:[],templates:[],resources:[],dependencyGraph:[]};return this._extractStages(s,i),this._extractJobs(s,i),this._extractTemplates(s,i),this._extractResources(s,i),i}catch(e){return console.error("Failed to analyze pipeline dependencies:",e),{error:e.message,stages:[],jobs:[],templates:[],resources:[],dependencyGraph:[]}}}_extractStages(e,n){e.stages&&Array.isArray(e.stages)&&e.stages.forEach((e,s)=>{const i={name:e.stage||`Stage_${s}`,displayName:e.displayName||e.stage||`Stage ${s+1}`,dependsOn:[]};e.dependsOn&&(i.dependsOn=Array.isArray(e.dependsOn)?e.dependsOn:[e.dependsOn]),e.jobs&&Array.isArray(e.jobs)&&(i.jobs=e.jobs.map((e,n)=>e.job||e.deployment||e.template||`Job_${n}`)),n.stages.push(i),i.dependsOn.length>0&&i.dependsOn.forEach(e=>{n.dependencyGraph.push({type:"stage",from:e,to:i.name})})})}_extractJobs(e,n){let s=[];e.jobs&&Array.isArray(e.jobs)?s=e.jobs:e.stages&&Array.isArray(e.stages)&&e.stages.forEach(e=>{e.jobs&&Array.isArray(e.jobs)&&s.push(...e.jobs.map(n=>({...n,_stage:e.stage})))}),s.forEach((e,s)=>{const i={name:e.job||e.deployment||`Job_${s}`,displayName:e.displayName||e.job||e.deployment||`Job ${s+1}`,dependsOn:[],stage:e._stage};e.dependsOn&&(i.dependsOn=Array.isArray(e.dependsOn)?e.dependsOn:[e.dependsOn]),e.steps&&Array.isArray(e.steps)&&(i.stepCount=e.steps.length),n.jobs.push(i),i.dependsOn.length>0&&i.dependsOn.forEach(e=>{n.dependencyGraph.push({type:"job",from:e,to:i.name,stage:i.stage})})})}_extractTemplates(e,n){this._findTemplateReferences(e,n,[])}_findTemplateReferences(e,n,s){if("object"==typeof e&&null!==e){if(e.template&&"string"==typeof e.template){const i={path:e.template,parameters:e.parameters||{},usedIn:s.length>0?s.join(" > "):"root"};n.templates.push(i)}Array.isArray(e)?e.forEach((e,i)=>{this._findTemplateReferences(e,n,[...s,`[${i}]`])}):Object.keys(e).forEach(i=>{"template"!==i&&"object"==typeof e[i]&&this._findTemplateReferences(e[i],n,[...s,i])})}}_extractResources(e,n){e.resources&&(e.resources.repositories&&Array.isArray(e.resources.repositories)&&e.resources.repositories.forEach(e=>{n.resources.push({type:"repository",name:e.repository||"unknown",repoType:e.type||"unknown",endpoint:e.endpoint})}),e.resources.pipelines&&Array.isArray(e.resources.pipelines)&&e.resources.pipelines.forEach(e=>{n.resources.push({type:"pipeline",name:e.pipeline||"unknown",source:e.source})}),e.resources.containers&&Array.isArray(e.resources.containers)&&e.resources.containers.forEach(e=>{n.resources.push({type:"container",name:e.container||"unknown",image:e.image})}))}generateMermaidDiagram(e){const n=["%%{init: {",'  "theme": "base",','  "themeVariables": {','    "primaryColor": "#374151",','    "primaryBorderColor": "#1F2937",','    "background": "#1F2937",','    "mainBkg": "#374151",','    "secondBkg": "#4B5563",','    "tertiaryColor": "#F3F4F6",','    "lineColor": "#9CA3AF",','    "primaryTextColor": "#FFFFFF",','    "edgeLabelBackground": "#1F2937"',"  }","}}%%","","flowchart LR"],s=this._calculateCriticalPath(e),i=new Set(s),r=new Map;for(let e=0;e<s.length-1;e++){const n=`${s[e]}->${s[e+1]}`;r.set(n,!0)}const getStageType=e=>{const n=e.toLowerCase();return n.includes("configure")?"configure":n.includes("lint")?"lint":n.includes("build")?"build":n.includes("test")||n.includes("unit")||n.includes("unittests")?"test":n.includes("artifact")||n.includes("scan")?"artifactScan":n.includes("sign")?"signing":n.includes("package")||n.includes("publish")?"package":n.includes("release")?"release":"build"},getEmoji=e=>({configure:"⚙️",lint:"✨",build:"🔨",test:"🧪",artifactScan:"🔧",signing:"🔐",package:"📦",release:"🚀"}[getStageType(e)]||"🔧"),o=[];let a=0;return e.stages.length>0&&(e.stages.forEach(e=>{const s=`stage_${this._sanitizeId(e.name)}`,r=getEmoji(e.displayName),o=i.has(e.name)?"critical":getStageType(e.displayName);let a=`${r} ${e.displayName||e.name}`;if(e.jobs&&e.jobs.length>0){a+=`<br/><span style='font-size: 0.85em; opacity: 0.8;'>${e.jobs.map(e=>`&nbsp;&nbsp;&nbsp;&nbsp;• ${e}`).join("<br/>")}</span>`}n.push(`    ${s}["${a}"]:::${o}`)}),e.dependencyGraph.filter(e=>"stage"===e.type).forEach(e=>{const s=`stage_${this._sanitizeId(e.from)}`,i=`stage_${this._sanitizeId(e.to)}`,l=`${e.from}->${e.to}`,c=r.has(l),u=c?"==>":"--\x3e";n.push(`    ${s} ${u} ${i}`),c&&o.push(a),a++})),e.jobs.length>0&&0===e.stages.length&&(e.jobs.forEach(e=>{const s=`job_${this._sanitizeId(e.name)}`,r=getEmoji(e.displayName),o=i.has(e.name)?"critical":getStageType(e.displayName),a=e.displayName||e.name;n.push(`    ${s}["${r} ${a}"]:::${o}`)}),e.dependencyGraph.filter(e=>"job"===e.type).forEach(e=>{const s=`job_${this._sanitizeId(e.from)}`,i=`job_${this._sanitizeId(e.to)}`,l=`${e.from}->${e.to}`,c=r.has(l),u=c?"==>":"--\x3e";n.push(`    ${s} ${u} ${i}`),c&&o.push(a),a++})),n.push(""),n.push("    %% Minimalist outline style - clean, modern aesthetic"),n.push("    classDef critical stroke:#DC2626,stroke-width:2px,color:#FFFFFF,font-weight:600,rx:5,ry:5,fill:#374151"),n.push("    classDef configure stroke:#60A5FA,stroke-width:1.5px,color:#FFFFFF,font-weight:500,rx:5,ry:5,fill:#4B5563"),n.push("    classDef lint stroke:#60A5FA,stroke-width:1.5px,color:#FFFFFF,font-weight:500,rx:5,ry:5,fill:#4B5563"),n.push("    classDef build stroke:#60A5FA,stroke-width:1.5px,color:#FFFFFF,font-weight:500,rx:5,ry:5,fill:#4B5563"),n.push("    classDef test stroke:#60A5FA,stroke-width:1.5px,color:#FFFFFF,font-weight:500,rx:5,ry:5,fill:#4B5563"),n.push("    classDef artifactScan stroke:#60A5FA,stroke-width:1.5px,color:#FFFFFF,font-weight:500,rx:5,ry:5,fill:#4B5563"),n.push("    classDef signing stroke:#60A5FA,stroke-width:1.75px,color:#FFFFFF,font-weight:600,rx:5,ry:5,fill:#4B5563"),n.push("    classDef package stroke:#60A5FA,stroke-width:1.5px,color:#FFFFFF,font-weight:500,rx:5,ry:5,fill:#4B5563"),n.push("    classDef publish stroke:#60A5FA,stroke-width:1.5px,color:#FFFFFF,font-weight:500,rx:5,ry:5,fill:#4B5563"),n.push("    classDef release stroke:#60A5FA,stroke-width:1.5px,color:#FFFFFF,font-weight:500,rx:5,ry:5,fill:#4B5563"),n.push("    classDef report stroke:#60A5FA,stroke-width:1.5px,color:#FFFFFF,font-weight:500,rx:5,ry:5,fill:#4B5563"),n.push(""),n.push("    %% Link styling"),n.push("    linkStyle default stroke:#9CA3AF,stroke-width:2px"),o.forEach(e=>{n.push(`    linkStyle ${e} stroke:#F87171,stroke-width:2.5px`)}),n.join("\n")}_calculateCriticalPath(e){const n=e.stages.length>0?e.stages:e.jobs,s=e.dependencyGraph.filter(n=>n.type===(e.stages.length>0?"stage":"job"));if(0===n.length)return[];const i=new Map,r=new Map;n.forEach(e=>{i.set(e.name,[]),r.set(e.name,[])}),s.forEach(e=>{i.has(e.from)||i.set(e.from,[]),r.has(e.to)||r.set(e.to,[]),i.get(e.from).push(e.to),r.get(e.to).push(e.from)});const o=new Map,a=new Map;n.forEach(e=>{o.set(e.name,0),a.set(e.name,null)});const l=new Set,c=[],dfs=e=>{if(l.has(e))return;l.add(e);(r.get(e)||[]).forEach(e=>dfs(e)),c.push(e)};n.forEach(e=>dfs(e.name)),c.forEach(e=>{const n=r.get(e)||[];if(0===n.length)o.set(e,1);else{let s=0,i=null;n.forEach(e=>{const n=o.get(e)||0;n>s&&(s=n,i=e)}),o.set(e,s+1),a.set(e,i)}});let u=0,p=null;o.forEach((e,n)=>{(e>u||e===u&&(!p||n<p))&&(u=e,p=n)});const d=[];let f=p;for(;null!=f;)d.unshift(f),f=a.get(f);return d}generateTextReport(e){const n=["# Pipeline Dependencies\n"];if(e.error)return n.push(`⚠️ Error: ${e.error}\n`),n.join("\n");const s=this._calculateCriticalPath(e);if(s.length>0&&(n.push("## 🔴 Critical Path\n"),n.push(`${s.join(" → ")}`),n.push(`\n*Path Length: ${s.length} ${e.stages.length>0?"stages":"jobs"}*\n`)),e.stages.length>0&&(n.push("## Stages\n"),e.stages.forEach(e=>{const i=s.includes(e.name)?"🔴 ":"";n.push(`${i}**${e.displayName}**`),e.dependsOn&&e.dependsOn.length>0&&n.push(`  ↳ ${e.dependsOn.join(", ")}`),e.jobs&&e.jobs.length>0&&n.push(`  ├─ ${e.jobs.length} job${1!==e.jobs.length?"s":""}`)}),n.push("")),e.jobs.length>0&&0===e.stages.length&&(n.push("## Jobs\n"),e.jobs.forEach(e=>{const i=s.includes(e.name)?"🔴 ":"";n.push(`${i}**${e.displayName}**`),e.dependsOn&&e.dependsOn.length>0&&n.push(`  ↳ ${e.dependsOn.join(", ")}`),e.stepCount&&n.push(`  ├─ ${e.stepCount} step${1!==e.stepCount?"s":""}`)}),n.push("")),e.templates.length>0){n.push("## Templates\n");const s=new Map;e.templates.forEach(e=>{s.has(e.path)||s.set(e.path,[]),s.get(e.path).push(e.usedIn)}),s.forEach((e,s)=>{n.push(`\`${s}\``)}),n.push("")}return e.resources.length>0&&(n.push("## Resources\n"),e.resources.forEach(e=>{"repository"===e.type?n.push(`📦 ${e.name}`):"pipeline"===e.type?n.push(`⚙️ ${e.name}`):"container"===e.type&&n.push(`🐳 ${e.name}`)}),n.push("")),0===e.dependencyGraph.length&&0===e.stages.length&&0===e.jobs.length&&n.push("*No dependencies found*\n"),n.join("\n")}_sanitizeId(e){return e.replace(/[^a-zA-Z0-9_]/g,"_")}}}},3307(e,n,s){e=s.nmd(e);const i=s(9896),r=s(6928),o=s(9031),{pickFirstString:a,resolveConfiguredPath:l,normalizeExtension:c}=s(9243),{PipelineSimulator:u,printSimulationResults:p}=s(9008),{formatYaml:d}=s(652),{DependencyAnalyzer:f}=s(5580);let h;try{h=s(1398)}catch(e){h=void 0}const{AzurePipelineParser}=s(4339),{NONAME:m}=s(2250);let g,y,b,v,S=0;const x=Object.freeze({"Build.Reason":"Manual","Build.SourceBranch":"refs/heads/main"});function normalizeCompileTimeVariables(e){return!e||"object"!=typeof e||Array.isArray(e)?{}:Object.fromEntries(Object.entries(e))}function applyDefaultBuildVariables(e){const n={...normalizeCompileTimeVariables(e)};return Object.entries(x).forEach(([e,s])=>{Object.prototype.hasOwnProperty.call(n,e)||(n[e]=s)}),n}function printCompileTimeVariableSources(e,n,s,i){const r={defaults:{...x},settingsJson:normalizeCompileTimeVariables(n),commandLine:normalizeCompileTimeVariables(s),effective:normalizeCompileTimeVariables(i)},o=JSON.stringify(r,null,2);console.error(`[APS] Compile-time variable sources (${e}):\n${o}`)}function formatTemplateExpansionError(e,n){const s="string"==typeof n?.message?n.message:String(n),i=s.match(/Template\s+'([^']+)'\s+potential issues:([\s\S]*)/);if(i){const n=i[1],s=(i[2]||"").trimEnd();return`[${e}] Template(${n}) expansion failed. Potential issues:${s?`${s}`:""}`}const r=s.split("\n"),o=r[0],a=r.slice(1).map(e=>"  "+e).join("\n");return a?`[${e}] Template expansion failed\n  ${o}\n${a}`:`[${e}] Template expansion failed\n  ${o}`}function buildFormatOptionsFromCli(e){if(!Array.isArray(e)||0===e.length)return;const n={};return e.forEach(e=>{if("string"!=typeof e)return;const s=e.indexOf("=");if(s<=0||s===e.length-1)return void console.warn(`Ignoring invalid --format entry '${e}'. Expected key=value.`);const i=e.slice(0,s).trim(),r=e.slice(s+1).trim();if(!i.length)return void console.warn(`Ignoring --format entry with empty key: '${e}'.`);const o={indent:[1,8],lineWidth:[0,Number.MAX_SAFE_INTEGER],firstBlockBlankLines:[0,4],blankLinesBetweenSections:[0,4]};["noArrayIndent","forceQuotes","sortKeys","stepSpacing"].includes(i)?"true"===r||"false"===r?n[i]="true"===r:console.warn(`Ignoring --format ${i}: expected boolean 'true' or 'false'.`):o[i]?function tryAssignIntegerOption(e,n,s,i,r){const o=Number.parseInt(s,10);!Number.isFinite(o)||o<i||o>r?console.warn(`Ignoring --format ${n}: expected integer between ${i} and ${r}.`):e[n]=o}(n,i,r,...o[i]):"newline"===i||"newlineFormat"===i?n.newlineFormat=r.replace(/\\r\\n/g,"\r\n").replace(/\\n/g,"\n").replace(/\\r/g,"\r"):console.warn(`Ignoring unsupported --format option '${i}'.`)}),Object.keys(n).length?n:void 0}function formatFilesRecursively(e,n,s){const o=new Set(Array.isArray(n)?n.map(e=>c(e)).filter(Boolean):[]);o.size||(o.add(".yml"),o.add(".yaml"));const a={totalFiles:0,formattedFiles:[],warnings:[],errors:[]};if(!Array.isArray(e)||!e.length)return a;const l=new Set,walk=e=>{if(!e)return;const n=r.resolve(process.cwd(),e);if(l.has(n))return;let u;l.add(n);try{u=i.lstatSync(n)}catch(e){return void a.errors.push({filePath:n,message:`Cannot access: ${e.message}`})}if(!u.isSymbolicLink()){if(u.isDirectory()){let e;try{e=i.readdirSync(n)}catch(e){return void a.errors.push({filePath:n,message:`Cannot read directory: ${e.message}`})}return void e.forEach(e=>{try{walk(r.join(n,e))}catch(s){a.errors.push({filePath:r.join(n,e),message:`Unexpected error: ${s.message}`})}})}if(u.isFile()){const e=c(r.extname(n));e&&o.has(e)&&(e=>{a.totalFiles+=1;try{const n=i.readFileSync(e,"utf8"),r={...s,fileName:e,suppressConsoleOutput:!0},o=d(n,r);if(o.error)return void a.errors.push({filePath:e,message:o.error});o.warning&&a.warnings.push({filePath:e,message:o.warning}),o.text!==n&&(i.writeFileSync(e,o.text,"utf8"),a.formattedFiles.push(e))}catch(n){a.errors.push({filePath:e,message:n.message})}})(n)}}};return e.forEach(e=>{try{walk(e)}catch(n){a.errors.push({filePath:e,message:`Failed to process target: ${n.message}`})}}),a}e.exports={activate:function activate(e){if(!h)return void console.warn("VS Code API unavailable; activate() skipped (CLI execution detected).");console.log("Azure Pipeline YAML Parser extension is now active!");const n=++S,o=new AzurePipelineParser,c=new f(o);let u,p,m,x=!1,w=null,k=null;const E="ado-pipeline-expanded",A=new Map,C=new h.EventEmitter;let O,$,L,N="",_=!1,I=null;const canUseVsCodeUi=()=>!!h&&n===S;e.subscriptions.push(C),e.subscriptions.push(h.workspace.registerTextDocumentContentProvider(E,{onDidChange:C.event,provideTextDocumentContent:e=>A.get(e.toString())||""}));const getRenderTargetUri=e=>{const n=r.basename(e.fileName||"pipeline.yml")||"pipeline.yml",s=encodeURIComponent(e.fileName||n);return h.Uri.from({scheme:E,path:"/"+n,query:`${s}|expanded`})},getFormatSettings=e=>{const n={noArrayIndent:!0,indent:2,lineWidth:0,forceQuotes:!1,sortKeys:!1,firstBlockBlankLines:2,betweenSectionBlankLines:1,normalizeAzureVariablePaths:!0,newlineFormat:"\n"};if(!h)return n;try{const s=h.workspace.getConfiguration("azurePipelineStudio",e?.uri),i={...n};["noArrayIndent","forceQuotes","sortKeys","stepSpacing","normalizeAzureVariablePaths"].forEach(e=>{const n=s.get(`format.${e}`);"boolean"==typeof n&&(i[e]=n)});const r=s.get("format.indent");Number.isInteger(r)&&r>0&&r<=8&&(i.indent=r);const o=s.get("format.lineWidth");"number"==typeof o&&o>=0&&(i.lineWidth=o);[{key:"firstBlockBlankLines",min:0,max:4},{key:"betweenSectionBlankLines",min:0,max:4}].forEach(({key:e,min:n,max:r})=>{const o=s.get(`format.${e}`);Number.isInteger(o)&&o>=n&&o<=r&&(i[e]=o)});const a=s.get("format.newlineFormat");return"\n"!==a&&"\r\n"!==a||(i.newlineFormat=a),i}catch(e){return console.warn("Failed to read azurePipelineStudio.format settings:",e),n}};let P=!1,T=null;e.subscriptions.push(h.commands.registerCommand("azurePipelineStudio.openErrorFile",async(e,n)=>{try{const s=await h.workspace.openTextDocument(e),i={preview:!1};if(n&&n>0){const e=new h.Position(n-1,0);i.selection=new h.Range(e,e)}await h.window.showTextDocument(s,i)}catch(n){h.window.showErrorMessage(`Failed to open file: ${e}`)}}));const showErrorWebviewNow=(e,n,s="expansion")=>{if(!canUseVsCodeUi())return;const o=e instanceof Error?e:new Error(String(e)),a=o.stack||"";if(T){try{T.dispose()}catch(e){}T=null}const l={expansion:"❌ Pipeline Expansion Error",formatting:"❌ YAML Formatting Error",dependency:"❌ Dependency Analysis Error"}[s]||"❌ Pipeline Error",c=h.window.createWebviewPanel("azurePipelineError",l,h.ViewColumn.Two,{enableScripts:!0});T=c,c.reveal(h.ViewColumn.Two),P=!0,c.onDidDispose(()=>{P=!1,T=null});const escapeHtml=e=>String(e).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;"),p=[],d=o.message||String(o),f=/([^\s\(]+\.ya?ml(?:@[^:\s]+)?)(?::\d+)?\s+\((\\\\[^\)]+\.ya?ml)\)/g;let m;for(;null!==(m=f.exec(d));){const e=m[1].split("@")[0],n=m[2],s=n.replace(/\\/g,"/"),i=e.replace(/\\/g,"/");if(s.endsWith(i)){const s=n.slice(0,n.length-e.length).replace(/[/\\]+$/,"");s&&!p.includes(s)&&p.push(s)}}for(const e of[...d.matchAll(/(\\\\[^\s\n\)]+\.ya?ml)/g)].map(e=>e[1])){const n=r.dirname(e);n&&!p.includes(n)&&p.push(n)}if(u)try{const e=buildResourceOverridesForDocument(u);if(e?.repositories)for(const n of Object.values(e.repositories)){const e=n?.location;e&&"string"==typeof e&&!p.includes(e)&&p.push(e)}const n=h.workspace.getWorkspaceFolder(u.uri);n?.uri?.fsPath&&!p.includes(n.uri.fsPath)&&p.push(n.uri.fsPath)}catch(e){}const makePathsClickable=e=>{const n=[];let s=0;return e=(e=e.replace(/([^\s\(]+\.ya?ml(?:@[^:]+)?)(?::(\d+))?\s+\((\\\\[^\)]+\.ya?ml|[A-Za-z]:[^\)]+\.ya?ml|\/[^\)]+\.ya?ml)\)/g,(e,i,r,o)=>{if(o&&o.includes("extension-bundle.js"))return e;if(o){const e=o.replace(/\\/g,"\\\\").replace(/'/g,"\\'"),a=r?`${i}:${r}`:i,l=`<a class="file-link" href="#" title="${escapeHtml(o)}" onclick="openFile('${e}', ${r||"null"}); return false;">${escapeHtml(a)}</a>`,c=`___PLACEHOLDER_${s}___`;return n.push(l),s++,c}return e})).replace(/(\\\\[^\s\n:]+\.(?:ya?ml|js|ts))(?::(\d+))?(?::(\d+))?|([A-Za-z]:\\[^\s\n:]+\.(?:ya?ml|js|ts))(?::(\d+))?(?::(\d+))?|(\/[^\s\n:]+\.(?:ya?ml|js|ts))(?::(\d+))?(?::(\d+))?/g,(e,n,s,o,a,l,c,u,d,f)=>{let h=n||a||u;const m=s||l||d;if(h&&h.includes("extension-bundle.js"))return e;if(u&&p.length){const e=p.map(e=>r.join(e,u)).find(e=>{try{return i.existsSync(e)}catch{return!1}});e&&(h=e)}if(h){const n=h.replace(/\\/g,"\\\\").replace(/'/g,"\\'"),s=m||"null";return`<a class="file-link" href="#" title="${escapeHtml(h)}" onclick="openFile('${n}', ${s}); return false;">${escapeHtml(e)}</a>`}return e}),n.forEach((n,s)=>{e=e.replace(`___PLACEHOLDER_${s}___`,n)}),e},formatErrorMessage=e=>{const n=escapeHtml(e);return makePathsClickable(n).split("\n").map(e=>e.replace(/^( +)/,e=>"&nbsp;".repeat(e.length))).join("<br>")},extractTemplateCallStackFromText=e=>{const n=/Template call stack:\s*([\s\S]*?)(?:\n\s*\n|$)/i.exec(String(e||""));return n&&n[1]?n[1].split("\n").map(e=>e.trim()).filter(e=>e.length>0):[]},g=o.message||String(o),y=/Undefined template parameter '([^']+)'/.exec(g),b=(e=>{const n=String(e||"").split("\n"),s=[],i=[],r=[];let o=0;for(;o<n.length;){const e=n[o].trim(),a=/^.*tips?:/i.exec(e);if("template call stack:"!==e.toLowerCase()){if(a){const s=e.split(":").slice(1).join(":").trim();for(s&&r.push(s),o++;o<n.length&&n[o].trim();)r.push(n[o].trim()),o++;continue}s.push(n[o]),o++}else for(o++;o<n.length&&n[o].trim();)i.push(n[o].trim()),o++}return{messageLines:s,templateLines:i,tipLines:r}})(g);let v=b.messageLines.filter(e=>e.trim().length),S=b.templateLines,x=b.tipLines;if(S.length||(S=extractTemplateCallStackFromText(g)),!S.length&&a&&(S=extractTemplateCallStackFromText(a)),y){const e=y[1];v=[`Undefined template parameter '${e}'.`],x=[`- Ensure '${e}' is declared in the 'parameters' section`,"- Check if the reference should use a loop object instead of parameters (For e.g. {{ each cfg in configurations }}:, properties inside cfg should be referred with cfg.name)"],!S.length&&a&&(S=extractTemplateCallStackFromText(a))}0===x.length&&"expansion"===s&&(x=["- Undefined or circular template references","- Missing or incorrect parameter values","- Malformed YAML structure in referenced templates",'- Use "Pipeline Diagram" to see the complete dependency graph and identify the root cause.']);const w=[];v.length&&w.push(...v),S.length&&(w.push("Template call stack:"),S.forEach(e=>{w.push(`  ${e}`)}));const k=w.join("\n"),E=x.map(e=>e.startsWith("-")||e.startsWith("•")?e:`- ${e}`),A=E.length?`\n                    <h2>Tips</h2>\n                    <div class="error-details">\n                        <code>${formatErrorMessage(E.join("\n"))}</code>\n                    </div>\n            `:"",C=a.split("\n").filter((e,n)=>0===n||e.trim().startsWith("at ")),O=C.length>0?C.map((e,n)=>0===n?e:e.trim().startsWith("at ")?`  ${e.trim()}`:e).join("\n"):"";let $=`\n            <!DOCTYPE html>\n            <html>\n            <head>\n                <style>\n                    body {\n                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;\n                        line-height: 1.6;\n                        color: #e0e0e0;\n                        background-color: #1e1e1e;\n                        padding: 20px;\n                        margin: 0;\n                    }\n                    .error-container {\n                        max-width: 900px;\n                        margin: 0 auto;\n                    }\n                    h1 {\n                        color: #ff6b6b;\n                        margin-top: 0;\n                        font-size: 1.8em;\n                    }\n                    h2 {\n                        color: #ff9f43;\n                        margin-top: 20px;\n                        font-size: 1.3em;\n                        border-bottom: 1px solid #444;\n                        padding-bottom: 8px;\n                    }\n                    .error-details {\n                        background-color: #252526;\n                        border-left: 3px solid #ff6b6b;\n                        padding: 12px;\n                        margin: 12px 0;\n                        border-radius: 4px;\n                        overflow-x: auto;\n                        line-height: 1.8;\n                    }\n                    .error-details code {\n                        font-family: 'Courier New', Courier, monospace;\n                        font-size: 0.95em;\n                        color: #ce9178;\n                        white-space: normal;\n                        display: block;\n                    }\n                    .tip-box {\n                        background-color: #1f3a2c;\n                        border-left: 3px solid #4ec9b0;\n                        padding: 12px;\n                        margin: 12px 0;\n                        border-radius: 4px;\n                    }\n                    .tip-label {\n                        font-weight: bold;\n                        color: #4ec9b0;\n                        margin-bottom: 8px;\n                    }\n                    ul {\n                        margin: 8px 0;\n                        padding-left: 20px;\n                    }\n                    li {\n                        margin: 4px 0;\n                    }\n                    .file-link {\n                        color: #569cd6;\n                        text-decoration: underline;\n                        cursor: pointer;\n                        font-family: inherit;\n                    }\n                    .file-link:hover {\n                        color: #4fc3f7;\n                    }\n                    .stack-trace {\n                        background-color: #252526;\n                        border-left: 3px solid #888;\n                        padding: 12px;\n                        margin: 12px 0;\n                        border-radius: 4px;\n                        overflow-x: auto;\n                        font-family: 'Courier New', Courier, monospace;\n                        font-size: 0.9em;\n                        color: #d4d4d4;\n                        max-height: 400px;\n                        overflow-y: auto;\n                    }\n                    .file-list {\n                        background-color: #252526;\n                        border-left: 3px solid #569cd6;\n                        padding: 12px;\n                        margin: 12px 0;\n                        border-radius: 4px;\n                    }\n                    .hr {\n                        border: none;\n                        border-top: 1px solid #444;\n                        margin: 16px 0;\n                    }\n                </style>\n            </head>\n            <body>\n                <div class="error-container">\n                    <h1>${escapeHtml(l)}</h1>\n                    \n                    <h2>Error Details</h2>\n                    <div class="error-details">\n                        <code>${formatErrorMessage(k)}</code>\n                    </div>\n\n                    ${A}\n\n                    <h2>Stack Trace</h2>\n                    <div class="stack-trace">\n                        <pre>${makePathsClickable(escapeHtml(O||"No stack trace available"))}</pre>\n                    </div>\n                </div>\n\n                <script>\n                    const vscode = acquireVsCodeApi();\n                    function openFile(filePath, lineNumber) {\n                        vscode.postMessage({\n                            command: 'openFile',\n                            filePath: filePath,\n                            lineNumber: lineNumber\n                        });\n                    }\n                <\/script>\n            </body>\n            </html>\n        `;c.webview.html=$,c.webview.onDidReceiveMessage(e=>{"openFile"===e.command&&h.commands.executeCommand("azurePipelineStudio.openErrorFile",e.filePath,e.lineNumber)})},scheduleErrorDisplay=(e=500)=>{clearTimeout(m),clearTimeout(y),m=y=setTimeout(()=>{if(!canUseVsCodeUi())return;if(!k)return;if(x)return void scheduleErrorDisplay(e);const{error:n,context:s,errorType:i}=k;k=null,m=y=void 0,showErrorWebviewNow(n,0,i)},e)},showErrorWebview=(e,n,s="expansion",i={})=>{const r=!0===i.immediate,o=e instanceof Error?e:new Error(String(e));if(r)return clearTimeout(m),clearTimeout(y),m=y=void 0,k=null,void showErrorWebviewNow(o,0,s);k={error:e,context:n,errorType:s},scheduleErrorDisplay()},closeErrorPanel=()=>{if(T){try{T.dispose()}catch(e){}T=null,P=!1}},isExpansionViewOpenForDocument=e=>{if(!canUseVsCodeUi()||!e)return!1;const n=getRenderTargetUri(e).toString();return h.window.visibleTextEditors.some(e=>e.document.uri.toString()===n)},scheduleRender=(e,n=500)=>{if(shouldRenderDocument(e)&&u&&u.fileName===e.fileName&&(P||isExpansionViewOpenForDocument(e))){if(n>0){const s=h.workspace.getConfiguration("azurePipelineStudio",e.uri);if(!s.get("expansion.refreshOnType",!0))return;const i=s.get("expansion.refreshDelayMs",500);n=Number.isInteger(i)&&i>=0?i:n}w=e,clearTimeout(p),clearTimeout(g),p=g=setTimeout(()=>{if(!canUseVsCodeUi())return;if(x)return;const e=w;w=null,renderYamlDocument(e,{silent:!0})},n)}},renderYamlDocument=async(e,n={})=>{if(!e)return;if(!canUseVsCodeUi())return;const s=isExpansionViewOpenForDocument(e),i=!0===n.manualOpen,r=i||s||P,a=i||s||P;u=e;const l=e.getText();x=!0;try{const s=h.workspace.getConfiguration("azurePipelineStudio",e.uri),i=s.get("expansion.variables",{}),c=applyDefaultBuildVariables(i);printCompileTimeVariableSources("VS Code Expand Pipeline",i,{},c);const u=s.get("expansion.skipSyntaxCheck",!1),p=!!n.silent&&u,f=buildResourceOverridesForDocument(e),g=n.azureCompatible??!1,b=f?.repositories&&"object"==typeof f.repositories?Object.fromEntries(Object.entries(f.repositories).map(([e,n])=>[e,n?.location]).filter(([,e])=>"string"==typeof e&&e.trim().length)):void 0,v={fileName:e.fileName,azureCompatible:g,skipSyntaxCheck:p,...f&&{resources:f},...b&&{resourceLocations:b},...Object.keys(c).length&&{variables:c}},S=o.expandPipelineFromString(l,v),x=getFormatSettings(e);x.fileName=e.fileName,x.wasExpanded=!0;const w=d(S,x);if(w.error){const e=w.error instanceof Error?w.error:new Error(String(w.error));if(r){try{showErrorWebviewNow(e,0,"expansion")}catch(e){console.error("[Azure Pipeline Studio] Failed to render expansion error webview:",e)}canUseVsCodeUi()&&h.window.showErrorMessage(e.message||"Pipeline expansion failed.")}return}const E=getRenderTargetUri(e);if(A.set(E.toString(),w.text),C.fire(E),clearTimeout(m),clearTimeout(y),m=y=void 0,k=null,closeErrorPanel(),a){const e=await h.workspace.openTextDocument(E);await h.window.showTextDocument(e,{viewColumn:h.ViewColumn.Two,preview:!1,preserveFocus:!0})}}catch(n){console.error("Error expanding pipeline:",n);const s=new Error(formatTemplateExpansionError(e.fileName,n));if(s.stack=n.stack,r){try{showErrorWebviewNow(s,0,"expansion")}catch(e){console.error("[Azure Pipeline Studio] Failed to render expansion error webview:",e)}canUseVsCodeUi()&&h.window.showErrorMessage(s.message||"Pipeline expansion failed.")}}finally{x=!1,w&&scheduleRender(w,0)}};function buildResourceOverridesForDocument(e){if(!h||!e)return;const n=h.workspace.getConfiguration("azurePipelineStudio",e.uri).get("resourceLocations");if(!Array.isArray(n)||!n.length)return;const s=h.workspace.getWorkspaceFolder(e.uri),i=s?.uri.fsPath,o=e.fileName?r.dirname(e.fileName):void 0,c={};for(const e of n){if(!e||"object"!=typeof e)continue;const n=e.repository?.trim(),s=a(e.path,e.location);if(!n||!s)continue;const r=l(s,i,o);if(!r)continue;const u={location:r},p={};["repository","name","endpoint","ref","type"].forEach(n=>{const s=e[n]?.trim();s&&(p[n]=s)}),Object.keys(p).length&&(u.__match=p),c[n]=u}return Object.keys(c).length?{repositories:c}:void 0}const shouldRenderDocument=e=>{if(!e||!e.fileName)return!1;const n=e.fileName.toLowerCase();return n.endsWith(".yaml")||n.endsWith(".yml")},isRelevantDocument=e=>shouldRenderDocument(e)&&u?.fileName===e.fileName,D=h.commands.registerCommand("azurePipelineStudio.showRenderedYaml",async()=>{const e=h.window.activeTextEditor;e&&shouldRenderDocument(e.document)?(closeErrorPanel(),await renderYamlDocument(e.document,{azureCompatible:!1,manualOpen:!0})):h.window.showInformationMessage("Open an Azure Pipeline YAML file to view the expanded contents.")});e.subscriptions.push(D);const j=h.commands.registerCommand("azurePipelineStudio.showRenderedYamlAzureCompatible",async()=>{const e=h.window.activeTextEditor;e&&shouldRenderDocument(e.document)?(closeErrorPanel(),await renderYamlDocument(e.document,{azureCompatible:!0,manualOpen:!0})):h.window.showInformationMessage("Open an Azure Pipeline YAML file to view the expanded contents.")});e.subscriptions.push(j);const M=h.commands.registerCommand("azurePipelineStudio.formatOriginalYaml",async()=>{const n=h.window.activeTextEditor;n&&shouldRenderDocument(n.document)?(closeErrorPanel(),await(async n=>{if(!n)return;const s=n.getText();let i;try{const r=getFormatSettings(n);if(r.fileName=n.fileName,r.wasExpanded=!1,i=d(s,r),i.error){const n=i.error instanceof Error?i.error:new Error(String(i.error));return void showErrorWebview(n,e,"formatting")}}catch(n){const s=n&&n.message?n.message:"An unexpected error occurred during YAML formatting";return void showErrorWebview(s,e,"formatting")}const r=n.validateRange(new h.Range(0,0,Number.MAX_SAFE_INTEGER,Number.MAX_SAFE_INTEGER)),o=new h.WorkspaceEdit;o.replace(n.uri,r,i.text),await h.workspace.applyEdit(o)?(closeErrorPanel(),i.warning?h.window.showWarningMessage(i.warning):h.window.setStatusBarMessage("Applied YAML formatting.",3e3)):h.window.showErrorMessage("Failed to apply YAML formatting changes.")})(n.document)):h.window.showInformationMessage("Open an Azure Pipeline YAML file before formatting.")});e.subscriptions.push(M);const B=h.commands.registerCommand("azurePipelineStudio.configureResourceLocations",async()=>{try{await async function handleConfigureResourceLocationRequest(e){const n=u||(h.window.activeTextEditor&&shouldRenderDocument(h.window.activeTextEditor.document)?h.window.activeTextEditor.document:void 0);if(!n)return void h.window.showInformationMessage("Open an Azure Pipeline YAML file before configuring resource locations.");const s=h.workspace.getConfiguration("azurePipelineStudio",n.uri),i=s.get("resourceLocations"),r=Array.isArray(i)?i.filter(e=>e&&"object"==typeof e):[],getRepositoryAlias=e=>{if(!e||"object"!=typeof e)return;const n=[e.repository,e.alias,e.name];for(const e of n)if("string"==typeof e&&e.trim().length)return e.trim()};let o,l="string"==typeof e&&e.trim().length?e.trim():void 0;if(l)o=r.find(e=>getRepositoryAlias(e)===l);else{const e=r.map(e=>{const n=getRepositoryAlias(e);if(n)return{label:n,description:a(e.location,e.path)||"",entry:e}}).filter(Boolean);e.push({label:"$(plus) Add new repository mapping…",description:"Create a new entry for a repository resource.",newEntry:!0});const n=await h.window.showQuickPick(e,{placeHolder:"Select a repository resource to configure"});if(!n)return;if(n.newEntry){const e=await h.window.showInputBox({prompt:"Repository alias or name",placeHolder:"Name given under resources.repositories[].repository",ignoreFocusOut:!0});if(!e||!e.trim().length)return;l=e.trim()}else l=n.label,o=n.entry}if(!l)return;o||(o=r.find(e=>getRepositoryAlias(e)===l));const c=o?a(o.location,o.path):void 0,p=await h.window.showQuickPick([{label:"$(folder) Browse for folder",description:"Open a folder picker dialog",method:"browse"},{label:"$(edit) Enter path manually",description:"Type or paste a file path",method:"manual"}],{placeHolder:`Select how to specify location for repository '${l}'`,ignoreFocusOut:!0});if(!p)return;let d;if("browse"===p.method){const e=await h.window.showOpenDialog({canSelectFiles:!1,canSelectFolders:!0,canSelectMany:!1,openLabel:`Select location for '${l}'`,defaultUri:c?h.Uri.file(c):void 0});if(!e||0===e.length)return void h.window.showInformationMessage("Repository location not updated.");d=e[0].fsPath}else if(d=await h.window.showInputBox({prompt:`Local path for repository '${l}'`,placeHolder:"${workspaceFolder}/path/to/templates",value:c||"",ignoreFocusOut:!0}),!d||!d.trim().length)return void h.window.showInformationMessage("Repository location not updated.");const f=d.trim(),m=[];let g=!1;r.forEach(e=>{if(getRepositoryAlias(e)===l){const n={...e,repository:l,location:f};delete n.path,m.push(n),g=!0}else m.push({...e})}),g||m.push({repository:l,location:f});h.workspace.getWorkspaceFolder(n.uri);const y=h.ConfigurationTarget.Workspace;try{await s.update("resourceLocations",m,y),h.window.showInformationMessage(`Repository '${l}' location saved.`),await renderYamlDocument(n)}catch(e){console.error("[Azure Pipeline Studio] Error saving repository location:",e),h.window.showErrorMessage(`Failed to save repository location: ${e.message}`)}}()}catch(e){console.error("[Azure Pipeline Studio] Error in configure command:",e),h.window.showErrorMessage(`Configuration error: ${e.message}`)}});e.subscriptions.push(B);const renderDependenciesPanel=async(e,n={})=>{if(!e||!shouldRenderDocument(e))return void h.window.showInformationMessage("Open an Azure Pipeline YAML file to view dependencies.");const{reveal:a=!1,silent:l=!1}=n;if(closeErrorPanel(),$=e.uri,_)return void(I=e);_=!0;const u=canUseVsCodeUi()?O||(O=h.window.createWebviewPanel("pipelineDependencies","Pipeline Dependencies",h.ViewColumn.Two,{enableScripts:!0}),O.onDidDispose(()=>{O=v=null,$=void 0}),O.webview.onDidReceiveMessage(async e=>{if("openInBrowser"===e.command)try{const e=s(857),n=r.join(e.tmpdir(),`pipeline-dependencies-${Date.now()}.html`);i.writeFileSync(n,N),await h.env.openExternal(h.Uri.file(n)),h.window.showInformationMessage("Opened dependencies in browser")}catch(e){h.window.showErrorMessage(`Failed to open in browser: ${e.message}`)}else if("openFile"===e.command)try{const n=h.Uri.file(e.file);await h.window.showTextDocument(n)}catch(e){h.window.showErrorMessage(`Failed to open file: ${e.message}`)}}),O):null;if(!u)return void(_=!1);v=O=u;const p=e?.fileName||"Pipeline",d=(e=>`<!DOCTYPE html>\n<html lang="en">\n<head>\n    <meta charset="UTF-8">\n    <meta name="viewport" content="width=device-width, initial-scale=1.0">\n    <title>Pipeline Diagram - Loading</title>\n    <style>\n        body {\n            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;\n            background: #1e1e1e;\n            color: #cccccc;\n            display: flex;\n            align-items: center;\n            justify-content: center;\n            min-height: 100vh;\n            margin: 0;\n            padding: 20px;\n        }\n        .loading-container {\n            text-align: center;\n            max-width: 500px;\n        }\n        .spinner {\n            width: 50px;\n            height: 50px;\n            border: 4px solid #3e3e42;\n            border-top: 4px solid #0078d4;\n            border-radius: 50%;\n            animation: spin 1s linear infinite;\n            margin: 0 auto 20px;\n        }\n        @keyframes spin {\n            0% { transform: rotate(0deg); }\n            100% { transform: rotate(360deg); }\n        }\n        h2 {\n            color: #ffffff;\n            margin-bottom: 10px;\n        }\n        p {\n            color: #888888;\n            font-size: 0.9em;\n        }\n    </style>\n</head>\n<body>\n    <div class="loading-container">\n        <div class="spinner"></div>\n        <h2>Analyzing Pipeline Dependencies</h2>\n        <p>Expanding templates and generating diagram...</p>\n        <p style="margin-top: 15px; font-size: 0.85em; opacity: 0.7;">${e}</p>\n    </div>\n</body>\n</html>`)(p);try{u.webview.html=d,await new Promise(e=>setTimeout(e,100))}catch(e){return console.error("[Azure Pipeline Studio] Failed to set loading HTML",e),O=null,v=null,void(_=!1)}if(a)try{u.reveal(h.ViewColumn.Two,!0)}catch(e){}setTimeout(async()=>{if(!canUseVsCodeUi())return void(_=!1);const buildDependencyError=(e,n,s)=>{const i=e.message||n,r=new Error(`Error in Pipeline Diagram:\n\n${i}\n\n💡 Tip: ${s}`);return r.stack=e.stack,r};try{const n=e.getText();lastRenderedDiagramSourceText=n,n.length>1e5&&(console.warn("[Azure Pipeline Studio] Large document detected:",n.length,"characters - processing may take time"),l||h.window.showWarningMessage("Large pipeline detected. Diagram generation may take some time and could impact editor responsiveness.","Continue"));const s=h.workspace.getConfiguration("azurePipelineStudio",e.uri),i=s.get("expansion.variables",{}),r=applyDefaultBuildVariables(i);printCompileTimeVariableSources("VS Code Dependency Diagram",i,{},r);const a=s.get("expansion.skipSyntaxCheck",!1),d=buildResourceOverridesForDocument(e),f={fileName:e.fileName,azureCompatible:!1,skipSyntaxCheck:a,...d&&{resources:d},...Object.keys(r).length&&{variables:r}};let m,g;l||h.window.setStatusBarMessage("Expanding pipeline templates...",2e3);try{m=await new Promise((e,s)=>{try{setTimeout(()=>{try{const s=o.expandPipelineFromString(n,f);e(s)}catch(e){s(e)}},10)}catch(e){s(e)}})}catch(e){const n=buildDependencyError(e,"An error occurred while expanding pipeline templates",'Check your YAML syntax and template references. You can also use "Expand Pipeline" to debug template expansion issues.');return void showErrorWebviewNow(n,0,"dependency")}l||h.window.setStatusBarMessage("Analyzing dependencies...",2e3);try{g=await new Promise((e,n)=>{setTimeout(()=>{try{const n=c.analyzePipeline(m);e(n)}catch(e){n(e)}},10)})}catch(e){const n=buildDependencyError(e,"An error occurred while analyzing pipeline dependencies",'It\'s often easier to identify and fix issues using "Expand Pipeline" first. This will show you the full expanded YAML with all template variables and references resolved.');return void showErrorWebviewNow(n,0,"dependency")}const y=g.stages.length||0,b=g.jobs.length||0,S=await new Promise(e=>{setTimeout(()=>{const n=g.stages.length>0||g.jobs.length>0?c.generateMermaidDiagram(g):"";e(n)},10)}),x=y||b||0,w=`<!DOCTYPE html>\n<html lang="en">\n<head>\n    <meta charset="UTF-8">\n    <meta name="viewport" content="width=device-width, initial-scale=1.0">\n    <title>Pipeline Diagram</title>\n    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"><\/script>\n    <style>\n        * {\n            margin: 0;\n            padding: 0;\n            box-sizing: border-box;\n        }\n\n        body {\n            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;\n            background: #1e1e1e;\n            min-height: 100vh;\n            padding: 0;\n            margin: 0;\n        }\n\n        .container {\n            max-width: 100%;\n            margin: 0;\n            background: #252526;\n            overflow: hidden;\n        }\n\n        .header {\n            background: linear-gradient(135deg, #1a1a1a 0%, #0d0d0d 100%);\n            color: white;\n            padding: 20px;\n            border-bottom: 4px solid #0078d4;\n        }\n\n        .header h1 {\n            font-size: 2em;\n            margin-bottom: 10px;\n            display: flex;\n            align-items: center;\n            gap: 15px;\n        }\n\n        .header-icon {\n            font-size: 1.2em;\n        }\n\n        .header-info {\n            display: flex;\n            gap: 30px;\n            margin-top: 15px;\n            font-size: 0.9em;\n            opacity: 0.9;\n        }\n\n        .header-info-item {\n            display: flex;\n            align-items: center;\n            gap: 8px;\n        }\n\n        .content {\n            padding: 20px;\n            min-height: calc(100vh - 200px);\n            background: #252526;\n        }\n\n        .diagram-container {\n            background: #1e1e1e;\n            border-radius: 0;\n            padding: 20px;\n            margin-bottom: 0;\n            overflow: hidden;\n            height: calc(100vh - 250px);\n            position: relative;\n        }\n\n        .mermaid {\n            display: flex;\n            justify-content: center;\n            background: #1e1e1e;\n            border-radius: 0;\n            min-height: 400px;\n            transition: transform 0.1s ease-out;\n        }\n\n        .legend-color {\n            width: 20px;\n            height: 20px;\n            border-radius: 2px;\n        }\n\n        .stage-list {\n            display: grid;\n            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));\n            gap: 20px;\n            margin-top: 20px;\n        }\n\n        .stage-card {\n            background: #1e1e1e;\n            border-radius: 4px;\n            padding: 20px;\n            border-left: 4px solid #4299e1;\n            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);\n            transition: all 0.3s;\n            cursor: pointer;\n        }\n\n        .stage-card:hover {\n            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);\n            transform: translateY(-2px);\n        }\n\n        .stage-divider {\n            grid-column: 1 / -1;\n            height: 1px;\n            background: linear-gradient(to right, transparent, #3e3e42, transparent);\n            margin: 10px 0;\n        }\n\n        .stage-card h3 {\n            color: #ffffff;\n            margin-bottom: 10px;\n            display: flex;\n            align-items: center;\n            justify-content: space-between;\n        }\n\n        .stage-number {\n            display: inline-block;\n            width: 28px;\n            height: 28px;\n            background: #4299e1;\n            color: white;\n            border-radius: 4px;\n            text-align: center;\n            line-height: 28px;\n            font-size: 0.85em;\n            margin-right: 10px;\n        }\n\n        .stage-deps {\n            margin-top: 15px;\n            padding-top: 15px;\n            border-top: 1px solid #3e3e42;\n        }\n\n        .stage-deps-title {\n            font-size: 0.85em;\n            font-weight: 600;\n            color: #cccccc;\n            margin-bottom: 8px;\n        }\n\n        .dep-badge {\n            display: inline-block;\n            background: #3e3e42;\n            color: #e0e0e0;\n            padding: 4px 12px;\n            border-radius: 4px;\n            font-size: 0.8em;\n            margin-right: 6px;\n            margin-bottom: 6px;\n        }\n\n        .stage-details {\n            display: none;\n            margin-top: 20px;\n            padding-top: 20px;\n            border-top: 2px solid #3e3e42;\n            color: #cccccc;\n        }\n\n        .stage-card.expanded .stage-details {\n            display: block;\n        }\n\n        .expand-icon {\n            transition: transform 0.3s;\n        }\n\n        .stage-card.expanded .expand-icon {\n            transform: rotate(180deg);\n        }\n\n        .search-box {\n            margin-bottom: 20px;\n            position: relative;\n        }\n\n        .search-box input {\n            width: 100%;\n            padding: 12px 40px 12px 16px;\n            border: 2px solid #3e3e42;\n            border-radius: 4px;\n            font-size: 1em;\n            background: #1e1e1e;\n            color: #e0e0e0;\n            transition: border-color 0.3s;\n        }\n\n        .search-box input:focus {\n            outline: none;\n            border-color: #D13438;\n        }\n\n        .critical-path-box {\n            background: #ffeef0;\n            border-left: 4px solid #e53e3e;\n            padding: 20px;\n            border-radius: 4px;\n            margin: 20px 0;\n        }\n\n        .critical-path-box h3 {\n            color: #c53030;\n            margin-bottom: 10px;\n        }\n\n        .critical-path-box p {\n            font-family: 'Courier New', monospace;\n            color: #742a2a;\n            line-height: 1.8;\n            margin-bottom: 15px;\n        }\n\n        .resources-grid {\n            display: grid;\n            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));\n            gap: 20px;\n        }\n\n        .resource-card {\n            background: #1e1e1e;\n            border-radius: 4px;\n            padding: 20px;\n            border-left: 4px solid #48bb78;\n            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);\n        }\n\n        .resource-card h3 {\n            color: #ffffff;\n            margin-bottom: 15px;\n            display: flex;\n            align-items: center;\n            gap: 10px;\n        }\n\n        .resource-type {\n            display: inline-block;\n            background: #48bb78;\n            color: white;\n            padding: 4px 12px;\n            border-radius: 4px;\n            font-size: 0.75em;\n            font-weight: 600;\n            text-transform: uppercase;\n        }\n\n        .resource-details {\n            font-size: 0.9em;\n            color: #cccccc;\n        }\n\n        .resource-details div {\n            padding: 6px 0;\n            border-bottom: 1px solid #3e3e42;\n        }\n\n        .resource-details div:last-child {\n            border-bottom: none;\n        }\n        \n        .resource-details strong {\n            color: #ffffff;\n        }\n\n        @media (max-width: 768px) {\n            .stage-list {\n                grid-template-columns: 1fr;\n            }\n            .header h1 {\n                font-size: 1.5em;\n            }\n        }\n        \n        h2 {\n            color: #ffffff;\n        }\n        \n        p {\n            color: #cccccc;\n        }\n        \n        a:hover {\n            text-decoration: underline !important;\n            opacity: 0.8;\n        }\n        \n        .btn {\n            padding: 6px 12px;\n            border: none;\n            border-radius: 4px;\n            cursor: pointer;\n            font-size: 12px;\n            font-weight: 500;\n            transition: all 0.2s ease;\n            white-space: nowrap;\n        }\n        \n        .btn:hover {\n            transform: translateY(-1px);\n            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);\n        }\n        \n        .btn-primary {\n            background: #0078d4;\n            color: white;\n        }\n        \n        .btn-primary:hover {\n            background: #106ebe;\n        }\n        \n        .btn-secondary {\n            background: #3e3e42;\n            color: white;\n        }\n        \n        .btn-secondary:hover {\n            background: #4e4e52;\n        }\n    </style>\n</head>\n<body>\n    <div class="container">\n        <div class="header">\n            <div style="display: flex; align-items: center; gap: 10px;">\n                <h1 style="margin: 0;">\n                    Pipeline Diagram\n                </h1>\n                <button onclick="openInBrowser()" class="btn btn-primary">🌐 Open in Browser</button>\n            </div>\n            <div class="header-info">\n                <div class="header-info-item">\n                    <button onclick="toggleDiagramSource()" id="source-toggle-btn" class="btn btn-secondary">📝 View Source</button>\n                </div>\n                <div class="header-info-item">\n                    <span>🏗️</span>\n                    <span>${x} Stage${1!==x?"s":""}</span>\n                </div>\n                <div class="header-info-item" style="display: flex; align-items: center; gap: 8px;">\n                    <div class="legend-color" style="width: 16px; height: 16px; background: #F87171; border-radius: 2px;"></div>\n                    <span style="font-size: 0.9em; color: #F87171;">Longest path</span>\n                </div>\n            </div>\n            <div style="margin-top: 8px; font-size: 0.85em; opacity: 0.7;">\n                <span>📄 </span>\n                <a href="#" onclick="event.preventDefault(); const vscode = acquireVsCodeApi(); vscode.postMessage({ command: 'openFile', file: '${p}' });" style="color: #569cd6; text-decoration: none; cursor: pointer;" title="${p}">${p}</a>\n            </div>\n        </div>\n\n        <div class="content">\n            <div>\n                <div class="diagram-container" id="diagram-container" style="cursor: grab; overflow: hidden; position: relative;">\n                    <div class="mermaid" id="mermaid-diagram">\n${S.split("\n").map(e=>"                        "+e).join("\n")}\n                    </div>\n                    <div id="mermaid-error" style="display: none; padding: 20px; background: #2d1f1f; border-left: 4px solid #ff6b6b; color: #ff6b6b; border-radius: 4px; margin-top: 10px;">\n                        <h3 style="margin-top: 0; color: #ff6b6b;">⚠️ Diagram Rendering Error</h3>\n                        <p style="color: #cccccc; margin-bottom: 10px;">The Mermaid diagram failed to render. This could be due to:</p>\n                        <ul style="color: #cccccc; margin-left: 20px;">\n                            <li>Invalid Mermaid syntax in the generated diagram</li>\n                            <li>Complex pipeline structure that exceeds rendering limits</li>\n                            <li>Circular dependencies or invalid stage references</li>\n                        </ul>\n                        <p style="color: #cccccc; margin-top: 10px;">💡 <strong>Tip:</strong> View the source code below or check the "Mermaid Source" tab to validate it at <a href="https://mermaid.live" style="color: #569cd6;">mermaid.live</a></p>\n                        <pre id="mermaid-error-details" style="background: #1e1e1e; padding: 10px; border-radius: 4px; overflow-x: auto; margin-top: 10px; color: #ce9178;"></pre>\n                    </div>\n                </div>\n                \n                \x3c!-- Source Code Section (replaces diagram when visible) --\x3e\n                <div id="diagram-source-section" style="display: none; background: #1e1e1e; border-radius: 4px; overflow: hidden; border-left: 4px solid #0078d4;">\n                    <div style="padding: 15px; background: #2d2d2d; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #3e3e42;">\n                        <h3 style="margin: 0; color: #ffffff; font-size: 1.1em;">📝 Mermaid Source Code</h3>\n                        <div style="display: flex; gap: 10px;">\n                            <button onclick="copyDiagramSource()" style="padding: 6px 12px; background: #0078d4; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500;">📋 Copy</button>\n                            <button onclick="toggleDiagramSource()" style="padding: 6px 12px; background: #3e3e42; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500;">✖ Close</button>\n                        </div>\n                    </div>\n                    <div style="padding: 0;">\n                        <span id="diagram-copy-feedback" style="display: none; position: absolute; right: 20px; margin-top: 10px; color: #4ec9b0; background: #1e1e1e; padding: 5px 10px; border-radius: 4px; font-size: 13px;">✓ Copied!</span>\n                        <pre id="diagram-source-code" style="background: #1e1e1e; padding: 20px; margin: 0; overflow-x: auto; color: #ce9178; line-height: 1.6; font-family: 'Courier New', Courier, monospace; font-size: 14px; white-space: pre-wrap; word-wrap: break-word;">${S.replace(/</g,"&lt;").replace(/>/g,"&gt;")}</pre>\n                    </div>\n                </div>\n            </div>\n        </div>\n    </div>\n\n    <script>\n        // Open in browser function\n        window.openInBrowser = function() {\n            const vscode = acquireVsCodeApi();\n            vscode.postMessage({ command: 'openInBrowser' });\n        };\n        \n        // Pan and zoom functionality for diagram\n        (function() {\n            const container = document.getElementById('diagram-container');\n            if (!container) return;\n            \n            let scale = 1;\n            let translateX = 0;\n            let translateY = 0;\n            let isDragging = false;\n            let startX = 0;\n            let startY = 0;\n            \n            const updateTransform = function() {\n                const diagram = container.querySelector('.mermaid');\n                if (diagram) {\n                    diagram.style.transform = 'translate(' + translateX + 'px, ' + translateY + 'px) scale(' + scale + ')';\n                    diagram.style.transformOrigin = '0 0';\n                }\n            };\n            \n            // Mouse wheel zoom\n            container.addEventListener('wheel', function(e) {\n                e.preventDefault();\n                const delta = e.deltaY > 0 ? 0.9 : 1.1;\n                const newScale = scale * delta;\n                if (newScale >= 0.1 && newScale <= 5) {\n                    scale = newScale;\n                    updateTransform();\n                }\n            });\n            \n            // Mouse drag pan\n            container.addEventListener('mousedown', function(e) {\n                isDragging = true;\n                startX = e.clientX - translateX;\n                startY = e.clientY - translateY;\n                container.style.cursor = 'grabbing';\n            });\n            \n            document.addEventListener('mousemove', function(e) {\n                if (!isDragging) return;\n                translateX = e.clientX - startX;\n                translateY = e.clientY - startY;\n                updateTransform();\n            });\n            \n            document.addEventListener('mouseup', function() {\n                isDragging = false;\n                container.style.cursor = 'grab';\n            });\n        })();\n        \n        // Toggle diagram source visibility (source replaces the diagram area)\n        window.toggleDiagramSource = function() {\n            const sourceSection = document.getElementById('diagram-source-section');\n            const diagramContainer = document.getElementById('diagram-container');\n            const toggleBtn = document.getElementById('source-toggle-btn');\n            if (sourceSection && diagramContainer && toggleBtn) {\n                const isVisible = sourceSection.style.display !== 'none';\n                sourceSection.style.display = isVisible ? 'none' : 'block';\n                diagramContainer.style.display = isVisible ? '' : 'none';\n                toggleBtn.textContent = isVisible ? '📝 View Source' : '🔼 Hide Source';\n            }\n        };\n        \n        // Copy diagram source to clipboard\n        window.copyDiagramSource = function() {\n            const sourceCode = document.getElementById('diagram-source-code');\n            const feedback = document.getElementById('diagram-copy-feedback');\n            if (sourceCode) {\n                const text = sourceCode.textContent;\n                navigator.clipboard.writeText(text).then(function() {\n                    feedback.style.display = 'inline';\n                    setTimeout(function() {\n                        feedback.style.display = 'none';\n                    }, 2000);\n                }).catch(function(err) {\n                    console.error('Failed to copy:', err);\n                });\n            }\n        };\n        \n        // Initialize Mermaid with error handling\n        mermaid.initialize({ \n            startOnLoad: false,\n            theme: 'dark',\n            flowchart: {\n                useMaxWidth: true,\n                htmlLabels: true,\n                curve: 'basis'\n            }\n        });\n        \n        // Manually render with error handling\n        try {\n            mermaid.run({\n                querySelector: '.mermaid',\n            }).catch(function(error) {\n                console.error('Mermaid rendering error:', error);\n                const diagramDiv = document.getElementById('mermaid-diagram');\n                const errorDiv = document.getElementById('mermaid-error');\n                const errorDetails = document.getElementById('mermaid-error-details');\n                if (diagramDiv && errorDiv && errorDetails) {\n                    diagramDiv.style.display = 'none';\n                    errorDiv.style.display = 'block';\n                    errorDetails.textContent = error.message || String(error);\n                }\n            });\n        } catch (error) {\n            console.error('Mermaid initialization error:', error);\n            const diagramDiv = document.getElementById('mermaid-diagram');\n            const errorDiv = document.getElementById('mermaid-error');\n            const errorDetails = document.getElementById('mermaid-error-details');\n            if (diagramDiv && errorDiv && errorDetails) {\n                diagramDiv.style.display = 'none';\n                errorDiv.style.display = 'block';\n                errorDetails.textContent = error.message || String(error);\n            }\n        }\n        \n        // Initial diagram is already rendered\n    <\/script>\n</body>\n</html>`;N=w;try{u.webview.html=w}catch(e){return console.error("[Azure Pipeline Studio] Failed to set panel HTML",e),O=null,void(v=null)}closeErrorPanel(),l||h.window.setStatusBarMessage("Pipeline dependencies analyzed.",3e3)}catch(e){const n=e.message||"An unexpected error occurred while analyzing dependencies",s=new Error(`Error in Pipeline Diagram:\n\n${n}\n\n💡 Tip: This is an unexpected error. Please check the error details below.`);s.stack=e.stack,showErrorWebviewNow(s,0,"dependency")}finally{if(_=!1,I){const e=I;I=null,renderDependenciesPanel(e,{silent:!0})}}},150)},F=h.commands.registerCommand("azurePipelineStudio.showDependencies",()=>{const e=h.window.activeTextEditor;e&&shouldRenderDocument(e.document)?renderDependenciesPanel(e.document,{reveal:!0}):h.window.showInformationMessage("Open an Azure Pipeline YAML file to view dependencies.")});e.subscriptions.push(F),e.subscriptions.push(h.workspace.onDidCloseTextDocument(e=>{e.uri.scheme===E&&A.delete(e.uri.toString())})),e.subscriptions.push(h.workspace.onDidChangeTextDocument(({document:e})=>{isRelevantDocument(e)&&scheduleRender(e,500)})),e.subscriptions.push(h.workspace.onDidSaveTextDocument(e=>{if(((e,n=500)=>{if(!O||!$)return;if(e.uri.toString()!==$.toString())return;const s=h.workspace.getConfiguration("azurePipelineStudio",e.uri).get("diagram.refreshDelayMs",500),i=0===n?0:Number.isInteger(s)&&s>=0?s:n;I=e,clearTimeout(L),clearTimeout(b),L=b=setTimeout(()=>{if(!O||_)return;const e=I;I=null,e&&renderDependenciesPanel(e,{silent:!0})},i)})(e,0),!isRelevantDocument(e))return;h.workspace.getConfiguration("azurePipelineStudio",e.uri).get("refreshOnSave",!0)&&scheduleRender(e,0)}))},deactivate:function deactivate(){if(S++,clearTimeout(g),clearTimeout(y),clearTimeout(b),g=void 0,y=void 0,b=void 0,v){try{v.dispose()}catch(e){}v=null}},AzurePipelineParser,formatYaml:d,formatFilesRecursively,DependencyAnalyzer:f},s.c[s.s]===e&&function runCli(e){if(void 0!==h)return;const n="Usage: node extension.js <file1> <file2> ...\nOptions:\n  -h, --help                   Show this help message\n  -o, --output <file>          Write output to file (default: in-place, only with single file)\n  -r, --repo <alias=path>      Map repository alias to local path\n  -v, --variables <key=value>  Set compile-time variables (e.g., Build.Reason=Manual)\n  -f, --format-option <key=value>  Set format option (e.g., indent=4)\n  -R, --format-recursive <path>    Format files recursively in directory (when used, all paths are treated as recursive targets)\n  -e, --extension <ext>        File extensions to format (default: .yml, .yaml)\n  -x, --expand-templates       Expand Azure Pipeline template expressions (${{}},$[],$())\n  -a, --azure-compatible       Use Azure-compatible expansion mode (adds blank lines, etc.)\n  -s, --skip-syntax-check      Skip syntax checking during expansion\n  -d, --debug                  Print files being formatted\n  -t, --timing                 Print timing breakdown for each expansion phase",failWithUsage=e=>{e&&console.error(e),console.error(n),process.exitCode=1},formatRecursiveIssueMessage=(e,n,s)=>{const i=r.relative(process.cwd(),n)||n,o=s.match(/at line (\d+), column (\d+):/);if(o){return`[${e}] ${i}:${o[1]}:${o[2]}: ${s.replace(/ at line \d+, column \d+:/,"")}`}return`[${e}] ${i}: ${s}`},s=o(e,{string:["output","repo","format-option","format-recursive","extension","variables","mock-catalog"],boolean:["help","expand-templates","azure-compatible","skip-syntax-check","debug","simulate","timing"],alias:{h:"help",o:"output",r:"repo",f:"format-option",R:"format-recursive",e:"extension",v:"variables",x:"expand-templates",a:"azure-compatible",s:"skip-syntax-check",d:"debug",t:"timing"},default:{extension:[],"expand-templates":!1,"azure-compatible":!1,"skip-syntax-check":!1,debug:!1,simulate:!1,timing:!1}});s.help&&(console.log(n),process.exit(0));const a=new Set(["_","help","h","output","o","repo","r","variables","v","format-option","f","format-recursive","R","extension","e","mock-catalog","expand-templates","x","azure-compatible","a","skip-syntax-check","s","debug","d","simulate","timing","t"]),c=Object.keys(s).filter(e=>!a.has(e));if(c.length){return void failWithUsage(`Error: Unsupported option(s): ${c.map(e=>1===e.length?`-${e}`:`--${e}`).join(", ")}`)}const toArray=e=>[].concat(e||[]),parseKeyValue=(e,n)=>{const s={},i=[];for(const r of e){const[e,...o]=r.split("="),a=o.join("=").trim();e&&e.trim()&&a?s[e.trim()]=a:i.push(`Invalid ${n} "${r}". Expected format "key=value".`)}return{map:s,errors:i}},f=s._,m=toArray(s["format-option"]),g=toArray(s.extension),y=s["format-recursive"],b=toArray(y).filter(e=>"string"==typeof e&&e.trim().length),v=e.includes("-R")||e.includes("--format-recursive")||!0===y,{map:S,errors:x}=parseKeyValue(toArray(s.variables),"variable"),{map:w,errors:k}=parseKeyValue(toArray(s.repo),"repository mapping"),E=Object.entries(w).map(([e,n])=>({alias:e,path:n})),A=m.filter(e=>!e.includes("=")).map(e=>`Invalid format option "${e}". Expected format "key=value".`),C=[...k,...x,...A];if(C.length)return C.forEach(e=>console.error(e)),void failWithUsage();const O=v||b.length?[...b,...f]:[];if(v&&0===O.length)return void failWithUsage("Error: --format-recursive requires at least one path.");if(O.length){const e=buildFormatOptionsFromCli(m)||{},n=formatFilesRecursively(O,g.length?g:[".yml",".yaml"],e);return n.formattedFiles.forEach(e=>{const n=r.relative(process.cwd(),e)||e;console.log(`Formatted: ${n}`)}),console.log(`Processed ${n.totalFiles} file(s); formatted ${n.formattedFiles.length}.`),n.warnings.forEach(e=>{console.warn(formatRecursiveIssueMessage("warn",e.filePath,e.message))}),n.errors.forEach(e=>{console.error(formatRecursiveIssueMessage("error",e.filePath,e.message))}),void(n.errors.length&&(process.exitCode=1))}const $=function buildRepositoryOverridesFromCliEntries(e,n){if(!Array.isArray(e)||0===e.length)return;const s={};return e.forEach(e=>{if(!e||"object"!=typeof e)return;const i=e.alias,r=e.path;if("string"!=typeof i||!i.trim().length||"string"!=typeof r||!r.trim().length)return;const o=l(r,n,void 0);o?s[i]={repository:i,location:o}:console.warn(`Skipping repository mapping '${i}': could not resolve path '${r}'.`)}),Object.keys(s).length?s:void 0}(E,process.cwd()),L=Object.keys(S).length>0?S:void 0,N=applyDefaultBuildVariables(L||{});(s["expand-templates"]||s.simulate)&&s.debug&&printCompileTimeVariableSources("CLI",{},L||{},N);if(s.simulate){if(0===f.length)return void failWithUsage("Error: --simulate requires a pipeline file argument.");const e=r.resolve(process.cwd(),f[0]),n=i.readFileSync(e,"utf8"),o=new AzurePipelineParser({skipSyntax:s["skip-syntax-check"]||!1}),a={fileName:e,baseDir:r.dirname(e),templateStack:[e],azureCompatible:!1};if($){const e={};for(const[n,s]of Object.entries($))e[n]=s.location||s.path;a.resourceLocations=e}L&&(a.variables=L);let l={};const c=s["mock-catalog"];if(c){const e=r.resolve(process.cwd(),c);try{l=JSON.parse(i.readFileSync(e,"utf8"))}catch(e){return console.error(`Error loading mock catalog "${c}": ${e.message}`),void(process.exitCode=1)}}try{const{document:e}=o.expandPipeline(n,a),s=new u({mockCatalog:l}).simulate(e,{variables:S});p(s),s.totalFailed>0&&(process.exitCode=1)}catch(e){console.error(`Simulation failed: ${e.message}`),process.exitCode=1}return}if(0===f.length)return void failWithUsage();if(s.output&&f.length>1)return void failWithUsage("Error: --output option is only supported when formatting a single file.");const _=buildFormatOptionsFromCli(m)||{},I=s["expand-templates"]?new AzurePipelineParser:null;let P=!1;for(const e of f){const n=r.resolve(process.cwd(),e);s.debug&&console.log(`[DEBUG] Formatting: ${n}`);try{const o=i.readFileSync(n,"utf8");let a=o;if(s["expand-templates"]&&I){const i={fileName:n,azureCompatible:s["azure-compatible"]||!1,skipSyntaxCheck:s["skip-syntax-check"]||!1,timing:s.timing||!1};if($){const e={};for(const[n,s]of Object.entries($))e[n]=s.location||s.path;i.resourceLocations=e,s.debug&&console.log("[DEBUG] Resource locations:",JSON.stringify(e,null,2))}Object.keys(N).length>0&&(i.variables=N);try{expandedYaml=I.expandPipelineFromString(o,i),a=expandedYaml}catch(n){console.error(formatTemplateExpansionError(e,n)),s.debug&&console.error("[DEBUG] Full error:",n),P=!0;continue}}const l={..._||{},fileName:n};delete l.expandTemplates,s["expand-templates"]&&(l.wasExpanded=!0,l.azureCompatible=s["azure-compatible"]||!1);const c=d(a,l);if(c.error){const n=c.error.split("\n").map((e,n)=>0===n?e:"  "+e).join("\n");console.error(`[${e}] ${n}`),P=!0;continue}if(c.warning){const n=c.warning.split("\n").map((e,n)=>0===n?e:"  "+e).join("\n");console.warn(`[${e}] ${n}`)}let u=c.text;if(s["expand-templates"]&&s["azure-compatible"]&&(u=I.addHeredocListSpacing(u)),s.output){const e=r.resolve(process.cwd(),s.output);if(i.writeFileSync(e,u,"utf8"),o!==u){const n=s["expand-templates"]?"Expanded":"Formatted";console.log(`${n} pipeline written to ${e}`)}}else s["expand-templates"]?console.log(u):o!==u&&(i.writeFileSync(n,u,"utf8"),console.log(`Formatted ${e} (in-place)`))}catch(n){console.error(`[${e}] ${n.message}`),P=!0}}P&&(process.exitCode=1)}(process.argv.slice(2))},652(e,n,s){const i=s(1198);function escapeRegExp(e){return e.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}function isConditionalDirective(e,n=null){const s=e.trim().replace(/^-\s+/,"");if(/^\$\{\{\s*(if|elseif|else|each|insert)(\s|\})/i.test(s))return!0;if(n){const e=s.match(/^(__EXPR_PLACEHOLDER_\d+__)/);if(e&&n.has(e[1]))return!0}return!1}function replaceTemplateExpressionsWithPlaceholders(e){if(!e)return{content:e,placeholderMap:new Map,conditionalDirectives:new Set};const n=new Map,s=new Set;let i=0;return{content:e.replace(/(\$\{\{[^}]+\}\}|\$\[[^\]]+\])/g,e=>{const r="__EXPR_PLACEHOLDER_"+i+"__";let o=e;return e.startsWith("${{")&&e.endsWith("}}")&&!/[\r\n\t]/.test(e)&&(o=e.replace(/^\$\{\{\s*/,"${{ ").replace(/\s*\}\}$/," }}")),n.set(r,o),isConditionalDirective(o)&&s.add(r),i++,r}),placeholderMap:n,conditionalDirectives:s}}function restoreTemplateExpressions(e,n){if(!e||!n||0===n.size)return e;let s=e;for(const[e,i]of n)s=s.replace(new RegExp(escapeRegExp(e),"g"),i);return s=s.replace(/\}\}\s+:/g,"}}:"),s}function parseFormatDirectives(e){const n={disabled:!1,options:null},s=e.split(/\r?\n/).slice(0,5);for(const e of s){const s=e.trim();if(isComment(e)&&(s.startsWith("# aps-format=false")||s.startsWith("# aps-format: false")||s.startsWith("#aps-format=false")||s.startsWith("#aps-format: false")))return n.disabled=!0,n;const i=s.match(/^#\s*aps-format[:\s]+(.+)$/);if(i){const e=i[1].trim();n.options=parseDirectiveOptions(e)}if(hasActualContent(e))break}return n}function parseDirectiveOptions(e){const n={},s=e.split(",");for(const e of s){const[s,i]=e.split("=").map(e=>e.trim());if(s&&void 0!==i)switch(s.toLowerCase()){case"newline":case"newlineformat":n.newlineFormat=i.replace(/\\r\\n/g,"\r\n").replace(/\\n/g,"\n").replace(/\\r/g,"\r");break;case"linewidth":const e=parseInt(i,10);isNaN(e)||(n.lineWidth=e);break;case"indent":const s=parseInt(i,10);!isNaN(s)&&s>0&&s<=8&&(n.indent=s);break;case"noarrayindent":n.noArrayIndent="true"===i.toLowerCase();break;case"forcequotes":n.forceQuotes="true"===i.toLowerCase();break;case"sortkeys":n.sortKeys="true"===i.toLowerCase();break;case"preservecomments":n.preserveComments="true"===i.toLowerCase();break;case"stepspacing":n.stepSpacing="true"===i.toLowerCase();break;case"sectionspacing":n.sectionSpacing="true"===i.toLowerCase();break;case"normalizepaths":n.normalizePaths="true"===i.toLowerCase();break;case"expandtemplates":n.expandTemplates="true"===i.toLowerCase()}}return n}function validateTemplateExpressions(e,n){const s=[];let i=0;for(;i<e.length;){const r=e.indexOf("${{",i);if(-1===r)break;const o=e.indexOf("}}",r+3);if(-1===o){s.push(`line ${n}: Missing closing '}}' for template expression starting at column ${r+1}.`);break}i=o+2}const r=e.matchAll(/\$\{\{([\s\S]*?)\}\}/g);for(const e of r){const i=e[1];let r=0,o=0,a=0,l=!1,c=null;for(let e=0;e<i.length;e++){const u=i[e];if('"'===u||"'"===u){let n=!1;if('"'===u){let s=0,r=e-1;for(;r>=0&&"\\"===i[r];)s++,r--;n=s%2==1}n||(l?u===c&&(l=!1,c=null):(l=!0,c=u))}l||("("===u?r++:")"===u?r--:"["===u?o++:"]"===u?o--:"{"===u?a++:"}"===u&&a--,r<0&&(s.push(`line ${n}: Unbalanced parentheses in template expression - extra closing ')' found.`),r=0),o<0&&(s.push(`line ${n}: Unbalanced brackets in template expression - extra closing ']' found.`),o=0),a<0&&(s.push(`line ${n}: Unbalanced braces in template expression - extra closing '}}' found.`),a=0))}l?s.push(`line ${n}: Unclosed string in template expression - missing closing ${c} quote.`):(r>0&&s.push(`line ${n}: Unbalanced parentheses in template expression - missing ${r} closing ')'.`),o>0&&s.push(`line ${n}: Unbalanced brackets in template expression - missing ${o} closing ']'.`),a>0&&s.push(`line ${n}: Unbalanced braces in template expression - missing ${a} closing '}'.`))}return s}function hasExitedJobsBlock(e,n,s,i){return!e&&n<=s&&i.includes(":")&&!i.startsWith("-")&&!i.startsWith("${{")&&!i.startsWith("jobs:")}function isStartingNewJob(e,n,s,i){return e&&(n.match(/^-\s+job:/)||n.startsWith("job:")&&-1!==s&&i<=s)}function analyzeTemplateHints(e,n=new Set){if("string"!=typeof e||!e.length)return[];const s=[],i=e.split(/\r?\n/);let r=!1,o=!1,a=-1,l=-1,c=-1;for(let e=0;e<i.length;e++){const u=i[e],p=u.trim();if(p&&!p.startsWith("#")){const n=u.match(/^(\s*)/)[1].length;if(p.startsWith("jobs:")&&(r=!0,c=n,o=!1,a=-1),r){(p.match(/^-\s+job:/)||p.startsWith("job:"))&&(o=!0,l=e+1,a=-1);const i=p.match(/^\$\{\{/)||p.match(/^\$\[/);if(hasExitedJobsBlock(i,n,c,p)&&(r=!1,o=!1),o&&!i){const i=/^(displayName|dependsOn|condition|workspace|pool|strategy|timeoutInMinutes|cancelTimeoutInMinutes|variables|container|services):/;p.match(i)&&-1===a&&(a=n),p.startsWith("steps:")&&(-1!==a&&n<a&&s.push(`line ${e+1}: 'steps:' is not properly indented under the job.\n    Expected ${a} spaces (same as other job properties like 'displayName' or 'pool'), but found ${n} spaces.\n    The 'steps:' property must be at the same indentation level as other job properties (job starts at line ${l}).`),o=!1);const r=/^-\s+(script|task|bash|pwsh|powershell|checkout|download|publish|template):/;if(p.match(r)){if(-1!==a&&n<a){const i=p.match(r)[1];s.push(`line ${e+1}: Step item '- ${i}:' is not properly indented under the job.\n    Expected ${a} spaces (same as other job properties like 'displayName' or 'pool'), but found ${n} spaces.\n    Step items must be at the same indentation level as other job properties (job starts at line ${l}).`)}o=!1}isStartingNewJob(o,p,a,n)&&-1!==a&&(o=!1)}}}if(isStandaloneExpression(u)&&!isMappingKey(u)&&containsConditionalKeyword(u)){const n="- ${{ if ... }}:";s.push(`line ${e+1}: Add ':' after the expression (e.g., '${n}').`)}hasElseIfTypo(u)&&s.push(`line ${e+1}: Use 'elseif' instead of 'else if' in Azure expressions.`);const d=u.match(/\b(eq|ne|contains|startsWith|endsWith)\s*\(([^)]*)\)/i);if(d){const n=d[2],i=n.includes(","),r=n.trim().split(/\s+/);!i&&r.length>=2&&s.push(`line ${e+1}: Add a comma between arguments (e.g., ${d[1]}(a, b)).`)}if(isExpressionWithColon(p)&&!p.startsWith("-")){let r=!1;const o=getIndent(u);for(let n=e-1;n>=0;n--){const e=i[n];if(!isBlank(e)){if(isListItem(e)){o===getIndent(e)&&(r=!0)}break}}if(!r)for(let n=e+1;n<i.length;n++){const e=i[n];if(!isBlank(e)){if(isListItem(e)){o===getIndent(e)&&(r=!0)}break}}if((r||!isConditionalDirective(p,n))&&r){const n="- ${{ if ... }}:";s.push(`line ${e+1}: Prepend '-' for list items using expressions (e.g., '${n}').`)}}if(/^\s*-\s+(?:\$\{\{.*\}}|__EXPR_PLACEHOLDER_\d+__)\s*:\s*$/.test(u)){const n=getIndent(u),r=n+2;let o=-1,a=-1;for(let n=e+1;n<i.length;n++){const e=i[n];if(e.trim()&&!e.trim().startsWith("#")){o=getIndent(e),a=n;break}}if(o>r)for(let e=a+1;e<i.length;e++){const l=i[e],c=l.trim();if(!c||c.startsWith("#"))continue;const u=getIndent(l);if(u<=n)break;if(u>n&&u<o){s.push(`line ${e+1}: '${c}' is at indent ${u}, which is between the conditional directive's indent (${n}) and its value block (indent ${o}, line ${a+1}). This makes it a sibling key of the conditional expression rather than inside it. Fix the value block to start at indent ${r}.`);break}}else if(o===r)for(let e=a+1;e<i.length;e++){const o=i[e],a=o.trim();if(!a||a.startsWith("#"))continue;const l=getIndent(o);if(l<=n)break;if(l===r&&!a.startsWith("-")&&/\S:\s/.test(a+" ")){s.push(`line ${e+1}: '${a}' is a sibling mapping key of the conditional expression, not inside its value block. Move it inside the value block (indent > ${r}) or remove it from this context.`);break}}}/^\s*\?\s+-\s+(?:\$\{\{|__EXPR_PLACEHOLDER_)/.test(u)&&s.push("line "+(e+1)+": YAML explicit key indicator ('?') before '- ${{ ... }}:' turns the template expression into a map key instead of a conditional directive. Remove the '?' and write it as: '- ${{ if ... }}'.");const f=validateTemplateExpressions(u,e+1);s.push(...f)}return s}function findFirstKeyOccurrence(e,n,s){if(!e||"string"!=typeof e)return null;const i=e.split("\n");if(n>=i.length)return null;const r=i[n].slice(s).match(/^(\s*)([^:\s]+)\s*:/);if(!r)return null;const o=r[2],a=s+r[1].length;for(let e=0;e<n;e++){const n=i[e],s=n.trimStart();if(s.startsWith("#")||0===s.length)continue;const r=n.length-s.length,l=new RegExp(`^${o}\\s*:`);if(r===a&&l.test(s))return{line:e,column:r}}return null}function isDuplicateKeyForTemplateExpression(e){if(!e||"object"!=typeof e)return!1;if(!("string"==typeof e.message?e.message:"").includes("duplicated mapping key"))return!1;if(("string"==typeof e.snippet?e.snippet:"").includes("${{"))return!0;return(e.mark&&"string"==typeof e.mark.snippet?e.mark.snippet:"").includes("${{")}function findNextNonBlankLine(e,n){for(let s=n;s<e.length;s++)if(!isBlank(e[s]))return s;return null}function isMainSectionKey(e){return"steps:"===e||"stages:"===e||"jobs:"===e}function isMappingKey(e){return!(!e||"string"!=typeof e)&&e.trim().endsWith(":")}function isComment(e){if(!e||"string"!=typeof e)return!1;return e.trim().startsWith("#")}function isListItem(e){if(!e||"string"!=typeof e)return!1;const n=e.trim();return/^\s*-\s/.test(n)}function isBlank(e){return!e||"string"!=typeof e||""===e.trim()}function hasActualContent(e){return!isBlank(e)&&!isComment(e)}function isBlankOrCommentLine(e){return isBlank(e)||isComment(e)}function isNonCommentContent(e){return e&&!e.startsWith("#")}function isConditionalListItem(e){return/^-\s+\$\{\{\s*(if|else|elseif|each)\s/.test(e)}function containsTemplateExpression(e){return"string"==typeof e&&e.includes("${{")}function containsConditionalKeyword(e){return/\$\{\{\s*(if|else|elseif|each)\s/.test(e)}function hasElseIfTypo(e){const n=e.trim();return/\belse\s+if\b/i.test(n)}function isStandaloneExpression(e){const n=e.trim();return/^-?\s*\$\{\{[^}]+\}\}\s*$/.test(n)}function isExpressionWithColon(e){return/^\$\{\{[^}]+\}\}\s*:/.test(e)||/^__EXPR_PLACEHOLDER_\d+__\s*:/.test(e)}function startsMultiLineScalarBlock(e){return/:\s*[|>][-+]?\s*$/.test(e)}function getIndent(e){return e.length-e.trimStart().length}function getBooleanOption(e,n,s){return e&&"boolean"==typeof e[n]?e[n]:s}function getClampedIntegerOption(e,n,s,i){return!e||!Number.isInteger(e[n])||e[n]<0?i:Math.min(e[n],s)}function getBetweenSectionBlankLines(e){const n=getClampedIntegerOption(e,"betweenSectionBlankLines",4,null);if(null!==n)return n;const s=getClampedIntegerOption(e,"blankLinesBetweenSections",4,null);return null!==s?s:1}function getNewlineFormat(e){const n=e&&"string"==typeof e.newlineFormat?e.newlineFormat:null;return"\n"===n||"\r\n"===n?n:"\n"}function getLineWidth(e){return e&&"number"==typeof e.lineWidth&&e.lineWidth>=0?0===e.lineWidth?-1:e.lineWidth:-1}function getIndentOption(e){return e&&Number.isInteger(e.indent)&&e.indent>0&&e.indent<=8?e.indent:2}const r=/^\s*-\s+(task|bash|powershell|pwsh|script|sh|checkout|download|downloadBuild|getPackage|publish|reviewApp|template):/;function handleCommentLine(e){const{lineNum:n,inMultiLineBlock:s,pass1:i,currentSection:r,spacedSections:o,lines:a,foundFirstMainSection:l}=e,c=a[n],u=n;if(s)return i.push(c),!0;let p=!0;for(let e=u+1;e<a.length;e++)if(hasActualContent(a[e])){p=!1;break}if(!p){let e=!1;const s=getIndent(c);for(let i=n-1;i>=0;i--){const n=a[i];if(isBlank(n)||isComment(n))continue;const r=getIndent(n);if("steps:"===n.trim()&&r<=s){e=!0;break}if(r<s&&!n.trim().startsWith("-"))break}if(function needsBlankBeforeComment(e,n,s,i,r){return e||"steps"===n||s.includes(n)||i&&0===getIndent(r)}(e,r,o,l,c)){const e=i.length>0?i[i.length-1]:null,n=e?e.trim():"",s="steps:"===n||"jobs:"===n||"stages:"===n;!e||isBlank(e)||s||i.push("")}}return i.push(c),!0}function findPreviousNonBlankLine(e,n){for(let s=n;s>=0;s--)if(!isBlank(e[s]))return s;return null}function handleBlankLine(e){const{pass1:n,inMultiLineBlock:s,currentSection:i,spacedSections:r,listItemSections:o,prevWasComment:a,lineNum:l,lines:c}=e,u=findNextNonBlankLine(c,l+1);if(null===u)return{continue:!0,prevWasComment:!1};if(!s&&("parameters"===i||"variables"===i))return{continue:!0,prevWasComment:!1};if(s)return n.push(""),{continue:!0,prevWasComment:!1};const p=getIndent(c[u]);let d=!1;const f=findPreviousNonBlankLine(n,n.length-1),h=null!==f?n[f]:null;if(h){const e=getIndent(h),n=h.trim();if(0===e&&isMainSectionKey(n))d=!0;else if(a)d=!0;else if("variables"===i)d=!1;else if("steps"===i||r.includes(i)){const e=isComment(h),n=isListItem(c[u]);d=!(e&&n)}else o.includes(i)&&(0!==p&&2!==p||(d=!0))}if(d&&isComment(c[u])){let e=!1,s=-1;for(let i=n.length-1;i>=0;i--){if(hasActualContent(n[i])){e=!0,s=i;break}if(isBlankOrCommentLine(n[i]))break}if(e){let e=!1;for(let n=u;n<c.length;n++)if(hasActualContent(c[n])){e=!0;break}if(!e){let e=0;for(let i=s+1;i<n.length;i++)isBlank(n[i])&&e++;e>=1&&(d=!1)}}}return d&&n.push(c[l]),{continue:!0,prevWasComment:!1}}function handleStepSpacing(e){const{pass1:n,lineIndent:s,lineNum:i,lines:o}=e,a=o[i],l=a.trim();let c=-1;isMainSectionKey(l)?containsTemplateExpression(a)||(c=s):c>=0&&s<=c&&isNonCommentContent(l)&&(isMainSectionKey(l)||(c=-1));const u=isListItem(a),p=isConditionalListItem(a),d=u&&!p&&function isStepOrExpressionListItem(e){return r.test(e)||function isExpressionListItem(e){return/^\s*-\s+\$\{\{.*\}\}:?/.test(e)}(e)}(a);return function shouldAddBlankBeforePipelineItem(e,n,s,i,r){const{pass1:o,lastStepInStepsSection:a,inMultiLineBlock:l,variablesIndent:c,startsMultiLineBlock:u,lineIndent:p}=e,d=r&&a>=0,f=c>=0&&p===c&&s,h=o.length>0?o[o.length-1].trim():"",m=isConditionalListItem(h),g=isMainSectionKey(h),y=l&&!u;return(i||d)&&a>=0&&!g&&!m&&!y&&!f}(e,0,u,d,p)&&n.length>0&&!isBlank(n[n.length-1])&&n.push(""),{isPipelineItem:d}}function handleSectionSpacing(e){const{pass1:n,options:s,hasParametersAtStart:i,parametersEnded:r,firstNonEmptyLine:o,foundFirstSection:a,foundFirstMainSection:l,lastRootSectionIndex:c,topLevelSections:u,lineNum:p,lines:d}=e,f=d[p],h=f.trim(),m=!isComment(f)&&!isListItem(f)&&0===getIndent(f)&&(isMappingKey(f)||h.includes(": "));let g=!1,y=r,b=a,v=l;if(i&&!s.wasExpanded&&(!r&&p>o&&m&&(y=!0),y&&!b&&u.some(e=>h===e))){b=!0,g=!0;for(isMainSectionKey(h.includes(":")?h.substring(0,h.indexOf(":")+1).trim():h)&&(v=!0);n.length>0&&isBlank(n[n.length-1]);)n.pop();for(let e=0;e<s.firstBlockBlankLines;e++)n.push("")}let S=c;if(m&&!g&&!s.wasExpanded){const e=h.includes(":")?h.substring(0,h.indexOf(":")+1).trim():h,r=isMainSectionKey(e),o=r&&!v&&(i?y:c>=0);o&&(v=!0,b=!0);let a=!1;for(let e=p+1;e<d.length;e++)if(hasActualContent(d[e])){a=!0;break}let l=0;if((c>=0||i&&y)&&a){for(;n.length>0&&isBlank(n[n.length-1]);)n.pop();l="name:"===e?1:o?s.firstBlockBlankLines:r?1:s.betweenSectionBlankLines;for(let e=0;e<l;e++)n.push("")}}return m&&(S=n.length),{section2HandledThisLine:g,parametersEnded:y,foundFirstSection:b,foundFirstMainSection:v,lastRootSectionIndex:S}}function updateMultiLineBlockStateForSpacing(e){const{line:n,indent:s,inMultiLineBlock:i,multiLineBlockIndent:r}=e;startsMultiLineScalarBlock(n)?(e.inMultiLineBlock=!0,e.multiLineBlockIndent=s):i&&!isBlank(n)&&s<=r&&(e.inMultiLineBlock=!1,e.multiLineBlockIndent=-1)}function updateSectionContextForSpacing(e){const{line:n,indent:s,trimmed:i}=e;if(!isBlank(n)&&!isListItem(n)&&isMappingKey(i)){const n=i.slice(0,-1);"variables"===n||"parameters"===n?(e.insideVariablesOrParameters=!0,e.variablesOrParametersIndent=s):e.currentSection=n}if(e.insideVariablesOrParameters&&s<e.variablesOrParametersIndent&&(e.insideVariablesOrParameters=!1,e.variablesOrParametersIndent=-1),e.insideVariablesOrParameters&&!isBlank(n)&&!isListItem(n)&&isMappingKey(i)){(function shouldExitVariablesOrParametersSection(e,n,s){return"variables"!==e&&"parameters"!==e&&n===s})(i.slice(0,-1),s,e.variablesOrParametersIndent)&&(e.insideVariablesOrParameters=!1,e.variablesOrParametersIndent=-1)}}function updateNestedMappingContextForSpacing(e){const{line:n,indent:s,trimmed:i,insideNestedMapping:r,nestedMappingIndent:o}=e;if(r&&!isBlank(n)&&(s<o||s===o&&!isListItem(n))&&(e.insideNestedMapping=!1,e.nestedMappingIndent=-1),function shouldEnterNestedMappingForSpacing(e){const{line:n,effectivelyInMultiLineBlock:s,sectionStack:i,insideNestedMapping:r}=e;return!s&&!isListItem(n)&&!isComment(n)&&isMappingKey(n)&&i.length>0&&!containsTemplateExpression(n)&&!r}(e)){const n=i.slice(0,-1);new Set(["steps","jobs","stages"]).has(n)||(e.insideNestedMapping=!0,e.nestedMappingIndent=s)}}function updateSectionStackForSpacing(e){const{line:n,indent:s,trimmed:i,sectionStack:r,effectivelyInMultiLineBlock:o}=e;if(o||isBlank(n))return;const a=new Set(["steps","jobs","stages"]);if(!isListItem(n)&&!isComment(n))for(;r.length&&r[r.length-1].indent>=s&&!r[r.length-1].implicit;)r.pop();if(!isListItem(n)&&!isComment(n)&&isMappingKey(n)){const e=i.slice(0,-1);a.has(e)&&r.push({name:e,indent:s})}}function isInsideMainListSectionForSpacing(e){const{sectionStack:n}=e,s=new Set(["steps","jobs","stages"]);for(let e=n.length-1;e>=0;e--)if(s.has(n[e].name))return!0;return!1}function checkAndAddImplicitSectionForSpacing(e){const{sectionStack:n,currentLineIdx:s,lines:i,trimmed:r,indent:o,currentSection:a}=e;if(function isRootLevelAndNotInVariablesOrParameters(e,n,s){return!isInsideMainListSectionForSpacing(e)&&0===n&&"variables"!==s&&"parameters"!==s}(e,o,a)){let e=!1;if(containsTemplateExpression(r))e=!0;else for(let n=s+1;n<Math.min(s+10,i.length);n++)if(!isBlank(i[n])){const s=i[n].trim();getIndent(i[n])>o&&s.match(/^-\s+(stage|job|task):/)&&(e=!0);break}if(e){if(!n.some(e=>e.implicit))return n.push({name:"stages",indent:-1,implicit:!0}),!0}}return!1}function processListItemSpacingForSpacing(e){const{insideNestedMapping:n,insideVariablesOrParameters:s}=e;if(function handleBlanksBetweenParentAndChildForSpacing(e){const{lines:n,currentLineIdx:s,listItemIndent:i,removePositions:r}=e;let o=-1,a=[];for(let e=s+1;e<n.length;e++){if(!isBlank(n[e])){o=e;break}a.push(e)}if(a.length>0&&o>0){const e=n[o];if(getIndent(e)>i&&!isComment(e))for(const e of a)r.push(e)}}(e),n||s)return;let i=isInsideMainListSectionForSpacing(e);if(!i){i=checkAndAddImplicitSectionForSpacing(e)||isInsideMainListSectionForSpacing(e)}if(!i)return;!function processCommentsBeforeItemForSpacing(e){const{lines:n,currentLineIdx:s,removePositions:i}=e;for(let e=s-1;e>=0;e--){const r=n[e];if(isBlank(r))continue;if(!isComment(r))break;let o=!1,a=-1;for(let s=e-1;s>=0;s--){if(!isBlank(n[s])){if(isListItem(n[s])){o=!0;break}break}-1===a&&(a=s)}for(let r=e+1;r<s;r++)isBlank(n[r])&&(o&&r===a||i.push(r));break}}(e);const r=function findNextSiblingListItemForSpacing(e){const{lines:n,currentLineIdx:s,listItemIndent:i}=e;for(let e=s+1;e<n.length;e++){if(isBlank(n[e]))continue;if(isComment(n[e]))continue;const s=getIndent(n[e]),r=isListItem(n[e]);if(r&&s===i)return e;if(r&&s<i)break;if(s<=i&&!r)break}return null}(e);null!==r&&function processSiblingSpacingForSpacing(e,n){const{lines:s,currentLineIdx:i,listItemIndent:r,removePositions:o,insertPositions:a}=e;if(getIndent(s[n])!==r)return;let l=!1,c=!1;for(let e=n-1;e>=0;e--){const r=s[e];if(!isBlank(r)){if(isComment(r)){c=!0;let r=!1,a=-1;for(let n=e-1;n>=i;n--){if(!isBlank(s[n])){if(isListItem(s[n])){r=!0;break}break}-1===a&&(a=n)}for(let i=e+1;i<n;i++)isBlank(s[i])&&(r&&i===a||o.push(i));break}break}l=!0}l||c||a.push(n)}(e,r)}function insertStepSpacing(e){const n={lines:e,insertPositions:[],removePositions:[],sectionStack:[],inMultiLineBlock:!1,multiLineBlockIndent:-1,insideNestedMapping:!1,nestedMappingIndent:-1,currentSection:null,insideVariablesOrParameters:!1,variablesOrParametersIndent:-1,currentLineIdx:0,listItemIndent:0,line:"",indent:0,trimmed:"",effectivelyInMultiLineBlock:!1};for(let s=0;s<e.length;s++){n.currentLineIdx=s,n.line=e[s],n.indent=getIndent(n.line),n.trimmed=n.line.trim();const i=n.inMultiLineBlock;updateMultiLineBlockStateForSpacing(n),n.effectivelyInMultiLineBlock=i&&n.inMultiLineBlock,updateSectionContextForSpacing(n),updateNestedMappingContextForSpacing(n),updateSectionStackForSpacing(n),!n.effectivelyInMultiLineBlock&&isListItem(n.line)&&(n.listItemIndent=n.indent,processListItemSpacingForSpacing(n))}return function applyBlankLineAdjustmentsForSpacing(e,n,s){let i=[...e];for(const e of Array.from(new Set(n)).sort((e,n)=>n-e))i.splice(e,1);const r=s.map(e=>{let s=e;for(const i of n)i<e&&s--;return s});for(const e of Array.from(new Set(r)).sort((e,n)=>n-e))i.splice(e,0,"");return i}(e,n.removePositions,n.insertPositions)}function updateMultiLineBlockState(e){const{lines:n,lineNum:s,lineIndent:i}=e,r=n[s],o=r.trim(),a=startsMultiLineScalarBlock(r);return a?(e.inMultiLineBlock=!0,e.multiLineBlockIndent=i):e.inMultiLineBlock&&i<=e.multiLineBlockIndent&&""!==o&&(e.inMultiLineBlock=!1,e.multiLineBlockIndent=-1),a}function updateVariablesSection(e){const{lines:n,lineNum:s,lineIndent:i}=e,r=n[s],o=r.trim();"variables:"!==o||containsTemplateExpression(r)?e.variablesIndent>=0&&isNonCommentContent(o)&&(i<e.variablesIndent||i===e.variablesIndent&&isMappingKey(o)&&"variables:"!==o)&&(e.variablesIndent=-1):e.variablesIndent=i}function applyPipelineFormatting(e,n,s){if(!e)return e;const i=e.split(n),r=function initializeFormattingState(e,n){let s=!1,i=-1;for(let n=0;n<e.length;n++){const r=e[n].trim();if(isNonCommentContent(r)){i=n,s="parameters:"===r;break}}return{options:n,lines:e,spacedSections:["steps"],listItemSections:["stages","jobs"],topLevelSections:["stages:","jobs:","steps:","trigger:","pr:","resources:","pool:","variables:","name:"],hasParametersAtStart:s,firstNonEmptyLine:i,pass1:[],currentSection:null,prevWasComment:!1,lastStepInStepsSection:-1,variablesIndent:-1,inMultiLineBlock:!1,multiLineBlockIndent:-1,foundFirstSection:!1,foundFirstMainSection:!1,parametersEnded:!1,lastRootSectionIndex:-1,lineNum:-1,lineIndent:0,startsMultiLineBlock:!1}}(i,s);for(let e=0;e<i.length;e++){const n=i[e],o=n.trim(),a=getIndent(n);if(r.lineNum=e,r.lineIndent=a,0===a&&isNonCommentContent(o)&&isMappingKey(o)&&!isListItem(n)&&(r.currentSection=o.slice(0,-1)),isBlank(n)){const e=handleBlankLine(r);if(e.continue){r.prevWasComment=e.prevWasComment;continue}}const l=updateMultiLineBlockState(r);if(r.startsMultiLineBlock=l,updateVariablesSection(r),s.stepSpacing&&!s.wasExpanded){handleStepSpacing(r).isPipelineItem?r.lastStepInStepsSection=r.lineNum:isMainSectionKey(o)&&!containsTemplateExpression(n)&&(r.lastStepInStepsSection=-1)}const c=handleSectionSpacing(r);r.parametersEnded=c.parametersEnded,r.foundFirstSection=c.foundFirstSection,r.foundFirstMainSection=c.foundFirstMainSection,r.lastRootSectionIndex=c.lastRootSectionIndex;if(("jobs:"===o||"steps:"===o)&&a>0&&!c.section2HandledThisLine&&!s.wasExpanded&&(0!==r.pass1.length&&isBlank(r.pass1[r.pass1.length-1])||r.pass1.push("")),isComment(n))handleCommentLine(r),r.prevWasComment=!0;else if(r.pass1.push(n),r.prevWasComment=!1,isMappingKey(o))for(;e+1<i.length&&isBlank(i[e+1]);)e++}const o=function compactBlankLines(e,n){const s=[],i=[],r=new Set(["steps","jobs","stages"]),o=new Set(["dependsOn","parameters","variables"]);for(let n=0;n<e.length;n++){const a=e[n],l=getIndent(a);if(!isListItem(a)&&!isBlank(a)&&!isComment(a))for(;i.length&&i[i.length-1].indent>=l;)i.pop();if(!isListItem(a)&&isMappingKey(a)){const e=a.trim().slice(0,-1);(0===l||o.has(e))&&i.push({name:e,indent:l})}if(isBlank(a)){const s=findPreviousNonBlankLine(e,n-1),o=findNextNonBlankLine(e,n+1);if(null!==s&&null!==o){const n=e[s],a=e[o];if(isMappingKey(n))continue;const l=isListItem(n),c=isListItem(a),u=i.length?i[i.length-1].name:null,p=u&&r.has(u);let d=l;if(c&&!p&&!l){const n=getIndent(a);for(let i=s-1;i>=0;i--)if(!isBlank(e[i])){if(isListItem(e[i])){d=!0;break}if(getIndent(e[i])<=n&&isMappingKey(e[i])&&!isListItem(e[i]))break}}if(d&&c&&!p)continue}}s.push(a)}return s}(r.pass1);return(s?.stepSpacing&&!s?.wasExpanded?insertStepSpacing(o):o).join(n)}e.exports={formatYaml:function formatYaml(e,n={}){const s={text:e,warning:void 0,error:void 0};if(!e)return s;if(parseFormatDirectives(e).disabled)return s;if(/\n---\n/.test(e)){const s=e.split(/\n---\n/),i=[],r=[],o=[];for(let e=0;e<s.length;e++){const a=s[e],l=a.trim();if(!l)continue;if(l.split("\n").every(e=>{const n=e.trim();return!n||n.startsWith("#")})){i.push(a);continue}const c=formatYaml(a,n);c.error?o.push(`Document ${e+1}: ${c.error}`):(c.warning&&r.push(`Document ${e+1}: ${c.warning}`),i.push(c.text.trim()))}return 0===i.length?{text:e,warning:r.length>0?r.join("\n"):void 0,error:o.length>0?o.join("\n"):"All documents failed to format"}:{text:i.join("\n\n---\n"),warning:r.length>0?r.join("\n"):void 0,error:o.length>0?o.join("\n"):void 0}}const r=analyzeTemplateHints(e),o=r.length?`\n  ${r.join("\n  ")}`:"";if(r.length>0&&!n.expandTemplates){if(r.some(e=>e.includes("Missing closing")||e.includes("Unbalanced parentheses")||e.includes("Unbalanced brackets")||e.includes("Unbalanced braces")||e.includes("Unclosed string")))throw new Error(`Template validation failed:${o}`)}const a=parseFormatDirectives(e);a.options&&(n={...n,...a.options});const l={noArrayIndent:getBooleanOption(n,"noArrayIndent",!0),indent:getIndentOption(n),lineWidth:getLineWidth(n),forceQuotes:getBooleanOption(n,"forceQuotes",!1),sortKeys:getBooleanOption(n,"sortKeys",!1),expandTemplates:getBooleanOption(n,"expandTemplates",!1),newlineFormat:getNewlineFormat(n),fileName:n&&n.fileName?n.fileName:void 0,stepSpacing:getBooleanOption(n,"stepSpacing",!0),firstBlockBlankLines:getClampedIntegerOption(n,"firstBlockBlankLines",4,2),betweenSectionBlankLines:getBetweenSectionBlankLines(n),sectionSpacing:getBooleanOption(n,"sectionSpacing",!1),wasExpanded:getBooleanOption(n,"wasExpanded",!1),azureCompatible:getBooleanOption(n,"azureCompatible",!1),suppressConsoleOutput:getBooleanOption(n,"suppressConsoleOutput",!1)};try{let n=e;const{content:s,placeholderMap:r,conditionalDirectives:o}=l.expandTemplates?{content:n,placeholderMap:new Map,conditionalDirectives:new Set}:replaceTemplateExpressionsWithPlaceholders(n),{content:a,commentMap:c}=function protectEmptyValues(e){if(!e)return e;const n=e.split(/\r?\n/),s=[],i=new Map;let r=0;const o=/^(\s*)([^:]+):\s*$/;for(let e=0;e<n.length;e++){const a=n[e];if(isComment(a)||isListItem(a)){s.push(a);continue}const l=a.match(o);if(!l){s.push(a);continue}const c=l[1],u=l[2];let p=e+1,d=!1;for(;p<n.length;){const e=n[p],s=getIndent(e);if(!isBlankOrCommentLine(e)){d=isListItem(n[p])&&s>=c.length||s>c.length;break}p++}if(!d){const o=[];let a=e+1;for(;a<n.length;){const e=n[a];if(isBlank(e))o.push(e),a++;else{if(!isComment(e))break;if(!(getIndent(e)>=c.length))break;o.push(e),a++}}if(o.length>0){const n=`__COMMENT_${r}__`;i.set(n,o),r++,s.push(`${c}${u}: __EMPTY_VALUE_PLACEHOLDER__${n}`),e=a-1}else s.push(`${c}${u}: __EMPTY_VALUE_PLACEHOLDER__`);continue}s.push(a)}return{content:s.join("\n"),commentMap:i}}(s),u=analyzeTemplateHints(n,o);let p=u.length>0?`\n  ${u.join("\n  ")}`:"";if(u.length>0){const n=l.fileName?`[${l.fileName}] `:"",s=`YAML validation warnings:${p}`.split("\n").map((e,n)=>0===n?e:"  "+e).join("\n");return l.suppressConsoleOutput||console.error(`${n}${s}`),{text:e,warning:p,error:void 0}}const d=i.parseDocument(a,{strict:!1,uniqueKeys:!0});if(d.errors&&d.errors.length>0){const n=d.errors.filter(e=>!e.message||!e.message.includes("Invalid escape sequence")).filter(e=>!isDuplicateKeyForTemplateExpression(e));if(n.length>0){const s=n.map(n=>function enrichDuplicateKeyError(e,n,s=""){if(!e||!e.message)return e.message||"";const i=e.message.toLowerCase();if(!i.includes("map keys must be unique")&&!i.includes("duplicated mapping key"))return i.includes("block sequence")&&i.includes("implicit map key")?e.message+"\n  A '- ${{ ... }}:' conditional is being used as a map key due to bad indentation. Fix the indentation so the expression aligns with sibling list items. This is also what triggers the 'Keys with collection values will be stringified' (mapAsMap) warning.":e.message;const r=e.message.match(/at line (\d+), column (\d+):/);if(!r||!n)return e.message;const o=parseInt(r[1],10)-1,a=parseInt(r[2],10)-1,l=findFirstKeyOccurrence(n,o,a),c=(n.split("\n")[o]||"").slice(a).match(/^(\s*)([^:\s]+)\s*:/),u=c?c[2]:"key";if(l){const e=s?`${s}:`:"";return`Duplicate key '${u}' detected\n  First defined at: ${e}${l.line+1}:${l.column+1}\n  Duplicate found at: ${e}${o+1}:${a+1}`}return e.message}(n,e,l.fileName||"")),i=s.join("\n\n"),r=l.fileName?`[${l.fileName}] `:"",o=`YAML parsing error: ${i}`.split("\n").map((e,n)=>0===n?e:"  "+e).join("\n");l.suppressConsoleOutput||console.error(`${r}${o}`);const a=i.includes("\n");return{text:e,warning:p||void 0,error:!a&&i.length>100?i.substring(0,100)+"..."+p:`${i}${p}`}}}d.errors=[],d.warnings=[];let f=d.toString({indent:l.indent,indentSeq:!l.noArrayIndent,lineWidth:-1,doubleQuotedAsJSON:!0,doubleQuotedMinMultiLineLength:1/0,singleQuote:null,blockQuote:!0,defaultStringType:"PLAIN",aliasDuplicateObjects:!1});f=restoreTemplateExpressions(f,r),f=function restoreEmptyValues(e,n){if(!e)return e;if(!n||0===n.size)return e.replace(/:\s*__EMPTY_VALUE_PLACEHOLDER__\s*$/gm,":");const s=e.split(/\r?\n/),i=[];for(const e of s){const s=e.match(/^(\s*)([^:]+):\s*__EMPTY_VALUE_PLACEHOLDER__(__COMMENT_\d+__)\s*$/);if(s){const[,e,r,o]=s,a=n.get(o);i.push(`${e}${r}:`),a?.length&&a.forEach(e=>i.push(e))}else e.match(/:\s*__EMPTY_VALUE_PLACEHOLDER__\s*$/)?i.push(e.replace(/:\s*__EMPTY_VALUE_PLACEHOLDER__\s*$/,":")):i.push(e)}return i.join("\n")}(f,c);const h=l.newlineFormat;let m=f.replace(/\r?\n/g,h);return m=applyPipelineFormatting(m,h,l),m=m.split(h).map(e=>e.replace(/[ \t]+$/,"")).join(h),m=l.wasExpanded&&l.azureCompatible?m.replace(new RegExp(`(?:${escapeRegExp(h)})*$`),`${h}${h}${h}`):m.replace(new RegExp(`(?:${escapeRegExp(h)})*$`),h),{text:m,warning:p||void 0,error:void 0}}catch(n){const s=function describeYamlSyntaxError(e,n,s=""){if(!e||"object"!=typeof e)return;if("YAMLException"!==e.name&&"YAMLError"!==e.name&&e.name&&"string"==typeof e.name&&!e.name.includes("YAML"))return;const i=("string"==typeof e.reason&&e.reason.trim().length?e.reason.trim():void 0)||("string"==typeof e.message?e.message.trim():void 0);if(isDuplicateKeyForTemplateExpression(e))return;const r=e.mark&&"object"==typeof e.mark?e.mark:void 0,o=r&&Number.isInteger(r.line),a=r&&Number.isInteger(r.column),l=o?`line ${r.line+1}`:void 0,c=a?`column ${r.column+1}`:void 0,u=l&&c?`${l}, ${c}`:l||c,p=analyzeTemplateHints(n);if((i||"").toLowerCase().includes("duplicated mapping key")&&o&&a&&n){const e=findFirstKeyOccurrence(n,r.line,r.column),i=(n.split("\n")[r.line]||"").slice(r.column).match(/^(\s*)([^:\s]+)\s*:/),o=i?i[2]:"key";if(e){const n=s?`${s}:`:"",i=`${n}${e.line+1}:${e.column+1}`,a=`${n}${r.line+1}:${r.column+1}`;p.unshift(`Duplicate key '${o}' detected.`,`  First defined at: ${i}`,`  Duplicate found at: ${a}`)}}const d=(i||"").toLowerCase();let f;return i&&(d.includes("block sequence")&&d.includes("implicit map key")?p.unshift("A '- ${{ ... }}:' conditional is being used as a map key due to bad indentation. Fix the indentation so the expression aligns with sibling list items. This is also what triggers the 'Keys with collection values will be stringified' (mapAsMap) warning."):d.includes("implicit map key")||d.includes("mapping values are not allowed")?p.unshift("Likely missing a ':' after an Azure expression used as a key (e.g., '- ${{ if ... }}:')."):(d.includes("bad indentation")||d.includes("incomplete explicit mapping"))&&p.unshift("Check indentation for list items and make sure expression lines start with '-'.")),u&&i?f=`YAML syntax error at ${u}: ${i}`:i?f=`YAML syntax error: ${i}`:u&&(f=`YAML syntax error at ${u}.`),f&&p.length&&(f+=`\n  ${p.join("\n")}`),f}(n,e,l.fileName||""),i=l.fileName?`[${l.fileName}] `:"";if(s){const n=s.split("\n").map((e,n)=>0===n?e:"  "+e).join("\n");return l.suppressConsoleOutput||console.error(`${i}${n}`),{text:e,warning:o||void 0,error:s}}const r=`YAML formatting failed: ${n.message}`.split("\n").map((e,n)=>0===n?e:"  "+e).join("\n");return l.suppressConsoleOutput||console.error(`${i}${r}`),{text:e,warning:o||void 0,error:`YAML formatting failed: ${n.message}`}}},escapeRegExp,replaceTemplateExpressionsWithPlaceholders,restoreTemplateExpressions,analyzeTemplateHints,parseFormatDirectives,findFirstKeyOccurrence}},132(e){"use strict";class Jsep{static get version(){return"1.4.0"}static toString(){return"JavaScript Expression Parser (JSEP) v"+Jsep.version}static addUnaryOp(e){return Jsep.max_unop_len=Math.max(e.length,Jsep.max_unop_len),Jsep.unary_ops[e]=1,Jsep}static addBinaryOp(e,n,s){return Jsep.max_binop_len=Math.max(e.length,Jsep.max_binop_len),Jsep.binary_ops[e]=n,s?Jsep.right_associative.add(e):Jsep.right_associative.delete(e),Jsep}static addIdentifierChar(e){return Jsep.additional_identifier_chars.add(e),Jsep}static addLiteral(e,n){return Jsep.literals[e]=n,Jsep}static removeUnaryOp(e){return delete Jsep.unary_ops[e],e.length===Jsep.max_unop_len&&(Jsep.max_unop_len=Jsep.getMaxKeyLen(Jsep.unary_ops)),Jsep}static removeAllUnaryOps(){return Jsep.unary_ops={},Jsep.max_unop_len=0,Jsep}static removeIdentifierChar(e){return Jsep.additional_identifier_chars.delete(e),Jsep}static removeBinaryOp(e){return delete Jsep.binary_ops[e],e.length===Jsep.max_binop_len&&(Jsep.max_binop_len=Jsep.getMaxKeyLen(Jsep.binary_ops)),Jsep.right_associative.delete(e),Jsep}static removeAllBinaryOps(){return Jsep.binary_ops={},Jsep.max_binop_len=0,Jsep}static removeLiteral(e){return delete Jsep.literals[e],Jsep}static removeAllLiterals(){return Jsep.literals={},Jsep}get char(){return this.expr.charAt(this.index)}get code(){return this.expr.charCodeAt(this.index)}constructor(e){this.expr=e,this.index=0}static parse(e){return new Jsep(e).parse()}static getMaxKeyLen(e){return Math.max(0,...Object.keys(e).map(e=>e.length))}static isDecimalDigit(e){return e>=48&&e<=57}static binaryPrecedence(e){return Jsep.binary_ops[e]||0}static isIdentifierStart(e){return e>=65&&e<=90||e>=97&&e<=122||e>=128&&!Jsep.binary_ops[String.fromCharCode(e)]||Jsep.additional_identifier_chars.has(String.fromCharCode(e))}static isIdentifierPart(e){return Jsep.isIdentifierStart(e)||Jsep.isDecimalDigit(e)}throwError(e){const n=new Error(e+" at character "+this.index);throw n.index=this.index,n.description=e,n}runHook(e,n){if(Jsep.hooks[e]){const s={context:this,node:n};return Jsep.hooks.run(e,s),s.node}return n}searchHook(e){if(Jsep.hooks[e]){const n={context:this};return Jsep.hooks[e].find(function(e){return e.call(n.context,n),n.node}),n.node}}gobbleSpaces(){let e=this.code;for(;e===Jsep.SPACE_CODE||e===Jsep.TAB_CODE||e===Jsep.LF_CODE||e===Jsep.CR_CODE;)e=this.expr.charCodeAt(++this.index);this.runHook("gobble-spaces")}parse(){this.runHook("before-all");const e=this.gobbleExpressions(),n=1===e.length?e[0]:{type:Jsep.COMPOUND,body:e};return this.runHook("after-all",n)}gobbleExpressions(e){let n,s,i=[];for(;this.index<this.expr.length;)if(n=this.code,n===Jsep.SEMCOL_CODE||n===Jsep.COMMA_CODE)this.index++;else if(s=this.gobbleExpression())i.push(s);else if(this.index<this.expr.length){if(n===e)break;this.throwError('Unexpected "'+this.char+'"')}return i}gobbleExpression(){const e=this.searchHook("gobble-expression")||this.gobbleBinaryExpression();return this.gobbleSpaces(),this.runHook("after-expression",e)}gobbleBinaryOp(){this.gobbleSpaces();let e=this.expr.substr(this.index,Jsep.max_binop_len),n=e.length;for(;n>0;){if(Jsep.binary_ops.hasOwnProperty(e)&&(!Jsep.isIdentifierStart(this.code)||this.index+e.length<this.expr.length&&!Jsep.isIdentifierPart(this.expr.charCodeAt(this.index+e.length))))return this.index+=n,e;e=e.substr(0,--n)}return!1}gobbleBinaryExpression(){let e,n,s,i,r,o,a,l,c;if(o=this.gobbleToken(),!o)return o;if(n=this.gobbleBinaryOp(),!n)return o;for(r={value:n,prec:Jsep.binaryPrecedence(n),right_a:Jsep.right_associative.has(n)},a=this.gobbleToken(),a||this.throwError("Expected expression after "+n),i=[o,r,a];n=this.gobbleBinaryOp();){if(s=Jsep.binaryPrecedence(n),0===s){this.index-=n.length;break}r={value:n,prec:s,right_a:Jsep.right_associative.has(n)},c=n;const comparePrev=e=>r.right_a&&e.right_a?s>e.prec:s<=e.prec;for(;i.length>2&&comparePrev(i[i.length-2]);)a=i.pop(),n=i.pop().value,o=i.pop(),e={type:Jsep.BINARY_EXP,operator:n,left:o,right:a},i.push(e);e=this.gobbleToken(),e||this.throwError("Expected expression after "+c),i.push(r,e)}for(l=i.length-1,e=i[l];l>1;)e={type:Jsep.BINARY_EXP,operator:i[l-1].value,left:i[l-2],right:e},l-=2;return e}gobbleToken(){let e,n,s,i;if(this.gobbleSpaces(),i=this.searchHook("gobble-token"),i)return this.runHook("after-token",i);if(e=this.code,Jsep.isDecimalDigit(e)||e===Jsep.PERIOD_CODE)return this.gobbleNumericLiteral();if(e===Jsep.SQUOTE_CODE||e===Jsep.DQUOTE_CODE)i=this.gobbleStringLiteral();else if(e===Jsep.OBRACK_CODE)i=this.gobbleArray();else{for(n=this.expr.substr(this.index,Jsep.max_unop_len),s=n.length;s>0;){if(Jsep.unary_ops.hasOwnProperty(n)&&(!Jsep.isIdentifierStart(this.code)||this.index+n.length<this.expr.length&&!Jsep.isIdentifierPart(this.expr.charCodeAt(this.index+n.length)))){this.index+=s;const e=this.gobbleToken();return e||this.throwError("missing unaryOp argument"),this.runHook("after-token",{type:Jsep.UNARY_EXP,operator:n,argument:e,prefix:!0})}n=n.substr(0,--s)}Jsep.isIdentifierStart(e)?(i=this.gobbleIdentifier(),Jsep.literals.hasOwnProperty(i.name)?i={type:Jsep.LITERAL,value:Jsep.literals[i.name],raw:i.name}:i.name===Jsep.this_str&&(i={type:Jsep.THIS_EXP})):e===Jsep.OPAREN_CODE&&(i=this.gobbleGroup())}return i?(i=this.gobbleTokenProperty(i),this.runHook("after-token",i)):this.runHook("after-token",!1)}gobbleTokenProperty(e){this.gobbleSpaces();let n=this.code;for(;n===Jsep.PERIOD_CODE||n===Jsep.OBRACK_CODE||n===Jsep.OPAREN_CODE||n===Jsep.QUMARK_CODE;){let s;if(n===Jsep.QUMARK_CODE){if(this.expr.charCodeAt(this.index+1)!==Jsep.PERIOD_CODE)break;s=!0,this.index+=2,this.gobbleSpaces(),n=this.code}this.index++,n===Jsep.OBRACK_CODE?((e={type:Jsep.MEMBER_EXP,computed:!0,object:e,property:this.gobbleExpression()}).property||this.throwError('Unexpected "'+this.char+'"'),this.gobbleSpaces(),n=this.code,n!==Jsep.CBRACK_CODE&&this.throwError("Unclosed ["),this.index++):n===Jsep.OPAREN_CODE?e={type:Jsep.CALL_EXP,arguments:this.gobbleArguments(Jsep.CPAREN_CODE),callee:e}:(n===Jsep.PERIOD_CODE||s)&&(s&&this.index--,this.gobbleSpaces(),e={type:Jsep.MEMBER_EXP,computed:!1,object:e,property:this.gobbleIdentifier()}),s&&(e.optional=!0),this.gobbleSpaces(),n=this.code}return e}gobbleNumericLiteral(){let e,n,s="";for(;Jsep.isDecimalDigit(this.code);)s+=this.expr.charAt(this.index++);if(this.code===Jsep.PERIOD_CODE)for(s+=this.expr.charAt(this.index++);Jsep.isDecimalDigit(this.code);)s+=this.expr.charAt(this.index++);if(e=this.char,"e"===e||"E"===e){for(s+=this.expr.charAt(this.index++),e=this.char,"+"!==e&&"-"!==e||(s+=this.expr.charAt(this.index++));Jsep.isDecimalDigit(this.code);)s+=this.expr.charAt(this.index++);Jsep.isDecimalDigit(this.expr.charCodeAt(this.index-1))||this.throwError("Expected exponent ("+s+this.char+")")}return n=this.code,Jsep.isIdentifierStart(n)?this.throwError("Variable names cannot start with a number ("+s+this.char+")"):(n===Jsep.PERIOD_CODE||1===s.length&&s.charCodeAt(0)===Jsep.PERIOD_CODE)&&this.throwError("Unexpected period"),{type:Jsep.LITERAL,value:parseFloat(s),raw:s}}gobbleStringLiteral(){let e="";const n=this.index,s=this.expr.charAt(this.index++);let i=!1;for(;this.index<this.expr.length;){let n=this.expr.charAt(this.index++);if(n===s){i=!0;break}if("\\"===n)switch(n=this.expr.charAt(this.index++),n){case"n":e+="\n";break;case"r":e+="\r";break;case"t":e+="\t";break;case"b":e+="\b";break;case"f":e+="\f";break;case"v":e+="\v";break;default:e+=n}else e+=n}return i||this.throwError('Unclosed quote after "'+e+'"'),{type:Jsep.LITERAL,value:e,raw:this.expr.substring(n,this.index)}}gobbleIdentifier(){let e=this.code,n=this.index;for(Jsep.isIdentifierStart(e)?this.index++:this.throwError("Unexpected "+this.char);this.index<this.expr.length&&(e=this.code,Jsep.isIdentifierPart(e));)this.index++;return{type:Jsep.IDENTIFIER,name:this.expr.slice(n,this.index)}}gobbleArguments(e){const n=[];let s=!1,i=0;for(;this.index<this.expr.length;){this.gobbleSpaces();let r=this.code;if(r===e){s=!0,this.index++,e===Jsep.CPAREN_CODE&&i&&i>=n.length&&this.throwError("Unexpected token "+String.fromCharCode(e));break}if(r===Jsep.COMMA_CODE){if(this.index++,i++,i!==n.length)if(e===Jsep.CPAREN_CODE)this.throwError("Unexpected token ,");else if(e===Jsep.CBRACK_CODE)for(let e=n.length;e<i;e++)n.push(null)}else if(n.length!==i&&0!==i)this.throwError("Expected comma");else{const e=this.gobbleExpression();e&&e.type!==Jsep.COMPOUND||this.throwError("Expected comma"),n.push(e)}}return s||this.throwError("Expected "+String.fromCharCode(e)),n}gobbleGroup(){this.index++;let e=this.gobbleExpressions(Jsep.CPAREN_CODE);if(this.code===Jsep.CPAREN_CODE)return this.index++,1===e.length?e[0]:!!e.length&&{type:Jsep.SEQUENCE_EXP,expressions:e};this.throwError("Unclosed (")}gobbleArray(){return this.index++,{type:Jsep.ARRAY_EXP,elements:this.gobbleArguments(Jsep.CBRACK_CODE)}}}const n=new class Hooks{add(e,n,s){if("string"!=typeof arguments[0])for(let e in arguments[0])this.add(e,arguments[0][e],arguments[1]);else(Array.isArray(e)?e:[e]).forEach(function(e){this[e]=this[e]||[],n&&this[e][s?"unshift":"push"](n)},this)}run(e,n){this[e]=this[e]||[],this[e].forEach(function(e){e.call(n&&n.context?n.context:n,n)})}};Object.assign(Jsep,{hooks:n,plugins:new class Plugins{constructor(e){this.jsep=e,this.registered={}}register(...e){e.forEach(e=>{if("object"!=typeof e||!e.name||!e.init)throw new Error("Invalid JSEP plugin format");this.registered[e.name]||(e.init(this.jsep),this.registered[e.name]=e)})}}(Jsep),COMPOUND:"Compound",SEQUENCE_EXP:"SequenceExpression",IDENTIFIER:"Identifier",MEMBER_EXP:"MemberExpression",LITERAL:"Literal",THIS_EXP:"ThisExpression",CALL_EXP:"CallExpression",UNARY_EXP:"UnaryExpression",BINARY_EXP:"BinaryExpression",ARRAY_EXP:"ArrayExpression",TAB_CODE:9,LF_CODE:10,CR_CODE:13,SPACE_CODE:32,PERIOD_CODE:46,COMMA_CODE:44,SQUOTE_CODE:39,DQUOTE_CODE:34,OPAREN_CODE:40,CPAREN_CODE:41,OBRACK_CODE:91,CBRACK_CODE:93,QUMARK_CODE:63,SEMCOL_CODE:59,COLON_CODE:58,unary_ops:{"-":1,"!":1,"~":1,"+":1},binary_ops:{"||":1,"??":1,"&&":2,"|":3,"^":4,"&":5,"==":6,"!=":6,"===":6,"!==":6,"<":7,">":7,"<=":7,">=":7,"<<":8,">>":8,">>>":8,"+":9,"-":9,"*":10,"/":10,"%":10,"**":11},right_associative:new Set(["**"]),additional_identifier_chars:new Set(["$","_"]),literals:{true:!0,false:!1,null:null},this_str:"this"}),Jsep.max_unop_len=Jsep.getMaxKeyLen(Jsep.unary_ops),Jsep.max_binop_len=Jsep.getMaxKeyLen(Jsep.binary_ops);const jsep=e=>new Jsep(e).parse(),s=Object.getOwnPropertyNames(class Test{});Object.getOwnPropertyNames(Jsep).filter(e=>!s.includes(e)&&void 0===jsep[e]).forEach(e=>{jsep[e]=Jsep[e]}),jsep.Jsep=Jsep;var i={name:"ternary",init(e){e.hooks.add("after-expression",function gobbleTernary(n){if(n.node&&this.code===e.QUMARK_CODE){this.index++;const s=n.node,i=this.gobbleExpression();if(i||this.throwError("Expected expression"),this.gobbleSpaces(),this.code===e.COLON_CODE){this.index++;const r=this.gobbleExpression();if(r||this.throwError("Expected expression"),n.node={type:"ConditionalExpression",test:s,consequent:i,alternate:r},s.operator&&e.binary_ops[s.operator]<=.9){let i=s;for(;i.right.operator&&e.binary_ops[i.right.operator]<=.9;)i=i.right;n.node.test=i.right,i.right=n.node,n.node=s}}else this.throwError("Expected :")}})}};jsep.plugins.register(i),e.exports=jsep},18(e,n,s){"use strict";var i=s(484),r=s(9714),o=s(1755),a=s(6010),l=s(7434),c=s(483),u=s(2291);function resolveCollection(e,n,s,i,r,o){const a="block-map"===s.type?l.resolveBlockMap(e,n,s,i,o):"block-seq"===s.type?c.resolveBlockSeq(e,n,s,i,o):u.resolveFlowCollection(e,n,s,i,o),p=a.constructor;return"!"===r||r===p.tagName?(a.tag=p.tagName,a):(r&&(a.tag=r),a)}n.composeCollection=function composeCollection(e,n,s,l,c){const u=l.tag,p=u?n.directives.tagName(u.source,e=>c(u,"TAG_RESOLVE_FAILED",e)):null;if("block-seq"===s.type){const{anchor:e,newlineAfterProp:n}=l,s=e&&u?e.offset>u.offset?e:u:e??u;if(s&&(!n||n.offset<s.offset)){c(s,"MISSING_CHAR","Missing newline after block sequence props")}}const d="block-map"===s.type?"map":"block-seq"===s.type?"seq":"{"===s.start.source?"map":"seq";if(!u||!p||"!"===p||p===o.YAMLMap.tagName&&"map"===d||p===a.YAMLSeq.tagName&&"seq"===d)return resolveCollection(e,n,s,c,p);let f=n.schema.tags.find(e=>e.tag===p&&e.collection===d);if(!f){const i=n.schema.knownTags[p];if(i?.collection!==d)return i?c(u,"BAD_COLLECTION_TYPE",`${i.tag} used for ${d} collection, but expects ${i.collection??"scalar"}`,!0):c(u,"TAG_RESOLVE_FAILED",`Unresolved tag: ${p}`,!0),resolveCollection(e,n,s,c,p);n.schema.tags.push(Object.assign({},i,{default:!1})),f=i}const h=resolveCollection(e,n,s,c,p,f),m=f.resolve?.(h,e=>c(u,"TAG_RESOLVE_FAILED",e),n.options)??h,g=i.isNode(m)?m:new r.Scalar(m);return g.range=h.range,g.tag=p,f?.format&&(g.format=f.format),g}},2206(e,n,s){"use strict";var i=s(9046),r=s(2782),o=s(6845),a=s(1386);n.composeDoc=function composeDoc(e,n,{offset:s,start:l,value:c,end:u},p){const d=Object.assign({_directives:n},e),f=new i.Document(void 0,d),h={atKey:!1,atRoot:!0,directives:f.directives,options:f.options,schema:f.schema},m=a.resolveProps(l,{indicator:"doc-start",next:c??u?.[0],offset:s,onError:p,parentIndent:0,startOnNewline:!0});m.found&&(f.directives.docStart=!0,!c||"block-map"!==c.type&&"block-seq"!==c.type||m.hasNewline||p(m.end,"MISSING_CHAR","Block collection cannot start on same line with directives-end marker")),f.contents=c?r.composeNode(h,c,m,p):r.composeEmptyNode(h,m.end,l,null,m,p);const g=f.contents.range[2],y=o.resolveEnd(u,g,!1,p);return y.comment&&(f.comment=y.comment),f.range=[s,g,y.offset],f}},2782(e,n,s){"use strict";var i=s(1736),r=s(484),o=s(18),a=s(9094),l=s(6845),c=s(1040);const u={composeNode,composeEmptyNode};function composeNode(e,n,s,c){const p=e.atKey,{spaceBefore:d,comment:f,anchor:h,tag:m}=s;let g,y=!0;switch(n.type){case"alias":g=function composeAlias({options:e},{offset:n,source:s,end:r},o){const a=new i.Alias(s.substring(1));""===a.source&&o(n,"BAD_ALIAS","Alias cannot be an empty string");a.source.endsWith(":")&&o(n+s.length-1,"BAD_ALIAS","Alias ending in : is ambiguous",!0);const c=n+s.length,u=l.resolveEnd(r,c,e.strict,o);a.range=[n,c,u.offset],u.comment&&(a.comment=u.comment);return a}(e,n,c),(h||m)&&c(n,"ALIAS_PROPS","An alias node must not specify any properties");break;case"scalar":case"single-quoted-scalar":case"double-quoted-scalar":case"block-scalar":g=a.composeScalar(e,n,m,c),h&&(g.anchor=h.source.substring(1));break;case"block-map":case"block-seq":case"flow-collection":try{g=o.composeCollection(u,e,n,s,c),h&&(g.anchor=h.source.substring(1))}catch(e){c(n,"RESOURCE_EXHAUSTION",e instanceof Error?e.message:String(e))}break;default:c(n,"UNEXPECTED_TOKEN","error"===n.type?n.message:`Unsupported token (type: ${n.type})`),y=!1}if(g??(g=composeEmptyNode(e,n.offset,void 0,null,s,c)),h&&""===g.anchor&&c(h,"BAD_ALIAS","Anchor cannot be an empty string"),p&&e.options.stringKeys&&(!r.isScalar(g)||"string"!=typeof g.value||g.tag&&"tag:yaml.org,2002:str"!==g.tag)){c(m??n,"NON_STRING_KEY","With stringKeys, all keys must be strings")}return d&&(g.spaceBefore=!0),f&&("scalar"===n.type&&""===n.source?g.comment=f:g.commentBefore=f),e.options.keepSourceTokens&&y&&(g.srcToken=n),g}function composeEmptyNode(e,n,s,i,{spaceBefore:r,comment:o,anchor:l,tag:u,end:p},d){const f={type:"scalar",offset:c.emptyScalarPosition(n,s,i),indent:-1,source:""},h=a.composeScalar(e,f,u,d);return l&&(h.anchor=l.source.substring(1),""===h.anchor&&d(l,"BAD_ALIAS","Anchor cannot be an empty string")),r&&(h.spaceBefore=!0),o&&(h.comment=o,h.range[2]=p),h}n.composeEmptyNode=composeEmptyNode,n.composeNode=composeNode},9094(e,n,s){"use strict";var i=s(484),r=s(9714),o=s(4070),a=s(7571);n.composeScalar=function composeScalar(e,n,s,l){const{value:c,type:u,comment:p,range:d}="block-scalar"===n.type?o.resolveBlockScalar(e,n,l):a.resolveFlowScalar(n,e.options.strict,l),f=s?e.directives.tagName(s.source,e=>l(s,"TAG_RESOLVE_FAILED",e)):null;let h,m;h=e.options.stringKeys&&e.atKey?e.schema[i.SCALAR]:f?function findScalarTagByName(e,n,s,r,o){if("!"===s)return e[i.SCALAR];const a=[];for(const n of e.tags)if(!n.collection&&n.tag===s){if(!n.default||!n.test)return n;a.push(n)}for(const e of a)if(e.test?.test(n))return e;const l=e.knownTags[s];if(l&&!l.collection)return e.tags.push(Object.assign({},l,{default:!1,test:void 0})),l;return o(r,"TAG_RESOLVE_FAILED",`Unresolved tag: ${s}`,"tag:yaml.org,2002:str"!==s),e[i.SCALAR]}(e.schema,c,f,s,l):"scalar"===n.type?function findScalarTagByTest({atKey:e,directives:n,schema:s},r,o,a){const l=s.tags.find(n=>(!0===n.default||e&&"key"===n.default)&&n.test?.test(r))||s[i.SCALAR];if(s.compat){const e=s.compat.find(e=>e.default&&e.test?.test(r))??s[i.SCALAR];if(l.tag!==e.tag){a(o,"TAG_RESOLVE_FAILED",`Value may be parsed as either ${n.tagString(l.tag)} or ${n.tagString(e.tag)}`,!0)}}return l}(e,c,n,l):e.schema[i.SCALAR];try{const o=h.resolve(c,e=>l(s??n,"TAG_RESOLVE_FAILED",e),e.options);m=i.isScalar(o)?o:new r.Scalar(o)}catch(e){const i=e instanceof Error?e.message:String(e);l(s??n,"TAG_RESOLVE_FAILED",i),m=new r.Scalar(c)}return m.range=d,m.source=c,u&&(m.type=u),f&&(m.tag=f),h.format&&(m.format=h.format),p&&(m.comment=p),m}},4927(e,n,s){"use strict";var i=s(932),r=s(8673),o=s(9046),a=s(4355),l=s(484),c=s(2206),u=s(6845);function getErrorPos(e){if("number"==typeof e)return[e,e+1];if(Array.isArray(e))return 2===e.length?e:[e[0],e[1]];const{offset:n,source:s}=e;return[n,n+("string"==typeof s?s.length:1)]}function parsePrelude(e){let n="",s=!1,i=!1;for(let r=0;r<e.length;++r){const o=e[r];switch(o[0]){case"#":n+=(""===n?"":i?"\n\n":"\n")+(o.substring(1)||" "),s=!0,i=!1;break;case"%":"#"!==e[r+1]?.[0]&&(r+=1),s=!1;break;default:s||(i=!0),s=!1}}return{comment:n,afterEmptyLine:i}}n.Composer=class Composer{constructor(e={}){this.doc=null,this.atDirectives=!1,this.prelude=[],this.errors=[],this.warnings=[],this.onError=(e,n,s,i)=>{const r=getErrorPos(e);i?this.warnings.push(new a.YAMLWarning(r,n,s)):this.errors.push(new a.YAMLParseError(r,n,s))},this.directives=new r.Directives({version:e.version||"1.2"}),this.options=e}decorate(e,n){const{comment:s,afterEmptyLine:i}=parsePrelude(this.prelude);if(s){const r=e.contents;if(n)e.comment=e.comment?`${e.comment}\n${s}`:s;else if(i||e.directives.docStart||!r)e.commentBefore=s;else if(l.isCollection(r)&&!r.flow&&r.items.length>0){let e=r.items[0];l.isPair(e)&&(e=e.key);const n=e.commentBefore;e.commentBefore=n?`${s}\n${n}`:s}else{const e=r.commentBefore;r.commentBefore=e?`${s}\n${e}`:s}}n?(Array.prototype.push.apply(e.errors,this.errors),Array.prototype.push.apply(e.warnings,this.warnings)):(e.errors=this.errors,e.warnings=this.warnings),this.prelude=[],this.errors=[],this.warnings=[]}streamInfo(){return{comment:parsePrelude(this.prelude).comment,directives:this.directives,errors:this.errors,warnings:this.warnings}}*compose(e,n=!1,s=-1){for(const n of e)yield*this.next(n);yield*this.end(n,s)}*next(e){switch(i.env.LOG_STREAM&&console.dir(e,{depth:null}),e.type){case"directive":this.directives.add(e.source,(n,s,i)=>{const r=getErrorPos(e);r[0]+=n,this.onError(r,"BAD_DIRECTIVE",s,i)}),this.prelude.push(e.source),this.atDirectives=!0;break;case"document":{const n=c.composeDoc(this.options,this.directives,e,this.onError);this.atDirectives&&!n.directives.docStart&&this.onError(e,"MISSING_CHAR","Missing directives-end/doc-start indicator line"),this.decorate(n,!1),this.doc&&(yield this.doc),this.doc=n,this.atDirectives=!1;break}case"byte-order-mark":case"space":break;case"comment":case"newline":this.prelude.push(e.source);break;case"error":{const n=e.source?`${e.message}: ${JSON.stringify(e.source)}`:e.message,s=new a.YAMLParseError(getErrorPos(e),"UNEXPECTED_TOKEN",n);this.atDirectives||!this.doc?this.errors.push(s):this.doc.errors.push(s);break}case"doc-end":{if(!this.doc){const n="Unexpected doc-end without preceding document";this.errors.push(new a.YAMLParseError(getErrorPos(e),"UNEXPECTED_TOKEN",n));break}this.doc.directives.docEnd=!0;const n=u.resolveEnd(e.end,e.offset+e.source.length,this.doc.options.strict,this.onError);if(this.decorate(this.doc,!0),n.comment){const e=this.doc.comment;this.doc.comment=e?`${e}\n${n.comment}`:n.comment}this.doc.range[2]=n.offset;break}default:this.errors.push(new a.YAMLParseError(getErrorPos(e),"UNEXPECTED_TOKEN",`Unsupported token ${e.type}`))}}*end(e=!1,n=-1){if(this.doc)this.decorate(this.doc,!0),yield this.doc,this.doc=null;else if(e){const e=Object.assign({_directives:this.directives},this.options),s=new o.Document(void 0,e);this.atDirectives&&this.onError(n,"MISSING_CHAR","Missing directives-end indicator line"),s.range=[0,n,n],this.decorate(s,!1),yield s}}}},7434(e,n,s){"use strict";var i=s(7902),r=s(1755),o=s(1386),a=s(9378),l=s(8644),c=s(8334);const u="All mapping items must start at the same column";n.resolveBlockMap=function resolveBlockMap({composeNode:e,composeEmptyNode:n},s,p,d,f){const h=new(f?.nodeClass??r.YAMLMap)(s.schema);s.atRoot&&(s.atRoot=!1);let m=p.offset,g=null;for(const r of p.items){const{start:f,key:y,sep:b,value:v}=r,S=o.resolveProps(f,{indicator:"explicit-key-ind",next:y??b?.[0],offset:m,onError:d,parentIndent:p.indent,startOnNewline:!0}),x=!S.found;if(x){if(y&&("block-seq"===y.type?d(m,"BLOCK_AS_IMPLICIT_KEY","A block sequence may not be used as an implicit map key"):"indent"in y&&y.indent!==p.indent&&d(m,"BAD_INDENT",u)),!S.anchor&&!S.tag&&!b){g=S.end,S.comment&&(h.comment?h.comment+="\n"+S.comment:h.comment=S.comment);continue}(S.newlineAfterProp||a.containsNewline(y))&&d(y??f[f.length-1],"MULTILINE_IMPLICIT_KEY","Implicit keys need to be on a single line")}else S.found?.indent!==p.indent&&d(m,"BAD_INDENT",u);s.atKey=!0;const w=S.end,k=y?e(s,y,S,d):n(s,w,f,null,S,d);s.schema.compat&&l.flowIndentCheck(p.indent,y,d),s.atKey=!1,c.mapIncludes(s,h.items,k)&&d(w,"DUPLICATE_KEY","Map keys must be unique");const E=o.resolveProps(b??[],{indicator:"map-value-ind",next:v,offset:k.range[2],onError:d,parentIndent:p.indent,startOnNewline:!y||"block-scalar"===y.type});if(m=E.end,E.found){x&&("block-map"!==v?.type||E.hasNewline||d(m,"BLOCK_AS_IMPLICIT_KEY","Nested mappings are not allowed in compact mappings"),s.options.strict&&S.start<E.found.offset-1024&&d(k.range,"KEY_OVER_1024_CHARS","The : indicator must be at most 1024 chars after the start of an implicit block mapping key"));const o=v?e(s,v,E,d):n(s,m,b,null,E,d);s.schema.compat&&l.flowIndentCheck(p.indent,v,d),m=o.range[2];const a=new i.Pair(k,o);s.options.keepSourceTokens&&(a.srcToken=r),h.items.push(a)}else{x&&d(k.range,"MISSING_CHAR","Implicit map keys need to be followed by map values"),E.comment&&(k.comment?k.comment+="\n"+E.comment:k.comment=E.comment);const e=new i.Pair(k);s.options.keepSourceTokens&&(e.srcToken=r),h.items.push(e)}}return g&&g<m&&d(g,"IMPOSSIBLE","Map comment with trailing content"),h.range=[p.offset,m,g??m],h}},4070(e,n,s){"use strict";var i=s(9714);n.resolveBlockScalar=function resolveBlockScalar(e,n,s){const r=n.offset,o=function parseBlockScalarHeader({offset:e,props:n},s,i){if("block-scalar-header"!==n[0].type)return i(n[0],"IMPOSSIBLE","Block scalar header not found"),null;const{source:r}=n[0],o=r[0];let a=0,l="",c=-1;for(let n=1;n<r.length;++n){const s=r[n];if(l||"-"!==s&&"+"!==s){const i=Number(s);!a&&i?a=i:-1===c&&(c=e+n)}else l=s}-1!==c&&i(c,"UNEXPECTED_TOKEN",`Block scalar header includes extra characters: ${r}`);let u=!1,p="",d=r.length;for(let e=1;e<n.length;++e){const r=n[e];switch(r.type){case"space":u=!0;case"newline":d+=r.source.length;break;case"comment":if(s&&!u){i(r,"MISSING_CHAR","Comments must be separated from other tokens by white space characters")}d+=r.source.length,p=r.source.substring(1);break;case"error":i(r,"UNEXPECTED_TOKEN",r.message),d+=r.source.length;break;default:{i(r,"UNEXPECTED_TOKEN",`Unexpected token in block scalar header: ${r.type}`);const e=r.source;e&&"string"==typeof e&&(d+=e.length)}}}return{mode:o,indent:a,chomp:l,comment:p,length:d}}(n,e.options.strict,s);if(!o)return{value:"",type:null,comment:"",range:[r,r,r]};const a=">"===o.mode?i.Scalar.BLOCK_FOLDED:i.Scalar.BLOCK_LITERAL,l=n.source?function splitLines(e){const n=e.split(/\n( *)/),s=n[0],i=s.match(/^( *)/),r=[i?.[1]?[i[1],s.slice(i[1].length)]:["",s]];for(let e=1;e<n.length;e+=2)r.push([n[e],n[e+1]]);return r}(n.source):[];let c=l.length;for(let e=l.length-1;e>=0;--e){const n=l[e][1];if(""!==n&&"\r"!==n)break;c=e}if(0===c){const e="+"===o.chomp&&l.length>0?"\n".repeat(Math.max(1,l.length-1)):"";let s=r+o.length;return n.source&&(s+=n.source.length),{value:e,type:a,comment:o.comment,range:[r,s,s]}}let u=n.indent+o.indent,p=n.offset+o.length,d=0;for(let n=0;n<c;++n){const[i,r]=l[n];if(""!==r&&"\r"!==r){if(i.length<u){const e="Block scalars with more-indented leading empty lines must use an explicit indentation indicator";s(p+i.length,"MISSING_CHAR",e)}if(0===o.indent&&(u=i.length),d=n,0===u&&!e.atRoot){s(p,"BAD_INDENT","Block scalar values in collections must be indented")}break}0===o.indent&&i.length>u&&(u=i.length),p+=i.length+r.length+1}for(let e=l.length-1;e>=c;--e)l[e][0].length>u&&(c=e+1);let f="",h="",m=!1;for(let e=0;e<d;++e)f+=l[e][0].slice(u)+"\n";for(let e=d;e<c;++e){let[n,r]=l[e];p+=n.length+r.length+1;const c="\r"===r[r.length-1];if(c&&(r=r.slice(0,-1)),r&&n.length<u){const e=`Block scalar lines must not be less indented than their ${o.indent?"explicit indentation indicator":"first line"}`;s(p-r.length-(c?2:1),"BAD_INDENT",e),n=""}a===i.Scalar.BLOCK_LITERAL?(f+=h+n.slice(u)+r,h="\n"):n.length>u||"\t"===r[0]?(" "===h?h="\n":m||"\n"!==h||(h="\n\n"),f+=h+n.slice(u)+r,h="\n",m=!0):""===r?"\n"===h?f+="\n":h="\n":(f+=h+r,h=" ",m=!1)}switch(o.chomp){case"-":break;case"+":for(let e=c;e<l.length;++e)f+="\n"+l[e][0].slice(u);"\n"!==f[f.length-1]&&(f+="\n");break;default:f+="\n"}const g=r+o.length+n.source.length;return{value:f,type:a,comment:o.comment,range:[r,g,g]}}},483(e,n,s){"use strict";var i=s(6010),r=s(1386),o=s(8644);n.resolveBlockSeq=function resolveBlockSeq({composeNode:e,composeEmptyNode:n},s,a,l,c){const u=new(c?.nodeClass??i.YAMLSeq)(s.schema);s.atRoot&&(s.atRoot=!1),s.atKey&&(s.atKey=!1);let p=a.offset,d=null;for(const{start:i,value:c}of a.items){const f=r.resolveProps(i,{indicator:"seq-item-ind",next:c,offset:p,onError:l,parentIndent:a.indent,startOnNewline:!0});if(!f.found){if(!(f.anchor||f.tag||c)){d=f.end,f.comment&&(u.comment=f.comment);continue}"block-seq"===c?.type?l(f.end,"BAD_INDENT","All sequence items must start at the same column"):l(p,"MISSING_CHAR","Sequence item without - indicator")}const h=c?e(s,c,f,l):n(s,f.end,i,null,f,l);s.schema.compat&&o.flowIndentCheck(a.indent,c,l),p=h.range[2],u.items.push(h)}return u.range=[a.offset,p,d??p],u}},6845(e,n){"use strict";n.resolveEnd=function resolveEnd(e,n,s,i){let r="";if(e){let o=!1,a="";for(const l of e){const{source:e,type:c}=l;switch(c){case"space":o=!0;break;case"comment":{s&&!o&&i(l,"MISSING_CHAR","Comments must be separated from other tokens by white space characters");const n=e.substring(1)||" ";r?r+=a+n:r=n,a="";break}case"newline":r&&(a+=e),o=!0;break;default:i(l,"UNEXPECTED_TOKEN",`Unexpected ${c} at node end`)}n+=e.length}}return{comment:r,offset:n}}},2291(e,n,s){"use strict";var i=s(484),r=s(7902),o=s(1755),a=s(6010),l=s(6845),c=s(1386),u=s(9378),p=s(8334);const d="Block collections are not allowed within flow collections",isBlock=e=>e&&("block-map"===e.type||"block-seq"===e.type);n.resolveFlowCollection=function resolveFlowCollection({composeNode:e,composeEmptyNode:n},s,f,h,m){const g="{"===f.start.source,y=g?"flow map":"flow sequence",b=new(m?.nodeClass??(g?o.YAMLMap:a.YAMLSeq))(s.schema);b.flow=!0;const v=s.atRoot;v&&(s.atRoot=!1),s.atKey&&(s.atKey=!1);let S=f.offset+f.start.source.length;for(let a=0;a<f.items.length;++a){const l=f.items[a],{start:m,key:v,sep:x,value:w}=l,k=c.resolveProps(m,{flow:y,indicator:"explicit-key-ind",next:v??x?.[0],offset:S,onError:h,parentIndent:f.indent,startOnNewline:!1});if(!k.found){if(!(k.anchor||k.tag||x||w)){0===a&&k.comma?h(k.comma,"UNEXPECTED_TOKEN",`Unexpected , in ${y}`):a<f.items.length-1&&h(k.start,"UNEXPECTED_TOKEN",`Unexpected empty item in ${y}`),k.comment&&(b.comment?b.comment+="\n"+k.comment:b.comment=k.comment),S=k.end;continue}!g&&s.options.strict&&u.containsNewline(v)&&h(v,"MULTILINE_IMPLICIT_KEY","Implicit keys of flow sequence pairs need to be on a single line")}if(0===a)k.comma&&h(k.comma,"UNEXPECTED_TOKEN",`Unexpected , in ${y}`);else if(k.comma||h(k.start,"MISSING_CHAR",`Missing , between ${y} items`),k.comment){let e="";e:for(const n of m)switch(n.type){case"comma":case"space":break;case"comment":e=n.source.substring(1);break e;default:break e}if(e){let n=b.items[b.items.length-1];i.isPair(n)&&(n=n.value??n.key),n.comment?n.comment+="\n"+e:n.comment=e,k.comment=k.comment.substring(e.length+1)}}if(g||x||k.found){s.atKey=!0;const i=k.end,a=v?e(s,v,k,h):n(s,i,m,null,k,h);isBlock(v)&&h(a.range,"BLOCK_IN_FLOW",d),s.atKey=!1;const u=c.resolveProps(x??[],{flow:y,indicator:"map-value-ind",next:w,offset:a.range[2],onError:h,parentIndent:f.indent,startOnNewline:!1});if(u.found){if(!g&&!k.found&&s.options.strict){if(x)for(const e of x){if(e===u.found)break;if("newline"===e.type){h(e,"MULTILINE_IMPLICIT_KEY","Implicit keys of flow sequence pairs need to be on a single line");break}}k.start<u.found.offset-1024&&h(u.found,"KEY_OVER_1024_CHARS","The : indicator must be at most 1024 chars after the start of an implicit flow sequence key")}}else w&&("source"in w&&":"===w.source?.[0]?h(w,"MISSING_CHAR",`Missing space after : in ${y}`):h(u.start,"MISSING_CHAR",`Missing , or : between ${y} items`));const E=w?e(s,w,u,h):u.found?n(s,u.end,x,null,u,h):null;E?isBlock(w)&&h(E.range,"BLOCK_IN_FLOW",d):u.comment&&(a.comment?a.comment+="\n"+u.comment:a.comment=u.comment);const A=new r.Pair(a,E);if(s.options.keepSourceTokens&&(A.srcToken=l),g){const e=b;p.mapIncludes(s,e.items,a)&&h(i,"DUPLICATE_KEY","Map keys must be unique"),e.items.push(A)}else{const e=new o.YAMLMap(s.schema);e.flow=!0,e.items.push(A);const n=(E??a).range;e.range=[a.range[0],n[1],n[2]],b.items.push(e)}S=E?E.range[2]:u.end}else{const i=w?e(s,w,k,h):n(s,k.end,x,null,k,h);b.items.push(i),S=i.range[2],isBlock(w)&&h(i.range,"BLOCK_IN_FLOW",d)}}const x=g?"}":"]",[w,...k]=f.end;let E=S;if(w?.source===x)E=w.offset+w.source.length;else{const e=y[0].toUpperCase()+y.substring(1);h(S,v?"MISSING_CHAR":"BAD_INDENT",v?`${e} must end with a ${x}`:`${e} in block collection must be sufficiently indented and end with a ${x}`),w&&1!==w.source.length&&k.unshift(w)}if(k.length>0){const e=l.resolveEnd(k,E,s.options.strict,h);e.comment&&(b.comment?b.comment+="\n"+e.comment:b.comment=e.comment),b.range=[f.offset,E,e.offset]}else b.range=[f.offset,E,E];return b}},7571(e,n,s){"use strict";var i=s(9714),r=s(6845);function foldLines(e){let n,s;try{n=new RegExp("(.*?)(?<![ \t])[ \t]*\r?\n","sy"),s=new RegExp("[ \t]*(.*?)(?:(?<![ \t])[ \t]*)?\r?\n","sy")}catch{n=/(.*?)[ \t]*\r?\n/sy,s=/[ \t]*(.*?)[ \t]*\r?\n/sy}let i=n.exec(e);if(!i)return e;let r=i[1],o=" ",a=n.lastIndex;for(s.lastIndex=a;i=s.exec(e);)""===i[1]?"\n"===o?r+=o:o="\n":(r+=o+i[1],o=" "),a=s.lastIndex;const l=/[ \t]*(.*)/sy;return l.lastIndex=a,i=l.exec(e),r+o+(i?.[1]??"")}function foldNewline(e,n){let s="",i=e[n+1];for(;!(" "!==i&&"\t"!==i&&"\n"!==i&&"\r"!==i||"\r"===i&&"\n"!==e[n+2]);)"\n"===i&&(s+="\n"),i=e[(n+=1)+1];return s||(s=" "),{fold:s,offset:n}}const o={0:"\0",a:"",b:"\b",e:"",f:"\f",n:"\n",r:"\r",t:"\t",v:"\v",N:"",_:" ",L:"\u2028",P:"\u2029"," ":" ",'"':'"',"/":"/","\\":"\\","\t":"\t"};function parseCharCode(e,n,s,i){const r=e.substr(n,s),o=r.length===s&&/^[0-9a-fA-F]+$/.test(r)?parseInt(r,16):NaN;if(isNaN(o)){const r=e.substr(n-2,s+2);return i(n-2,"BAD_DQ_ESCAPE",`Invalid escape sequence ${r}`),r}return String.fromCodePoint(o)}n.resolveFlowScalar=function resolveFlowScalar(e,n,s){const{offset:a,type:l,source:c,end:u}=e;let p,d;const _onError=(e,n,i)=>s(a+e,n,i);switch(l){case"scalar":p=i.Scalar.PLAIN,d=function plainValue(e,n){let s="";switch(e[0]){case"\t":s="a tab character";break;case",":s="flow indicator character ,";break;case"%":s="directive indicator character %";break;case"|":case">":s=`block scalar indicator ${e[0]}`;break;case"@":case"`":s=`reserved character ${e[0]}`}s&&n(0,"BAD_SCALAR_START",`Plain value cannot start with ${s}`);return foldLines(e)}(c,_onError);break;case"single-quoted-scalar":p=i.Scalar.QUOTE_SINGLE,d=function singleQuotedValue(e,n){"'"===e[e.length-1]&&1!==e.length||n(e.length,"MISSING_CHAR","Missing closing 'quote");return foldLines(e.slice(1,-1)).replace(/''/g,"'")}(c,_onError);break;case"double-quoted-scalar":p=i.Scalar.QUOTE_DOUBLE,d=function doubleQuotedValue(e,n){let s="";for(let i=1;i<e.length-1;++i){const r=e[i];if("\r"!==r||"\n"!==e[i+1])if("\n"===r){const{fold:n,offset:r}=foldNewline(e,i);s+=n,i=r}else if("\\"===r){let r=e[++i];const a=o[r];if(a)s+=a;else if("\n"===r)for(r=e[i+1];" "===r||"\t"===r;)r=e[1+ ++i];else if("\r"===r&&"\n"===e[i+1])for(r=e[1+ ++i];" "===r||"\t"===r;)r=e[1+ ++i];else if("x"===r||"u"===r||"U"===r){const o={x:2,u:4,U:8}[r];s+=parseCharCode(e,i+1,o,n),i+=o}else{const r=e.substr(i-1,2);n(i-1,"BAD_DQ_ESCAPE",`Invalid escape sequence ${r}`),s+=r}}else if(" "===r||"\t"===r){const n=i;let o=e[i+1];for(;" "===o||"\t"===o;)o=e[1+ ++i];"\n"===o||"\r"===o&&"\n"===e[i+2]||(s+=i>n?e.slice(n,i+1):r)}else s+=r}'"'===e[e.length-1]&&1!==e.length||n(e.length,"MISSING_CHAR",'Missing closing "quote');return s}(c,_onError);break;default:return s(e,"UNEXPECTED_TOKEN",`Expected a flow scalar value, but found: ${l}`),{value:"",type:null,comment:"",range:[a,a+c.length,a+c.length]}}const f=a+c.length,h=r.resolveEnd(u,f,n,s);return{value:d,type:p,comment:h.comment,range:[a,f,h.offset]}}},1386(e,n){"use strict";n.resolveProps=function resolveProps(e,{flow:n,indicator:s,next:i,offset:r,onError:o,parentIndent:a,startOnNewline:l}){let c=!1,u=l,p=l,d="",f="",h=!1,m=!1,g=null,y=null,b=null,v=null,S=null,x=null,w=null;for(const r of e)switch(m&&("space"!==r.type&&"newline"!==r.type&&"comma"!==r.type&&o(r.offset,"MISSING_CHAR","Tags and anchors must be separated from the next token by white space"),m=!1),g&&(u&&"comment"!==r.type&&"newline"!==r.type&&o(g,"TAB_AS_INDENT","Tabs are not allowed as indentation"),g=null),r.type){case"space":n||"doc-start"===s&&"flow-collection"===i?.type||!r.source.includes("\t")||(g=r),p=!0;break;case"comment":{p||o(r,"MISSING_CHAR","Comments must be separated from other tokens by white space characters");const e=r.source.substring(1)||" ";d?d+=f+e:d=e,f="",u=!1;break}case"newline":u?d?d+=r.source:x&&"seq-item-ind"===s||(c=!0):f+=r.source,u=!0,h=!0,(y||b)&&(v=r),p=!0;break;case"anchor":y&&o(r,"MULTIPLE_ANCHORS","A node can have at most one anchor"),r.source.endsWith(":")&&o(r.offset+r.source.length-1,"BAD_ALIAS","Anchor ending in : is ambiguous",!0),y=r,w??(w=r.offset),u=!1,p=!1,m=!0;break;case"tag":b&&o(r,"MULTIPLE_TAGS","A node can have at most one tag"),b=r,w??(w=r.offset),u=!1,p=!1,m=!0;break;case s:(y||b)&&o(r,"BAD_PROP_ORDER",`Anchors and tags must be after the ${r.source} indicator`),x&&o(r,"UNEXPECTED_TOKEN",`Unexpected ${r.source} in ${n??"collection"}`),x=r,u="seq-item-ind"===s||"explicit-key-ind"===s,p=!1;break;case"comma":if(n){S&&o(r,"UNEXPECTED_TOKEN",`Unexpected , in ${n}`),S=r,u=!1,p=!1;break}default:o(r,"UNEXPECTED_TOKEN",`Unexpected ${r.type} token`),u=!1,p=!1}const k=e[e.length-1],E=k?k.offset+k.source.length:r;return m&&i&&"space"!==i.type&&"newline"!==i.type&&"comma"!==i.type&&("scalar"!==i.type||""!==i.source)&&o(i.offset,"MISSING_CHAR","Tags and anchors must be separated from the next token by white space"),g&&(u&&g.indent<=a||"block-map"===i?.type||"block-seq"===i?.type)&&o(g,"TAB_AS_INDENT","Tabs are not allowed as indentation"),{comma:S,found:x,spaceBefore:c,comment:d,hasNewline:h,anchor:y,tag:b,newlineAfterProp:v,end:E,start:w??E}}},9378(e,n){"use strict";n.containsNewline=function containsNewline(e){if(!e)return null;switch(e.type){case"alias":case"scalar":case"double-quoted-scalar":case"single-quoted-scalar":if(e.source.includes("\n"))return!0;if(e.end)for(const n of e.end)if("newline"===n.type)return!0;return!1;case"flow-collection":for(const n of e.items){for(const e of n.start)if("newline"===e.type)return!0;if(n.sep)for(const e of n.sep)if("newline"===e.type)return!0;if(containsNewline(n.key)||containsNewline(n.value))return!0}return!1;default:return!0}}},1040(e,n){"use strict";n.emptyScalarPosition=function emptyScalarPosition(e,n,s){if(n){s??(s=n.length);for(let i=s-1;i>=0;--i){let s=n[i];switch(s.type){case"space":case"comment":case"newline":e-=s.source.length;continue}for(s=n[++i];"space"===s?.type;)e+=s.source.length,s=n[++i];break}}return e}},8644(e,n,s){"use strict";var i=s(9378);n.flowIndentCheck=function flowIndentCheck(e,n,s){if("flow-collection"===n?.type){const r=n.end[0];if(r.indent===e&&("]"===r.source||"}"===r.source)&&i.containsNewline(n)){s(r,"BAD_INDENT","Flow end indicator should be more indented than parent",!0)}}}},8334(e,n,s){"use strict";var i=s(484);n.mapIncludes=function mapIncludes(e,n,s){const{uniqueKeys:r}=e.options;if(!1===r)return!1;const o="function"==typeof r?r:(e,n)=>e===n||i.isScalar(e)&&i.isScalar(n)&&e.value===n.value;return n.some(e=>o(e.key,s))}},9046(e,n,s){"use strict";var i=s(1736),r=s(1614),o=s(484),a=s(7902),l=s(3732),c=s(625),u=s(1768),p=s(6261),d=s(6906),f=s(5219),h=s(8673);class Document{constructor(e,n,s){this.commentBefore=null,this.comment=null,this.errors=[],this.warnings=[],Object.defineProperty(this,o.NODE_TYPE,{value:o.DOC});let i=null;"function"==typeof n||Array.isArray(n)?i=n:void 0===s&&n&&(s=n,n=void 0);const r=Object.assign({intAsBigInt:!1,keepSourceTokens:!1,logLevel:"warn",prettyErrors:!0,strict:!0,stringKeys:!1,uniqueKeys:!0,version:"1.2"},s);this.options=r;let{version:a}=r;s?._directives?(this.directives=s._directives.atDocument(),this.directives.yaml.explicit&&(a=this.directives.yaml.version)):this.directives=new h.Directives({version:a}),this.setSchema(a,s),this.contents=void 0===e?null:this.createNode(e,i,s)}clone(){const e=Object.create(Document.prototype,{[o.NODE_TYPE]:{value:o.DOC}});return e.commentBefore=this.commentBefore,e.comment=this.comment,e.errors=this.errors.slice(),e.warnings=this.warnings.slice(),e.options=Object.assign({},this.options),this.directives&&(e.directives=this.directives.clone()),e.schema=this.schema.clone(),e.contents=o.isNode(this.contents)?this.contents.clone(e.schema):this.contents,this.range&&(e.range=this.range.slice()),e}add(e){assertCollection(this.contents)&&this.contents.add(e)}addIn(e,n){assertCollection(this.contents)&&this.contents.addIn(e,n)}createAlias(e,n){if(!e.anchor){const s=p.anchorNames(this);e.anchor=!n||s.has(n)?p.findNewAnchor(n||"a",s):n}return new i.Alias(e.anchor)}createNode(e,n,s){let i;if("function"==typeof n)e=n.call({"":e},"",e),i=n;else if(Array.isArray(n)){const keyToStr=e=>"number"==typeof e||e instanceof String||e instanceof Number,e=n.filter(keyToStr).map(String);e.length>0&&(n=n.concat(e)),i=n}else void 0===s&&n&&(s=n,n=void 0);const{aliasDuplicateObjects:r,anchorPrefix:a,flow:l,keepUndefined:c,onTagObj:u,tag:d}=s??{},{onAnchor:h,setAnchors:m,sourceObjects:g}=p.createNodeAnchors(this,a||"a"),y={aliasDuplicateObjects:r??!0,keepUndefined:c??!1,onAnchor:h,onTagObj:u,replacer:i,schema:this.schema,sourceObjects:g},b=f.createNode(e,d,y);return l&&o.isCollection(b)&&(b.flow=!0),m(),b}createPair(e,n,s={}){const i=this.createNode(e,null,s),r=this.createNode(n,null,s);return new a.Pair(i,r)}delete(e){return!!assertCollection(this.contents)&&this.contents.delete(e)}deleteIn(e){return r.isEmptyPath(e)?null!=this.contents&&(this.contents=null,!0):!!assertCollection(this.contents)&&this.contents.deleteIn(e)}get(e,n){return o.isCollection(this.contents)?this.contents.get(e,n):void 0}getIn(e,n){return r.isEmptyPath(e)?!n&&o.isScalar(this.contents)?this.contents.value:this.contents:o.isCollection(this.contents)?this.contents.getIn(e,n):void 0}has(e){return!!o.isCollection(this.contents)&&this.contents.has(e)}hasIn(e){return r.isEmptyPath(e)?void 0!==this.contents:!!o.isCollection(this.contents)&&this.contents.hasIn(e)}set(e,n){null==this.contents?this.contents=r.collectionFromPath(this.schema,[e],n):assertCollection(this.contents)&&this.contents.set(e,n)}setIn(e,n){r.isEmptyPath(e)?this.contents=n:null==this.contents?this.contents=r.collectionFromPath(this.schema,Array.from(e),n):assertCollection(this.contents)&&this.contents.setIn(e,n)}setSchema(e,n={}){let s;switch("number"==typeof e&&(e=String(e)),e){case"1.1":this.directives?this.directives.yaml.version="1.1":this.directives=new h.Directives({version:"1.1"}),s={resolveKnownTags:!1,schema:"yaml-1.1"};break;case"1.2":case"next":this.directives?this.directives.yaml.version=e:this.directives=new h.Directives({version:e}),s={resolveKnownTags:!0,schema:"core"};break;case null:this.directives&&delete this.directives,s=null;break;default:{const n=JSON.stringify(e);throw new Error(`Expected '1.1', '1.2' or null as first argument, but found: ${n}`)}}if(n.schema instanceof Object)this.schema=n.schema;else{if(!s)throw new Error("With a null YAML version, the { schema: Schema } option is required");this.schema=new c.Schema(Object.assign(s,n))}}toJS({json:e,jsonArg:n,mapAsMap:s,maxAliasCount:i,onAnchor:r,reviver:o}={}){const a={anchors:new Map,doc:this,keep:!e,mapAsMap:!0===s,mapKeyWarned:!1,maxAliasCount:"number"==typeof i?i:100},c=l.toJS(this.contents,n??"",a);if("function"==typeof r)for(const{count:e,res:n}of a.anchors.values())r(n,e);return"function"==typeof o?d.applyReviver(o,{"":c},"",c):c}toJSON(e,n){return this.toJS({json:!0,jsonArg:e,mapAsMap:!1,onAnchor:n})}toString(e={}){if(this.errors.length>0)throw new Error("Document with errors cannot be stringified");if("indent"in e&&(!Number.isInteger(e.indent)||Number(e.indent)<=0)){const n=JSON.stringify(e.indent);throw new Error(`"indent" option must be a positive integer, not ${n}`)}return u.stringifyDocument(this,e)}}function assertCollection(e){if(o.isCollection(e))return!0;throw new Error("Expected a YAML collection as document contents")}n.Document=Document},6261(e,n,s){"use strict";var i=s(484),r=s(9125);function anchorNames(e){const n=new Set;return r.visit(e,{Value(e,s){s.anchor&&n.add(s.anchor)}}),n}function findNewAnchor(e,n){for(let s=1;;++s){const i=`${e}${s}`;if(!n.has(i))return i}}n.anchorIsValid=function anchorIsValid(e){if(/[\x00-\x19\s,[\]{}]/.test(e)){const n=JSON.stringify(e);throw new Error(`Anchor must not contain whitespace or control characters: ${n}`)}return!0},n.anchorNames=anchorNames,n.createNodeAnchors=function createNodeAnchors(e,n){const s=[],r=new Map;let o=null;return{onAnchor:i=>{s.push(i),o??(o=anchorNames(e));const r=findNewAnchor(n,o);return o.add(r),r},setAnchors:()=>{for(const e of s){const n=r.get(e);if("object"!=typeof n||!n.anchor||!i.isScalar(n.node)&&!i.isCollection(n.node)){const n=new Error("Failed to resolve repeated object (this should not happen)");throw n.source=e,n}n.node.anchor=n.anchor}},sourceObjects:r}},n.findNewAnchor=findNewAnchor},6906(e,n){"use strict";n.applyReviver=function applyReviver(e,n,s,i){if(i&&"object"==typeof i)if(Array.isArray(i))for(let n=0,s=i.length;n<s;++n){const s=i[n],r=applyReviver(e,i,String(n),s);void 0===r?delete i[n]:r!==s&&(i[n]=r)}else if(i instanceof Map)for(const n of Array.from(i.keys())){const s=i.get(n),r=applyReviver(e,i,n,s);void 0===r?i.delete(n):r!==s&&i.set(n,r)}else if(i instanceof Set)for(const n of Array.from(i)){const s=applyReviver(e,i,n,n);void 0===s?i.delete(n):s!==n&&(i.delete(n),i.add(s))}else for(const[n,s]of Object.entries(i)){const r=applyReviver(e,i,n,s);void 0===r?delete i[n]:r!==s&&(i[n]=r)}return e.call(n,s,i)}},5219(e,n,s){"use strict";var i=s(1736),r=s(484),o=s(9714);n.createNode=function createNode(e,n,s){if(r.isDocument(e)&&(e=e.contents),r.isNode(e))return e;if(r.isPair(e)){const n=s.schema[r.MAP].createNode?.(s.schema,null,s);return n.items.push(e),n}(e instanceof String||e instanceof Number||e instanceof Boolean||"undefined"!=typeof BigInt&&e instanceof BigInt)&&(e=e.valueOf());const{aliasDuplicateObjects:a,onAnchor:l,onTagObj:c,schema:u,sourceObjects:p}=s;let d;if(a&&e&&"object"==typeof e){if(d=p.get(e),d)return d.anchor??(d.anchor=l(e)),new i.Alias(d.anchor);d={anchor:null,node:null},p.set(e,d)}n?.startsWith("!!")&&(n="tag:yaml.org,2002:"+n.slice(2));let f=function findTagObject(e,n,s){if(n){const e=s.filter(e=>e.tag===n),i=e.find(e=>!e.format)??e[0];if(!i)throw new Error(`Tag ${n} not found`);return i}return s.find(n=>n.identify?.(e)&&!n.format)}(e,n,u.tags);if(!f){if(e&&"function"==typeof e.toJSON&&(e=e.toJSON()),!e||"object"!=typeof e){const n=new o.Scalar(e);return d&&(d.node=n),n}f=e instanceof Map?u[r.MAP]:Symbol.iterator in Object(e)?u[r.SEQ]:u[r.MAP]}c&&(c(f),delete s.onTagObj);const h=f?.createNode?f.createNode(s.schema,e,s):"function"==typeof f?.nodeClass?.from?f.nodeClass.from(s.schema,e,s):new o.Scalar(e);return n?h.tag=n:f.default||(h.tag=f.tag),d&&(d.node=h),h}},8673(e,n,s){"use strict";var i=s(484),r=s(9125);const o={"!":"%21",",":"%2C","[":"%5B","]":"%5D","{":"%7B","}":"%7D"},escapeTagName=e=>e.replace(/[!,[\]{}]/g,e=>o[e]);class Directives{constructor(e,n){this.docStart=null,this.docEnd=!1,this.yaml=Object.assign({},Directives.defaultYaml,e),this.tags=Object.assign({},Directives.defaultTags,n)}clone(){const e=new Directives(this.yaml,this.tags);return e.docStart=this.docStart,e}atDocument(){const e=new Directives(this.yaml,this.tags);switch(this.yaml.version){case"1.1":this.atNextDocument=!0;break;case"1.2":this.atNextDocument=!1,this.yaml={explicit:Directives.defaultYaml.explicit,version:"1.2"},this.tags=Object.assign({},Directives.defaultTags)}return e}add(e,n){this.atNextDocument&&(this.yaml={explicit:Directives.defaultYaml.explicit,version:"1.1"},this.tags=Object.assign({},Directives.defaultTags),this.atNextDocument=!1);const s=e.trim().split(/[ \t]+/),i=s.shift();switch(i){case"%TAG":{if(2!==s.length&&(n(0,"%TAG directive should contain exactly two parts"),s.length<2))return!1;const[e,i]=s;return this.tags[e]=i,!0}case"%YAML":{if(this.yaml.explicit=!0,1!==s.length)return n(0,"%YAML directive should contain exactly one part"),!1;const[e]=s;if("1.1"===e||"1.2"===e)return this.yaml.version=e,!0;return n(6,`Unsupported YAML version ${e}`,/^\d+\.\d+$/.test(e)),!1}default:return n(0,`Unknown directive ${i}`,!0),!1}}tagName(e,n){if("!"===e)return"!";if("!"!==e[0])return n(`Not a valid tag: ${e}`),null;if("<"===e[1]){const s=e.slice(2,-1);return"!"===s||"!!"===s?(n(`Verbatim tags aren't resolved, so ${e} is invalid.`),null):(">"!==e[e.length-1]&&n("Verbatim tags must end with a >"),s)}const[,s,i]=e.match(/^(.*!)([^!]*)$/s);i||n(`The ${e} tag has no suffix`);const r=this.tags[s];if(r)try{return r+decodeURIComponent(i)}catch(e){return n(String(e)),null}return"!"===s?e:(n(`Could not resolve tag: ${e}`),null)}tagString(e){for(const[n,s]of Object.entries(this.tags))if(e.startsWith(s))return n+escapeTagName(e.substring(s.length));return"!"===e[0]?e:`!<${e}>`}toString(e){const n=this.yaml.explicit?[`%YAML ${this.yaml.version||"1.2"}`]:[],s=Object.entries(this.tags);let o;if(e&&s.length>0&&i.isNode(e.contents)){const n={};r.visit(e.contents,(e,s)=>{i.isNode(s)&&s.tag&&(n[s.tag]=!0)}),o=Object.keys(n)}else o=[];for(const[i,r]of s)"!!"===i&&"tag:yaml.org,2002:"===r||e&&!o.some(e=>e.startsWith(r))||n.push(`%TAG ${i} ${r}`);return n.join("\n")}}Directives.defaultYaml={explicit:!1,version:"1.2"},Directives.defaultTags={"!!":"tag:yaml.org,2002:"},n.Directives=Directives},4355(e,n){"use strict";class YAMLError extends Error{constructor(e,n,s,i){super(),this.name=e,this.code=s,this.message=i,this.pos=n}}n.YAMLError=YAMLError,n.YAMLParseError=class YAMLParseError extends YAMLError{constructor(e,n,s){super("YAMLParseError",e,n,s)}},n.YAMLWarning=class YAMLWarning extends YAMLError{constructor(e,n,s){super("YAMLWarning",e,n,s)}},n.prettifyError=(e,n)=>s=>{if(-1===s.pos[0])return;s.linePos=s.pos.map(e=>n.linePos(e));const{line:i,col:r}=s.linePos[0];s.message+=` at line ${i}, column ${r}`;let o=r-1,a=e.substring(n.lineStarts[i-1],n.lineStarts[i]).replace(/[\n\r]+$/,"");if(o>=60&&a.length>80){const e=Math.min(o-39,a.length-79);a="…"+a.substring(e),o-=e-1}if(a.length>80&&(a=a.substring(0,79)+"…"),i>1&&/^ *$/.test(a.substring(0,o))){let s=e.substring(n.lineStarts[i-2],n.lineStarts[i-1]);s.length>80&&(s=s.substring(0,79)+"…\n"),a=s+a}if(/[^ ]/.test(a)){let e=1;const n=s.linePos[1];n?.line===i&&n.col>r&&(e=Math.max(1,Math.min(n.col-r,80-o)));const l=" ".repeat(o)+"^".repeat(e);s.message+=`:\n\n${a}\n${l}\n`}}},1198(e,n,s){"use strict";var i=s(4927),r=s(9046),o=s(625),a=s(4355),l=s(1736),c=s(484),u=s(7902),p=s(9714),d=s(1755),f=s(6010),h=s(9112),m=s(5752),g=s(2864),y=s(6247),b=s(1332),v=s(9125);n.Composer=i.Composer,n.Document=r.Document,n.Schema=o.Schema,n.YAMLError=a.YAMLError,n.YAMLParseError=a.YAMLParseError,n.YAMLWarning=a.YAMLWarning,n.Alias=l.Alias,n.isAlias=c.isAlias,n.isCollection=c.isCollection,n.isDocument=c.isDocument,n.isMap=c.isMap,n.isNode=c.isNode,n.isPair=c.isPair,n.isScalar=c.isScalar,n.isSeq=c.isSeq,n.Pair=u.Pair,n.Scalar=p.Scalar,n.YAMLMap=d.YAMLMap,n.YAMLSeq=f.YAMLSeq,n.CST=h,n.Lexer=m.Lexer,n.LineCounter=g.LineCounter,n.Parser=y.Parser,n.parse=b.parse,n.parseAllDocuments=b.parseAllDocuments,n.parseDocument=b.parseDocument,n.stringify=b.stringify,n.visit=v.visit,n.visitAsync=v.visitAsync},7444(e,n,s){"use strict";var i=s(932);n.debug=function debug(e,...n){"debug"===e&&console.log(...n)},n.warn=function warn(e,n){"debug"!==e&&"warn"!==e||("function"==typeof i.emitWarning?i.emitWarning(n):console.warn(n))}},1736(e,n,s){"use strict";var i=s(6261),r=s(9125),o=s(484),a=s(8898),l=s(3732);class Alias extends a.NodeBase{constructor(e){super(o.ALIAS),this.source=e,Object.defineProperty(this,"tag",{set(){throw new Error("Alias nodes cannot have tags")}})}resolve(e,n){let s,i;n?.aliasResolveCache?s=n.aliasResolveCache:(s=[],r.visit(e,{Node:(e,n)=>{(o.isAlias(n)||o.hasAnchor(n))&&s.push(n)}}),n&&(n.aliasResolveCache=s));for(const e of s){if(e===this)break;e.anchor===this.source&&(i=e)}return i}toJSON(e,n){if(!n)return{source:this.source};const{anchors:s,doc:i,maxAliasCount:r}=n,o=this.resolve(i,n);if(!o){const e=`Unresolved alias (the anchor must be set before the alias): ${this.source}`;throw new ReferenceError(e)}let a=s.get(o);if(a||(l.toJS(o,null,n),a=s.get(o)),void 0===a?.res){throw new ReferenceError("This should not happen: Alias anchor was not resolved?")}if(r>=0&&(a.count+=1,0===a.aliasCount&&(a.aliasCount=getAliasCount(i,o,s)),a.count*a.aliasCount>r)){throw new ReferenceError("Excessive alias count indicates a resource exhaustion attack")}return a.res}toString(e,n,s){const r=`*${this.source}`;if(e){if(i.anchorIsValid(this.source),e.options.verifyAliasOrder&&!e.anchors.has(this.source)){const e=`Unresolved alias (the anchor must be set before the alias): ${this.source}`;throw new Error(e)}if(e.implicitKey)return`${r} `}return r}}function getAliasCount(e,n,s){if(o.isAlias(n)){const i=n.resolve(e),r=s&&i&&s.get(i);return r?r.count*r.aliasCount:0}if(o.isCollection(n)){let i=0;for(const r of n.items){const n=getAliasCount(e,r,s);n>i&&(i=n)}return i}if(o.isPair(n)){const i=getAliasCount(e,n.key,s),r=getAliasCount(e,n.value,s);return Math.max(i,r)}return 1}n.Alias=Alias},1614(e,n,s){"use strict";var i=s(5219),r=s(484),o=s(8898);function collectionFromPath(e,n,s){let r=s;for(let e=n.length-1;e>=0;--e){const s=n[e];if("number"==typeof s&&Number.isInteger(s)&&s>=0){const e=[];e[s]=r,r=e}else r=new Map([[s,r]])}return i.createNode(r,void 0,{aliasDuplicateObjects:!1,keepUndefined:!1,onAnchor:()=>{throw new Error("This should not happen, please report a bug.")},schema:e,sourceObjects:new Map})}const isEmptyPath=e=>null==e||"object"==typeof e&&!!e[Symbol.iterator]().next().done;class Collection extends o.NodeBase{constructor(e,n){super(e),Object.defineProperty(this,"schema",{value:n,configurable:!0,enumerable:!1,writable:!0})}clone(e){const n=Object.create(Object.getPrototypeOf(this),Object.getOwnPropertyDescriptors(this));return e&&(n.schema=e),n.items=n.items.map(n=>r.isNode(n)||r.isPair(n)?n.clone(e):n),this.range&&(n.range=this.range.slice()),n}addIn(e,n){if(isEmptyPath(e))this.add(n);else{const[s,...i]=e,o=this.get(s,!0);if(r.isCollection(o))o.addIn(i,n);else{if(void 0!==o||!this.schema)throw new Error(`Expected YAML collection at ${s}. Remaining path: ${i}`);this.set(s,collectionFromPath(this.schema,i,n))}}}deleteIn(e){const[n,...s]=e;if(0===s.length)return this.delete(n);const i=this.get(n,!0);if(r.isCollection(i))return i.deleteIn(s);throw new Error(`Expected YAML collection at ${n}. Remaining path: ${s}`)}getIn(e,n){const[s,...i]=e,o=this.get(s,!0);return 0===i.length?!n&&r.isScalar(o)?o.value:o:r.isCollection(o)?o.getIn(i,n):void 0}hasAllNullValues(e){return this.items.every(n=>{if(!r.isPair(n))return!1;const s=n.value;return null==s||e&&r.isScalar(s)&&null==s.value&&!s.commentBefore&&!s.comment&&!s.tag})}hasIn(e){const[n,...s]=e;if(0===s.length)return this.has(n);const i=this.get(n,!0);return!!r.isCollection(i)&&i.hasIn(s)}setIn(e,n){const[s,...i]=e;if(0===i.length)this.set(s,n);else{const e=this.get(s,!0);if(r.isCollection(e))e.setIn(i,n);else{if(void 0!==e||!this.schema)throw new Error(`Expected YAML collection at ${s}. Remaining path: ${i}`);this.set(s,collectionFromPath(this.schema,i,n))}}}}n.Collection=Collection,n.collectionFromPath=collectionFromPath,n.isEmptyPath=isEmptyPath},8898(e,n,s){"use strict";var i=s(6906),r=s(484),o=s(3732);n.NodeBase=class NodeBase{constructor(e){Object.defineProperty(this,r.NODE_TYPE,{value:e})}clone(){const e=Object.create(Object.getPrototypeOf(this),Object.getOwnPropertyDescriptors(this));return this.range&&(e.range=this.range.slice()),e}toJS(e,{mapAsMap:n,maxAliasCount:s,onAnchor:a,reviver:l}={}){if(!r.isDocument(e))throw new TypeError("A document argument is required");const c={anchors:new Map,doc:e,keep:!0,mapAsMap:!0===n,mapKeyWarned:!1,maxAliasCount:"number"==typeof s?s:100},u=o.toJS(this,"",c);if("function"==typeof a)for(const{count:e,res:n}of c.anchors.values())a(n,e);return"function"==typeof l?i.applyReviver(l,{"":u},"",u):u}}},7902(e,n,s){"use strict";var i=s(5219),r=s(8017),o=s(5139),a=s(484);class Pair{constructor(e,n=null){Object.defineProperty(this,a.NODE_TYPE,{value:a.PAIR}),this.key=e,this.value=n}clone(e){let{key:n,value:s}=this;return a.isNode(n)&&(n=n.clone(e)),a.isNode(s)&&(s=s.clone(e)),new Pair(n,s)}toJSON(e,n){const s=n?.mapAsMap?new Map:{};return o.addPairToJSMap(n,s,this)}toString(e,n,s){return e?.doc?r.stringifyPair(this,e,n,s):JSON.stringify(this)}}n.Pair=Pair,n.createPair=function createPair(e,n,s){const r=i.createNode(e,void 0,s),o=i.createNode(n,void 0,s);return new Pair(r,o)}},9714(e,n,s){"use strict";var i=s(484),r=s(8898),o=s(3732);class Scalar extends r.NodeBase{constructor(e){super(i.SCALAR),this.value=e}toJSON(e,n){return n?.keep?this.value:o.toJS(this.value,e,n)}toString(){return String(this.value)}}Scalar.BLOCK_FOLDED="BLOCK_FOLDED",Scalar.BLOCK_LITERAL="BLOCK_LITERAL",Scalar.PLAIN="PLAIN",Scalar.QUOTE_DOUBLE="QUOTE_DOUBLE",Scalar.QUOTE_SINGLE="QUOTE_SINGLE",n.Scalar=Scalar,n.isScalarValue=e=>!e||"function"!=typeof e&&"object"!=typeof e},1755(e,n,s){"use strict";var i=s(81),r=s(5139),o=s(1614),a=s(484),l=s(7902),c=s(9714);function findPair(e,n){const s=a.isScalar(n)?n.value:n;for(const i of e)if(a.isPair(i)){if(i.key===n||i.key===s)return i;if(a.isScalar(i.key)&&i.key.value===s)return i}}class YAMLMap extends o.Collection{static get tagName(){return"tag:yaml.org,2002:map"}constructor(e){super(a.MAP,e),this.items=[]}static from(e,n,s){const{keepUndefined:i,replacer:r}=s,o=new this(e),add=(e,a)=>{if("function"==typeof r)a=r.call(n,e,a);else if(Array.isArray(r)&&!r.includes(e))return;(void 0!==a||i)&&o.items.push(l.createPair(e,a,s))};if(n instanceof Map)for(const[e,s]of n)add(e,s);else if(n&&"object"==typeof n)for(const e of Object.keys(n))add(e,n[e]);return"function"==typeof e.sortMapEntries&&o.items.sort(e.sortMapEntries),o}add(e,n){let s;s=a.isPair(e)?e:e&&"object"==typeof e&&"key"in e?new l.Pair(e.key,e.value):new l.Pair(e,e?.value);const i=findPair(this.items,s.key),r=this.schema?.sortMapEntries;if(i){if(!n)throw new Error(`Key ${s.key} already set`);a.isScalar(i.value)&&c.isScalarValue(s.value)?i.value.value=s.value:i.value=s.value}else if(r){const e=this.items.findIndex(e=>r(s,e)<0);-1===e?this.items.push(s):this.items.splice(e,0,s)}else this.items.push(s)}delete(e){const n=findPair(this.items,e);if(!n)return!1;return this.items.splice(this.items.indexOf(n),1).length>0}get(e,n){const s=findPair(this.items,e),i=s?.value;return(!n&&a.isScalar(i)?i.value:i)??void 0}has(e){return!!findPair(this.items,e)}set(e,n){this.add(new l.Pair(e,n),!0)}toJSON(e,n,s){const i=s?new s:n?.mapAsMap?new Map:{};n?.onCreate&&n.onCreate(i);for(const e of this.items)r.addPairToJSMap(n,i,e);return i}toString(e,n,s){if(!e)return JSON.stringify(this);for(const e of this.items)if(!a.isPair(e))throw new Error(`Map items must all be pairs; found ${JSON.stringify(e)} instead`);return!e.allNullValues&&this.hasAllNullValues(!1)&&(e=Object.assign({},e,{allNullValues:!0})),i.stringifyCollection(this,e,{blockItemPrefix:"",flowChars:{start:"{",end:"}"},itemIndent:e.indent||"",onChompKeep:s,onComment:n})}}n.YAMLMap=YAMLMap,n.findPair=findPair},6010(e,n,s){"use strict";var i=s(5219),r=s(81),o=s(1614),a=s(484),l=s(9714),c=s(3732);class YAMLSeq extends o.Collection{static get tagName(){return"tag:yaml.org,2002:seq"}constructor(e){super(a.SEQ,e),this.items=[]}add(e){this.items.push(e)}delete(e){const n=asItemIndex(e);if("number"!=typeof n)return!1;return this.items.splice(n,1).length>0}get(e,n){const s=asItemIndex(e);if("number"!=typeof s)return;const i=this.items[s];return!n&&a.isScalar(i)?i.value:i}has(e){const n=asItemIndex(e);return"number"==typeof n&&n<this.items.length}set(e,n){const s=asItemIndex(e);if("number"!=typeof s)throw new Error(`Expected a valid index, not ${e}.`);const i=this.items[s];a.isScalar(i)&&l.isScalarValue(n)?i.value=n:this.items[s]=n}toJSON(e,n){const s=[];n?.onCreate&&n.onCreate(s);let i=0;for(const e of this.items)s.push(c.toJS(e,String(i++),n));return s}toString(e,n,s){return e?r.stringifyCollection(this,e,{blockItemPrefix:"- ",flowChars:{start:"[",end:"]"},itemIndent:(e.indent||"")+"  ",onChompKeep:s,onComment:n}):JSON.stringify(this)}static from(e,n,s){const{replacer:r}=s,o=new this(e);if(n&&Symbol.iterator in Object(n)){let e=0;for(let a of n){if("function"==typeof r){const s=n instanceof Set?a:String(e++);a=r.call(n,s,a)}o.items.push(i.createNode(a,void 0,s))}}return o}}function asItemIndex(e){let n=a.isScalar(e)?e.value:e;return n&&"string"==typeof n&&(n=Number(n)),"number"==typeof n&&Number.isInteger(n)&&n>=0?n:null}n.YAMLSeq=YAMLSeq},5139(e,n,s){"use strict";var i=s(7444),r=s(9637),o=s(3793),a=s(484),l=s(3732);n.addPairToJSMap=function addPairToJSMap(e,n,{key:s,value:c}){if(a.isNode(s)&&s.addToJSMap)s.addToJSMap(e,n,c);else if(r.isMergeKey(e,s))r.addMergeToJSMap(e,n,c);else{const r=l.toJS(s,"",e);if(n instanceof Map)n.set(r,l.toJS(c,r,e));else if(n instanceof Set)n.add(r);else{const u=function stringifyKey(e,n,s){if(null===n)return"";if("object"!=typeof n)return String(n);if(a.isNode(e)&&s?.doc){const n=o.createStringifyContext(s.doc,{});n.anchors=new Set;for(const e of s.anchors.keys())n.anchors.add(e.anchor);n.inFlow=!0,n.inStringifyKey=!0;const r=e.toString(n);if(!s.mapKeyWarned){let e=JSON.stringify(r);e.length>40&&(e=e.substring(0,36)+'..."'),i.warn(s.doc.options.logLevel,`Keys with collection values will be stringified due to JS Object restrictions: ${e}. Set mapAsMap: true to use object keys.`),s.mapKeyWarned=!0}return r}return JSON.stringify(n)}(s,r,e),p=l.toJS(c,u,e);u in n?Object.defineProperty(n,u,{value:p,writable:!0,enumerable:!0,configurable:!0}):n[u]=p}}return n}},484(e,n){"use strict";const s=Symbol.for("yaml.alias"),i=Symbol.for("yaml.document"),r=Symbol.for("yaml.map"),o=Symbol.for("yaml.pair"),a=Symbol.for("yaml.scalar"),l=Symbol.for("yaml.seq"),c=Symbol.for("yaml.node.type"),isScalar=e=>!!e&&"object"==typeof e&&e[c]===a;function isCollection(e){if(e&&"object"==typeof e)switch(e[c]){case r:case l:return!0}return!1}n.ALIAS=s,n.DOC=i,n.MAP=r,n.NODE_TYPE=c,n.PAIR=o,n.SCALAR=a,n.SEQ=l,n.hasAnchor=e=>(isScalar(e)||isCollection(e))&&!!e.anchor,n.isAlias=e=>!!e&&"object"==typeof e&&e[c]===s,n.isCollection=isCollection,n.isDocument=e=>!!e&&"object"==typeof e&&e[c]===i,n.isMap=e=>!!e&&"object"==typeof e&&e[c]===r,n.isNode=function isNode(e){if(e&&"object"==typeof e)switch(e[c]){case s:case r:case a:case l:return!0}return!1},n.isPair=e=>!!e&&"object"==typeof e&&e[c]===o,n.isScalar=isScalar,n.isSeq=e=>!!e&&"object"==typeof e&&e[c]===l},3732(e,n,s){"use strict";var i=s(484);n.toJS=function toJS(e,n,s){if(Array.isArray(e))return e.map((e,n)=>toJS(e,String(n),s));if(e&&"function"==typeof e.toJSON){if(!s||!i.hasAnchor(e))return e.toJSON(n,s);const r={aliasCount:0,count:1,res:void 0};s.anchors.set(e,r),s.onCreate=e=>{r.res=e,delete s.onCreate};const o=e.toJSON(n,s);return s.onCreate&&s.onCreate(o),o}return"bigint"!=typeof e||s?.keep?e:Number(e)}},5141(e,n,s){"use strict";var i=s(4070),r=s(7571),o=s(4355),a=s(7180);function addEndtoBlockProps(e,n){if(n)for(const s of n)switch(s.type){case"space":case"comment":e.push(s);break;case"newline":return e.push(s),!0}return!1}function setFlowScalarValue(e,n,s){switch(e.type){case"scalar":case"double-quoted-scalar":case"single-quoted-scalar":e.type=s,e.source=n;break;case"block-scalar":{const i=e.props.slice(1);let r=n.length;"block-scalar-header"===e.props[0].type&&(r-=e.props[0].source.length);for(const e of i)e.offset+=r;delete e.props,Object.assign(e,{type:s,source:n,end:i});break}case"block-map":case"block-seq":{const i={type:"newline",offset:e.offset+n.length,indent:e.indent,source:"\n"};delete e.items,Object.assign(e,{type:s,source:n,end:[i]});break}default:{const i="indent"in e?e.indent:-1,r="end"in e&&Array.isArray(e.end)?e.end.filter(e=>"space"===e.type||"comment"===e.type||"newline"===e.type):[];for(const n of Object.keys(e))"type"!==n&&"offset"!==n&&delete e[n];Object.assign(e,{type:s,indent:i,source:n,end:r})}}}n.createScalarToken=function createScalarToken(e,n){const{implicitKey:s=!1,indent:i,inFlow:r=!1,offset:o=-1,type:l="PLAIN"}=n,c=a.stringifyString({type:l,value:e},{implicitKey:s,indent:i>0?" ".repeat(i):"",inFlow:r,options:{blockQuote:!0,lineWidth:-1}}),u=n.end??[{type:"newline",offset:-1,indent:i,source:"\n"}];switch(c[0]){case"|":case">":{const e=c.indexOf("\n"),n=c.substring(0,e),s=c.substring(e+1)+"\n",r=[{type:"block-scalar-header",offset:o,indent:i,source:n}];return addEndtoBlockProps(r,u)||r.push({type:"newline",offset:-1,indent:i,source:"\n"}),{type:"block-scalar",offset:o,indent:i,props:r,source:s}}case'"':return{type:"double-quoted-scalar",offset:o,indent:i,source:c,end:u};case"'":return{type:"single-quoted-scalar",offset:o,indent:i,source:c,end:u};default:return{type:"scalar",offset:o,indent:i,source:c,end:u}}},n.resolveAsScalar=function resolveAsScalar(e,n=!0,s){if(e){const _onError=(e,n,i)=>{const r="number"==typeof e?e:Array.isArray(e)?e[0]:e.offset;if(!s)throw new o.YAMLParseError([r,r+1],n,i);s(r,n,i)};switch(e.type){case"scalar":case"single-quoted-scalar":case"double-quoted-scalar":return r.resolveFlowScalar(e,n,_onError);case"block-scalar":return i.resolveBlockScalar({options:{strict:n}},e,_onError)}}return null},n.setScalarValue=function setScalarValue(e,n,s={}){let{afterKey:i=!1,implicitKey:r=!1,inFlow:o=!1,type:l}=s,c="indent"in e?e.indent:null;if(i&&"number"==typeof c&&(c+=2),!l)switch(e.type){case"single-quoted-scalar":l="QUOTE_SINGLE";break;case"double-quoted-scalar":l="QUOTE_DOUBLE";break;case"block-scalar":{const n=e.props[0];if("block-scalar-header"!==n.type)throw new Error("Invalid block scalar header");l=">"===n.source[0]?"BLOCK_FOLDED":"BLOCK_LITERAL";break}default:l="PLAIN"}const u=a.stringifyString({type:l,value:n},{implicitKey:r||null===c,indent:null!==c&&c>0?" ".repeat(c):"",inFlow:o,options:{blockQuote:!0,lineWidth:-1}});switch(u[0]){case"|":case">":!function setBlockScalarValue(e,n){const s=n.indexOf("\n"),i=n.substring(0,s),r=n.substring(s+1)+"\n";if("block-scalar"===e.type){const n=e.props[0];if("block-scalar-header"!==n.type)throw new Error("Invalid block scalar header");n.source=i,e.source=r}else{const{offset:n}=e,s="indent"in e?e.indent:-1,o=[{type:"block-scalar-header",offset:n,indent:s,source:i}];addEndtoBlockProps(o,"end"in e?e.end:void 0)||o.push({type:"newline",offset:-1,indent:s,source:"\n"});for(const n of Object.keys(e))"type"!==n&&"offset"!==n&&delete e[n];Object.assign(e,{type:"block-scalar",indent:s,props:o,source:r})}}(e,u);break;case'"':setFlowScalarValue(e,u,"double-quoted-scalar");break;case"'":setFlowScalarValue(e,u,"single-quoted-scalar");break;default:setFlowScalarValue(e,u,"scalar")}}},7808(e,n){"use strict";function stringifyToken(e){switch(e.type){case"block-scalar":{let n="";for(const s of e.props)n+=stringifyToken(s);return n+e.source}case"block-map":case"block-seq":{let n="";for(const s of e.items)n+=stringifyItem(s);return n}case"flow-collection":{let n=e.start.source;for(const s of e.items)n+=stringifyItem(s);for(const s of e.end)n+=s.source;return n}case"document":{let n=stringifyItem(e);if(e.end)for(const s of e.end)n+=s.source;return n}default:{let n=e.source;if("end"in e&&e.end)for(const s of e.end)n+=s.source;return n}}}function stringifyItem({start:e,key:n,sep:s,value:i}){let r="";for(const n of e)r+=n.source;if(n&&(r+=stringifyToken(n)),s)for(const e of s)r+=e.source;return i&&(r+=stringifyToken(i)),r}n.stringify=e=>"type"in e?stringifyToken(e):stringifyItem(e)},5970(e,n){"use strict";const s=Symbol("break visit"),i=Symbol("skip children"),r=Symbol("remove item");function visit(e,n){"type"in e&&"document"===e.type&&(e={start:e.start,value:e.value}),_visit(Object.freeze([]),e,n)}function _visit(e,n,i){let o=i(n,e);if("symbol"==typeof o)return o;for(const a of["key","value"]){const l=n[a];if(l&&"items"in l){for(let n=0;n<l.items.length;++n){const o=_visit(Object.freeze(e.concat([[a,n]])),l.items[n],i);if("number"==typeof o)n=o-1;else{if(o===s)return s;o===r&&(l.items.splice(n,1),n-=1)}}"function"==typeof o&&"key"===a&&(o=o(n,e))}}return"function"==typeof o?o(n,e):o}visit.BREAK=s,visit.SKIP=i,visit.REMOVE=r,visit.itemAtPath=(e,n)=>{let s=e;for(const[e,i]of n){const n=s?.[e];if(!n||!("items"in n))return;s=n.items[i]}return s},visit.parentCollection=(e,n)=>{const s=visit.itemAtPath(e,n.slice(0,-1)),i=n[n.length-1][0],r=s?.[i];if(r&&"items"in r)return r;throw new Error("Parent collection not found")},n.visit=visit},9112(e,n,s){"use strict";var i=s(5141),r=s(7808),o=s(5970);n.createScalarToken=i.createScalarToken,n.resolveAsScalar=i.resolveAsScalar,n.setScalarValue=i.setScalarValue,n.stringify=r.stringify,n.visit=o.visit,n.BOM="\ufeff",n.DOCUMENT="",n.FLOW_END="",n.SCALAR="",n.isCollection=e=>!!e&&"items"in e,n.isScalar=e=>!!e&&("scalar"===e.type||"single-quoted-scalar"===e.type||"double-quoted-scalar"===e.type||"block-scalar"===e.type),n.prettyToken=function prettyToken(e){switch(e){case"\ufeff":return"<BOM>";case"":return"<DOC>";case"":return"<FLOW_END>";case"":return"<SCALAR>";default:return JSON.stringify(e)}},n.tokenType=function tokenType(e){switch(e){case"\ufeff":return"byte-order-mark";case"":return"doc-mode";case"":return"flow-error-end";case"":return"scalar";case"---":return"doc-start";case"...":return"doc-end";case"":case"\n":case"\r\n":return"newline";case"-":return"seq-item-ind";case"?":return"explicit-key-ind";case":":return"map-value-ind";case"{":return"flow-map-start";case"}":return"flow-map-end";case"[":return"flow-seq-start";case"]":return"flow-seq-end";case",":return"comma"}switch(e[0]){case" ":case"\t":return"space";case"#":return"comment";case"%":return"directive-line";case"*":return"alias";case"&":return"anchor";case"!":return"tag";case"'":return"single-quoted-scalar";case'"':return"double-quoted-scalar";case"|":case">":return"block-scalar-header"}return null}},5752(e,n,s){"use strict";var i=s(9112);function isEmpty(e){switch(e){case void 0:case" ":case"\n":case"\r":case"\t":return!0;default:return!1}}const r=new Set("0123456789ABCDEFabcdef"),o=new Set("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-#;/?:@&=+$_.!~*'()"),a=new Set(",[]{}"),l=new Set(" ,[]{}\n\r\t"),isNotAnchorChar=e=>!e||l.has(e);n.Lexer=class Lexer{constructor(){this.atEnd=!1,this.blockScalarIndent=-1,this.blockScalarKeep=!1,this.buffer="",this.flowKey=!1,this.flowLevel=0,this.indentNext=0,this.indentValue=0,this.lineEndPos=null,this.next=null,this.pos=0}*lex(e,n=!1){if(e){if("string"!=typeof e)throw TypeError("source is not a string");this.buffer=this.buffer?this.buffer+e:e,this.lineEndPos=null}this.atEnd=!n;let s=this.next??"stream";for(;s&&(n||this.hasChars(1));)s=yield*this.parseNext(s)}atLineEnd(){let e=this.pos,n=this.buffer[e];for(;" "===n||"\t"===n;)n=this.buffer[++e];return!n||"#"===n||"\n"===n||"\r"===n&&"\n"===this.buffer[e+1]}charAt(e){return this.buffer[this.pos+e]}continueScalar(e){let n=this.buffer[e];if(this.indentNext>0){let s=0;for(;" "===n;)n=this.buffer[++s+e];if("\r"===n){const n=this.buffer[s+e+1];if("\n"===n||!n&&!this.atEnd)return e+s+1}return"\n"===n||s>=this.indentNext||!n&&!this.atEnd?e+s:-1}if("-"===n||"."===n){const n=this.buffer.substr(e,3);if(("---"===n||"..."===n)&&isEmpty(this.buffer[e+3]))return-1}return e}getLine(){let e=this.lineEndPos;return("number"!=typeof e||-1!==e&&e<this.pos)&&(e=this.buffer.indexOf("\n",this.pos),this.lineEndPos=e),-1===e?this.atEnd?this.buffer.substring(this.pos):null:("\r"===this.buffer[e-1]&&(e-=1),this.buffer.substring(this.pos,e))}hasChars(e){return this.pos+e<=this.buffer.length}setNext(e){return this.buffer=this.buffer.substring(this.pos),this.pos=0,this.lineEndPos=null,this.next=e,null}peek(e){return this.buffer.substr(this.pos,e)}*parseNext(e){switch(e){case"stream":return yield*this.parseStream();case"line-start":return yield*this.parseLineStart();case"block-start":return yield*this.parseBlockStart();case"doc":return yield*this.parseDocument();case"flow":return yield*this.parseFlowCollection();case"quoted-scalar":return yield*this.parseQuotedScalar();case"block-scalar":return yield*this.parseBlockScalar();case"plain-scalar":return yield*this.parsePlainScalar()}}*parseStream(){let e=this.getLine();if(null===e)return this.setNext("stream");if(e[0]===i.BOM&&(yield*this.pushCount(1),e=e.substring(1)),"%"===e[0]){let n=e.length,s=e.indexOf("#");for(;-1!==s;){const i=e[s-1];if(" "===i||"\t"===i){n=s-1;break}s=e.indexOf("#",s+1)}for(;;){const s=e[n-1];if(" "!==s&&"\t"!==s)break;n-=1}const i=(yield*this.pushCount(n))+(yield*this.pushSpaces(!0));return yield*this.pushCount(e.length-i),this.pushNewline(),"stream"}if(this.atLineEnd()){const n=yield*this.pushSpaces(!0);return yield*this.pushCount(e.length-n),yield*this.pushNewline(),"stream"}return yield i.DOCUMENT,yield*this.parseLineStart()}*parseLineStart(){const e=this.charAt(0);if(!e&&!this.atEnd)return this.setNext("line-start");if("-"===e||"."===e){if(!this.atEnd&&!this.hasChars(4))return this.setNext("line-start");const e=this.peek(3);if(("---"===e||"..."===e)&&isEmpty(this.charAt(3)))return yield*this.pushCount(3),this.indentValue=0,this.indentNext=0,"---"===e?"doc":"stream"}return this.indentValue=yield*this.pushSpaces(!1),this.indentNext>this.indentValue&&!isEmpty(this.charAt(1))&&(this.indentNext=this.indentValue),yield*this.parseBlockStart()}*parseBlockStart(){const[e,n]=this.peek(2);if(!n&&!this.atEnd)return this.setNext("block-start");if(("-"===e||"?"===e||":"===e)&&isEmpty(n)){const e=(yield*this.pushCount(1))+(yield*this.pushSpaces(!0));return this.indentNext=this.indentValue+1,this.indentValue+=e,yield*this.parseBlockStart()}return"doc"}*parseDocument(){yield*this.pushSpaces(!0);const e=this.getLine();if(null===e)return this.setNext("doc");let n=yield*this.pushIndicators();switch(e[n]){case"#":yield*this.pushCount(e.length-n);case void 0:return yield*this.pushNewline(),yield*this.parseLineStart();case"{":case"[":return yield*this.pushCount(1),this.flowKey=!1,this.flowLevel=1,"flow";case"}":case"]":return yield*this.pushCount(1),"doc";case"*":return yield*this.pushUntil(isNotAnchorChar),"doc";case'"':case"'":return yield*this.parseQuotedScalar();case"|":case">":return n+=(yield*this.parseBlockScalarHeader()),n+=(yield*this.pushSpaces(!0)),yield*this.pushCount(e.length-n),yield*this.pushNewline(),yield*this.parseBlockScalar();default:return yield*this.parsePlainScalar()}}*parseFlowCollection(){let e,n,s=-1;do{e=yield*this.pushNewline(),e>0?(n=yield*this.pushSpaces(!1),this.indentValue=s=n):n=0,n+=(yield*this.pushSpaces(!0))}while(e+n>0);const r=this.getLine();if(null===r)return this.setNext("flow");if(-1!==s&&s<this.indentNext&&"#"!==r[0]||0===s&&(r.startsWith("---")||r.startsWith("..."))&&isEmpty(r[3])){if(!(s===this.indentNext-1&&1===this.flowLevel&&("]"===r[0]||"}"===r[0])))return this.flowLevel=0,yield i.FLOW_END,yield*this.parseLineStart()}let o=0;for(;","===r[o];)o+=(yield*this.pushCount(1)),o+=(yield*this.pushSpaces(!0)),this.flowKey=!1;switch(o+=(yield*this.pushIndicators()),r[o]){case void 0:return"flow";case"#":return yield*this.pushCount(r.length-o),"flow";case"{":case"[":return yield*this.pushCount(1),this.flowKey=!1,this.flowLevel+=1,"flow";case"}":case"]":return yield*this.pushCount(1),this.flowKey=!0,this.flowLevel-=1,this.flowLevel?"flow":"doc";case"*":return yield*this.pushUntil(isNotAnchorChar),"flow";case'"':case"'":return this.flowKey=!0,yield*this.parseQuotedScalar();case":":{const e=this.charAt(1);if(this.flowKey||isEmpty(e)||","===e)return this.flowKey=!1,yield*this.pushCount(1),yield*this.pushSpaces(!0),"flow"}default:return this.flowKey=!1,yield*this.parsePlainScalar()}}*parseQuotedScalar(){const e=this.charAt(0);let n=this.buffer.indexOf(e,this.pos+1);if("'"===e)for(;-1!==n&&"'"===this.buffer[n+1];)n=this.buffer.indexOf("'",n+2);else for(;-1!==n;){let e=0;for(;"\\"===this.buffer[n-1-e];)e+=1;if(e%2==0)break;n=this.buffer.indexOf('"',n+1)}const s=this.buffer.substring(0,n);let i=s.indexOf("\n",this.pos);if(-1!==i){for(;-1!==i;){const e=this.continueScalar(i+1);if(-1===e)break;i=s.indexOf("\n",e)}-1!==i&&(n=i-("\r"===s[i-1]?2:1))}if(-1===n){if(!this.atEnd)return this.setNext("quoted-scalar");n=this.buffer.length}return yield*this.pushToIndex(n+1,!1),this.flowLevel?"flow":"doc"}*parseBlockScalarHeader(){this.blockScalarIndent=-1,this.blockScalarKeep=!1;let e=this.pos;for(;;){const n=this.buffer[++e];if("+"===n)this.blockScalarKeep=!0;else if(n>"0"&&n<="9")this.blockScalarIndent=Number(n)-1;else if("-"!==n)break}return yield*this.pushUntil(e=>isEmpty(e)||"#"===e)}*parseBlockScalar(){let e,n=this.pos-1,s=0;e:for(let i=this.pos;e=this.buffer[i];++i)switch(e){case" ":s+=1;break;case"\n":n=i,s=0;break;case"\r":{const e=this.buffer[i+1];if(!e&&!this.atEnd)return this.setNext("block-scalar");if("\n"===e)break}default:break e}if(!e&&!this.atEnd)return this.setNext("block-scalar");if(s>=this.indentNext){-1===this.blockScalarIndent?this.indentNext=s:this.indentNext=this.blockScalarIndent+(0===this.indentNext?1:this.indentNext);do{const e=this.continueScalar(n+1);if(-1===e)break;n=this.buffer.indexOf("\n",e)}while(-1!==n);if(-1===n){if(!this.atEnd)return this.setNext("block-scalar");n=this.buffer.length}}let r=n+1;for(e=this.buffer[r];" "===e;)e=this.buffer[++r];if("\t"===e){for(;"\t"===e||" "===e||"\r"===e||"\n"===e;)e=this.buffer[++r];n=r-1}else if(!this.blockScalarKeep)for(;;){let e=n-1,i=this.buffer[e];"\r"===i&&(i=this.buffer[--e]);const r=e;for(;" "===i;)i=this.buffer[--e];if(!("\n"===i&&e>=this.pos&&e+1+s>r))break;n=e}return yield i.SCALAR,yield*this.pushToIndex(n+1,!0),yield*this.parseLineStart()}*parsePlainScalar(){const e=this.flowLevel>0;let n,s=this.pos-1,r=this.pos-1;for(;n=this.buffer[++r];)if(":"===n){const n=this.buffer[r+1];if(isEmpty(n)||e&&a.has(n))break;s=r}else if(isEmpty(n)){let i=this.buffer[r+1];if("\r"===n&&("\n"===i?(r+=1,n="\n",i=this.buffer[r+1]):s=r),"#"===i||e&&a.has(i))break;if("\n"===n){const e=this.continueScalar(r+1);if(-1===e)break;r=Math.max(r,e-2)}}else{if(e&&a.has(n))break;s=r}return n||this.atEnd?(yield i.SCALAR,yield*this.pushToIndex(s+1,!0),e?"flow":"doc"):this.setNext("plain-scalar")}*pushCount(e){return e>0?(yield this.buffer.substr(this.pos,e),this.pos+=e,e):0}*pushToIndex(e,n){const s=this.buffer.slice(this.pos,e);return s?(yield s,this.pos+=s.length,s.length):(n&&(yield""),0)}*pushIndicators(){switch(this.charAt(0)){case"!":return(yield*this.pushTag())+(yield*this.pushSpaces(!0))+(yield*this.pushIndicators());case"&":return(yield*this.pushUntil(isNotAnchorChar))+(yield*this.pushSpaces(!0))+(yield*this.pushIndicators());case"-":case"?":case":":{const e=this.flowLevel>0,n=this.charAt(1);if(isEmpty(n)||e&&a.has(n))return e?this.flowKey&&(this.flowKey=!1):this.indentNext=this.indentValue+1,(yield*this.pushCount(1))+(yield*this.pushSpaces(!0))+(yield*this.pushIndicators())}}return 0}*pushTag(){if("<"===this.charAt(1)){let e=this.pos+2,n=this.buffer[e];for(;!isEmpty(n)&&">"!==n;)n=this.buffer[++e];return yield*this.pushToIndex(">"===n?e+1:e,!1)}{let e=this.pos+1,n=this.buffer[e];for(;n;)if(o.has(n))n=this.buffer[++e];else{if("%"!==n||!r.has(this.buffer[e+1])||!r.has(this.buffer[e+2]))break;n=this.buffer[e+=3]}return yield*this.pushToIndex(e,!1)}}*pushNewline(){const e=this.buffer[this.pos];return"\n"===e?yield*this.pushCount(1):"\r"===e&&"\n"===this.charAt(1)?yield*this.pushCount(2):0}*pushSpaces(e){let n,s=this.pos-1;do{n=this.buffer[++s]}while(" "===n||e&&"\t"===n);const i=s-this.pos;return i>0&&(yield this.buffer.substr(this.pos,i),this.pos=s),i}*pushUntil(e){let n=this.pos,s=this.buffer[n];for(;!e(s);)s=this.buffer[++n];return yield*this.pushToIndex(n,!1)}}},2864(e,n){"use strict";n.LineCounter=class LineCounter{constructor(){this.lineStarts=[],this.addNewLine=e=>this.lineStarts.push(e),this.linePos=e=>{let n=0,s=this.lineStarts.length;for(;n<s;){const i=n+s>>1;this.lineStarts[i]<e?n=i+1:s=i}if(this.lineStarts[n]===e)return{line:n+1,col:1};if(0===n)return{line:0,col:e};return{line:n,col:e-this.lineStarts[n-1]+1}}}}},6247(e,n,s){"use strict";var i=s(932),r=s(9112),o=s(5752);function includesToken(e,n){for(let s=0;s<e.length;++s)if(e[s].type===n)return!0;return!1}function findNonEmptyIndex(e){for(let n=0;n<e.length;++n)switch(e[n].type){case"space":case"comment":case"newline":break;default:return n}return-1}function isFlowToken(e){switch(e?.type){case"alias":case"scalar":case"single-quoted-scalar":case"double-quoted-scalar":case"flow-collection":return!0;default:return!1}}function getPrevProps(e){switch(e.type){case"document":return e.start;case"block-map":{const n=e.items[e.items.length-1];return n.sep??n.start}case"block-seq":return e.items[e.items.length-1].start;default:return[]}}function getFirstKeyStartProps(e){if(0===e.length)return[];let n=e.length;e:for(;--n>=0;)switch(e[n].type){case"doc-start":case"explicit-key-ind":case"map-value-ind":case"seq-item-ind":case"newline":break e}for(;"space"===e[++n]?.type;);return e.splice(n,e.length)}function fixFlowSeqItems(e){if("flow-seq-start"===e.start.type)for(const n of e.items)!n.sep||n.value||includesToken(n.start,"explicit-key-ind")||includesToken(n.sep,"map-value-ind")||(n.key&&(n.value=n.key),delete n.key,isFlowToken(n.value)?n.value.end?Array.prototype.push.apply(n.value.end,n.sep):n.value.end=n.sep:Array.prototype.push.apply(n.start,n.sep),delete n.sep)}n.Parser=class Parser{constructor(e){this.atNewLine=!0,this.atScalar=!1,this.indent=0,this.offset=0,this.onKeyLine=!1,this.stack=[],this.source="",this.type="",this.lexer=new o.Lexer,this.onNewLine=e}*parse(e,n=!1){this.onNewLine&&0===this.offset&&this.onNewLine(0);for(const s of this.lexer.lex(e,n))yield*this.next(s);n||(yield*this.end())}*next(e){if(this.source=e,i.env.LOG_TOKENS&&console.log("|",r.prettyToken(e)),this.atScalar)return this.atScalar=!1,yield*this.step(),void(this.offset+=e.length);const n=r.tokenType(e);if(n)if("scalar"===n)this.atNewLine=!1,this.atScalar=!0,this.type="scalar";else{switch(this.type=n,yield*this.step(),n){case"newline":this.atNewLine=!0,this.indent=0,this.onNewLine&&this.onNewLine(this.offset+e.length);break;case"space":this.atNewLine&&" "===e[0]&&(this.indent+=e.length);break;case"explicit-key-ind":case"map-value-ind":case"seq-item-ind":this.atNewLine&&(this.indent+=e.length);break;case"doc-mode":case"flow-error-end":return;default:this.atNewLine=!1}this.offset+=e.length}else{const n=`Not a YAML token: ${e}`;yield*this.pop({type:"error",offset:this.offset,message:n,source:e}),this.offset+=e.length}}*end(){for(;this.stack.length>0;)yield*this.pop()}get sourceToken(){return{type:this.type,offset:this.offset,indent:this.indent,source:this.source}}*step(){const e=this.peek(1);if("doc-end"!==this.type||"doc-end"===e?.type){if(!e)return yield*this.stream();switch(e.type){case"document":return yield*this.document(e);case"alias":case"scalar":case"single-quoted-scalar":case"double-quoted-scalar":return yield*this.scalar(e);case"block-scalar":return yield*this.blockScalar(e);case"block-map":return yield*this.blockMap(e);case"block-seq":return yield*this.blockSequence(e);case"flow-collection":return yield*this.flowCollection(e);case"doc-end":return yield*this.documentEnd(e)}yield*this.pop()}else{for(;this.stack.length>0;)yield*this.pop();this.stack.push({type:"doc-end",offset:this.offset,source:this.source})}}peek(e){return this.stack[this.stack.length-e]}*pop(e){const n=e??this.stack.pop();if(n)if(0===this.stack.length)yield n;else{const e=this.peek(1);switch("block-scalar"===n.type?n.indent="indent"in e?e.indent:0:"flow-collection"===n.type&&"document"===e.type&&(n.indent=0),"flow-collection"===n.type&&fixFlowSeqItems(n),e.type){case"document":e.value=n;break;case"block-scalar":e.props.push(n);break;case"block-map":{const s=e.items[e.items.length-1];if(s.value)return e.items.push({start:[],key:n,sep:[]}),void(this.onKeyLine=!0);if(!s.sep)return Object.assign(s,{key:n,sep:[]}),void(this.onKeyLine=!s.explicitKey);s.value=n;break}case"block-seq":{const s=e.items[e.items.length-1];s.value?e.items.push({start:[],value:n}):s.value=n;break}case"flow-collection":{const s=e.items[e.items.length-1];return void(!s||s.value?e.items.push({start:[],key:n,sep:[]}):s.sep?s.value=n:Object.assign(s,{key:n,sep:[]}))}default:yield*this.pop(),yield*this.pop(n)}if(!("document"!==e.type&&"block-map"!==e.type&&"block-seq"!==e.type||"block-map"!==n.type&&"block-seq"!==n.type)){const s=n.items[n.items.length-1];s&&!s.sep&&!s.value&&s.start.length>0&&-1===findNonEmptyIndex(s.start)&&(0===n.indent||s.start.every(e=>"comment"!==e.type||e.indent<n.indent))&&("document"===e.type?e.end=s.start:e.items.push({start:s.start}),n.items.splice(-1,1))}}else{const e="Tried to pop an empty stack";yield{type:"error",offset:this.offset,source:"",message:e}}}*stream(){switch(this.type){case"directive-line":return void(yield{type:"directive",offset:this.offset,source:this.source});case"byte-order-mark":case"space":case"comment":case"newline":return void(yield this.sourceToken);case"doc-mode":case"doc-start":{const e={type:"document",offset:this.offset,start:[]};return"doc-start"===this.type&&e.start.push(this.sourceToken),void this.stack.push(e)}}yield{type:"error",offset:this.offset,message:`Unexpected ${this.type} token in YAML stream`,source:this.source}}*document(e){if(e.value)return yield*this.lineEnd(e);switch(this.type){case"doc-start":return void(-1!==findNonEmptyIndex(e.start)?(yield*this.pop(),yield*this.step()):e.start.push(this.sourceToken));case"anchor":case"tag":case"space":case"comment":case"newline":return void e.start.push(this.sourceToken)}const n=this.startBlockValue(e);n?this.stack.push(n):yield{type:"error",offset:this.offset,message:`Unexpected ${this.type} token in YAML document`,source:this.source}}*scalar(e){if("map-value-ind"===this.type){const n=getFirstKeyStartProps(getPrevProps(this.peek(2)));let s;e.end?(s=e.end,s.push(this.sourceToken),delete e.end):s=[this.sourceToken];const i={type:"block-map",offset:e.offset,indent:e.indent,items:[{start:n,key:e,sep:s}]};this.onKeyLine=!0,this.stack[this.stack.length-1]=i}else yield*this.lineEnd(e)}*blockScalar(e){switch(this.type){case"space":case"comment":case"newline":return void e.props.push(this.sourceToken);case"scalar":if(e.source=this.source,this.atNewLine=!0,this.indent=0,this.onNewLine){let e=this.source.indexOf("\n")+1;for(;0!==e;)this.onNewLine(this.offset+e),e=this.source.indexOf("\n",e)+1}yield*this.pop();break;default:yield*this.pop(),yield*this.step()}}*blockMap(e){const n=e.items[e.items.length-1];switch(this.type){case"newline":if(this.onKeyLine=!1,n.value){const s="end"in n.value?n.value.end:void 0,i=Array.isArray(s)?s[s.length-1]:void 0;"comment"===i?.type?s?.push(this.sourceToken):e.items.push({start:[this.sourceToken]})}else n.sep?n.sep.push(this.sourceToken):n.start.push(this.sourceToken);return;case"space":case"comment":if(n.value)e.items.push({start:[this.sourceToken]});else if(n.sep)n.sep.push(this.sourceToken);else{if(this.atIndentedComment(n.start,e.indent)){const s=e.items[e.items.length-2],i=s?.value?.end;if(Array.isArray(i))return Array.prototype.push.apply(i,n.start),i.push(this.sourceToken),void e.items.pop()}n.start.push(this.sourceToken)}return}if(this.indent>=e.indent){const s=!this.onKeyLine&&this.indent===e.indent,i=s&&(n.sep||n.explicitKey)&&"seq-item-ind"!==this.type;let r=[];if(i&&n.sep&&!n.value){const s=[];for(let i=0;i<n.sep.length;++i){const r=n.sep[i];switch(r.type){case"newline":s.push(i);break;case"space":break;case"comment":r.indent>e.indent&&(s.length=0);break;default:s.length=0}}s.length>=2&&(r=n.sep.splice(s[1]))}switch(this.type){case"anchor":case"tag":return void(i||n.value?(r.push(this.sourceToken),e.items.push({start:r}),this.onKeyLine=!0):n.sep?n.sep.push(this.sourceToken):n.start.push(this.sourceToken));case"explicit-key-ind":return n.sep||n.explicitKey?i||n.value?(r.push(this.sourceToken),e.items.push({start:r,explicitKey:!0})):this.stack.push({type:"block-map",offset:this.offset,indent:this.indent,items:[{start:[this.sourceToken],explicitKey:!0}]}):(n.start.push(this.sourceToken),n.explicitKey=!0),void(this.onKeyLine=!0);case"map-value-ind":if(n.explicitKey)if(n.sep)if(n.value)e.items.push({start:[],key:null,sep:[this.sourceToken]});else if(includesToken(n.sep,"map-value-ind"))this.stack.push({type:"block-map",offset:this.offset,indent:this.indent,items:[{start:r,key:null,sep:[this.sourceToken]}]});else if(isFlowToken(n.key)&&!includesToken(n.sep,"newline")){const e=getFirstKeyStartProps(n.start),s=n.key,i=n.sep;i.push(this.sourceToken),delete n.key,delete n.sep,this.stack.push({type:"block-map",offset:this.offset,indent:this.indent,items:[{start:e,key:s,sep:i}]})}else r.length>0?n.sep=n.sep.concat(r,this.sourceToken):n.sep.push(this.sourceToken);else if(includesToken(n.start,"newline"))Object.assign(n,{key:null,sep:[this.sourceToken]});else{const e=getFirstKeyStartProps(n.start);this.stack.push({type:"block-map",offset:this.offset,indent:this.indent,items:[{start:e,key:null,sep:[this.sourceToken]}]})}else n.sep?n.value||i?e.items.push({start:r,key:null,sep:[this.sourceToken]}):includesToken(n.sep,"map-value-ind")?this.stack.push({type:"block-map",offset:this.offset,indent:this.indent,items:[{start:[],key:null,sep:[this.sourceToken]}]}):n.sep.push(this.sourceToken):Object.assign(n,{key:null,sep:[this.sourceToken]});return void(this.onKeyLine=!0);case"alias":case"scalar":case"single-quoted-scalar":case"double-quoted-scalar":{const s=this.flowScalar(this.type);return void(i||n.value?(e.items.push({start:r,key:s,sep:[]}),this.onKeyLine=!0):n.sep?this.stack.push(s):(Object.assign(n,{key:s,sep:[]}),this.onKeyLine=!0))}default:{const i=this.startBlockValue(e);if(i){if("block-seq"===i.type){if(!n.explicitKey&&n.sep&&!includesToken(n.sep,"newline"))return void(yield*this.pop({type:"error",offset:this.offset,message:"Unexpected block-seq-ind on same line with key",source:this.source}))}else s&&e.items.push({start:r});return void this.stack.push(i)}}}}yield*this.pop(),yield*this.step()}*blockSequence(e){const n=e.items[e.items.length-1];switch(this.type){case"newline":if(n.value){const s="end"in n.value?n.value.end:void 0,i=Array.isArray(s)?s[s.length-1]:void 0;"comment"===i?.type?s?.push(this.sourceToken):e.items.push({start:[this.sourceToken]})}else n.start.push(this.sourceToken);return;case"space":case"comment":if(n.value)e.items.push({start:[this.sourceToken]});else{if(this.atIndentedComment(n.start,e.indent)){const s=e.items[e.items.length-2],i=s?.value?.end;if(Array.isArray(i))return Array.prototype.push.apply(i,n.start),i.push(this.sourceToken),void e.items.pop()}n.start.push(this.sourceToken)}return;case"anchor":case"tag":if(n.value||this.indent<=e.indent)break;return void n.start.push(this.sourceToken);case"seq-item-ind":if(this.indent!==e.indent)break;return void(n.value||includesToken(n.start,"seq-item-ind")?e.items.push({start:[this.sourceToken]}):n.start.push(this.sourceToken))}if(this.indent>e.indent){const n=this.startBlockValue(e);if(n)return void this.stack.push(n)}yield*this.pop(),yield*this.step()}*flowCollection(e){const n=e.items[e.items.length-1];if("flow-error-end"===this.type){let e;do{yield*this.pop(),e=this.peek(1)}while("flow-collection"===e?.type)}else if(0===e.end.length){switch(this.type){case"comma":case"explicit-key-ind":return void(!n||n.sep?e.items.push({start:[this.sourceToken]}):n.start.push(this.sourceToken));case"map-value-ind":return void(!n||n.value?e.items.push({start:[],key:null,sep:[this.sourceToken]}):n.sep?n.sep.push(this.sourceToken):Object.assign(n,{key:null,sep:[this.sourceToken]}));case"space":case"comment":case"newline":case"anchor":case"tag":return void(!n||n.value?e.items.push({start:[this.sourceToken]}):n.sep?n.sep.push(this.sourceToken):n.start.push(this.sourceToken));case"alias":case"scalar":case"single-quoted-scalar":case"double-quoted-scalar":{const s=this.flowScalar(this.type);return void(!n||n.value?e.items.push({start:[],key:s,sep:[]}):n.sep?this.stack.push(s):Object.assign(n,{key:s,sep:[]}))}case"flow-map-end":case"flow-seq-end":return void e.end.push(this.sourceToken)}const s=this.startBlockValue(e);s?this.stack.push(s):(yield*this.pop(),yield*this.step())}else{const n=this.peek(2);if("block-map"===n.type&&("map-value-ind"===this.type&&n.indent===e.indent||"newline"===this.type&&!n.items[n.items.length-1].sep))yield*this.pop(),yield*this.step();else if("map-value-ind"===this.type&&"flow-collection"!==n.type){const s=getFirstKeyStartProps(getPrevProps(n));fixFlowSeqItems(e);const i=e.end.splice(1,e.end.length);i.push(this.sourceToken);const r={type:"block-map",offset:e.offset,indent:e.indent,items:[{start:s,key:e,sep:i}]};this.onKeyLine=!0,this.stack[this.stack.length-1]=r}else yield*this.lineEnd(e)}}flowScalar(e){if(this.onNewLine){let e=this.source.indexOf("\n")+1;for(;0!==e;)this.onNewLine(this.offset+e),e=this.source.indexOf("\n",e)+1}return{type:e,offset:this.offset,indent:this.indent,source:this.source}}startBlockValue(e){switch(this.type){case"alias":case"scalar":case"single-quoted-scalar":case"double-quoted-scalar":return this.flowScalar(this.type);case"block-scalar-header":return{type:"block-scalar",offset:this.offset,indent:this.indent,props:[this.sourceToken],source:""};case"flow-map-start":case"flow-seq-start":return{type:"flow-collection",offset:this.offset,indent:this.indent,start:this.sourceToken,items:[],end:[]};case"seq-item-ind":return{type:"block-seq",offset:this.offset,indent:this.indent,items:[{start:[this.sourceToken]}]};case"explicit-key-ind":{this.onKeyLine=!0;const n=getFirstKeyStartProps(getPrevProps(e));return n.push(this.sourceToken),{type:"block-map",offset:this.offset,indent:this.indent,items:[{start:n,explicitKey:!0}]}}case"map-value-ind":{this.onKeyLine=!0;const n=getFirstKeyStartProps(getPrevProps(e));return{type:"block-map",offset:this.offset,indent:this.indent,items:[{start:n,key:null,sep:[this.sourceToken]}]}}}return null}atIndentedComment(e,n){return"comment"===this.type&&(!(this.indent<=n)&&e.every(e=>"newline"===e.type||"space"===e.type))}*documentEnd(e){"doc-mode"!==this.type&&(e.end?e.end.push(this.sourceToken):e.end=[this.sourceToken],"newline"===this.type&&(yield*this.pop()))}*lineEnd(e){switch(this.type){case"comma":case"doc-start":case"doc-end":case"flow-seq-end":case"flow-map-end":case"map-value-ind":yield*this.pop(),yield*this.step();break;case"newline":this.onKeyLine=!1;default:e.end?e.end.push(this.sourceToken):e.end=[this.sourceToken],"newline"===this.type&&(yield*this.pop())}}}},1332(e,n,s){"use strict";var i=s(4927),r=s(9046),o=s(4355),a=s(7444),l=s(484),c=s(2864),u=s(6247);function parseOptions(e){const n=!1!==e.prettyErrors;return{lineCounter:e.lineCounter||n&&new c.LineCounter||null,prettyErrors:n}}function parseDocument(e,n={}){const{lineCounter:s,prettyErrors:r}=parseOptions(n),a=new u.Parser(s?.addNewLine),l=new i.Composer(n);let c=null;for(const n of l.compose(a.parse(e),!0,e.length))if(c){if("silent"!==c.options.logLevel){c.errors.push(new o.YAMLParseError(n.range.slice(0,2),"MULTIPLE_DOCS","Source contains multiple documents; please use YAML.parseAllDocuments()"));break}}else c=n;return r&&s&&(c.errors.forEach(o.prettifyError(e,s)),c.warnings.forEach(o.prettifyError(e,s))),c}n.parse=function parse(e,n,s){let i;"function"==typeof n?i=n:void 0===s&&n&&"object"==typeof n&&(s=n);const r=parseDocument(e,s);if(!r)return null;if(r.warnings.forEach(e=>a.warn(r.options.logLevel,e)),r.errors.length>0){if("silent"!==r.options.logLevel)throw r.errors[0];r.errors=[]}return r.toJS(Object.assign({reviver:i},s))},n.parseAllDocuments=function parseAllDocuments(e,n={}){const{lineCounter:s,prettyErrors:r}=parseOptions(n),a=new u.Parser(s?.addNewLine),l=new i.Composer(n),c=Array.from(l.compose(a.parse(e)));if(r&&s)for(const n of c)n.errors.forEach(o.prettifyError(e,s)),n.warnings.forEach(o.prettifyError(e,s));return c.length>0?c:Object.assign([],{empty:!0},l.streamInfo())},n.parseDocument=parseDocument,n.stringify=function stringify(e,n,s){let i=null;if("function"==typeof n||Array.isArray(n)?i=n:void 0===s&&n&&(s=n),"string"==typeof s&&(s=s.length),"number"==typeof s){const e=Math.round(s);s=e<1?void 0:e>8?{indent:8}:{indent:e}}if(void 0===e){const{keepUndefined:e}=s??n??{};if(!e)return}return l.isDocument(e)&&!i?e.toString(s):new r.Document(e,i,s).toString(s)}},625(e,n,s){"use strict";var i=s(484),r=s(3334),o=s(1919),a=s(8531),l=s(975);const sortMapEntriesByKey=(e,n)=>e.key<n.key?-1:e.key>n.key?1:0;class Schema{constructor({compat:e,customTags:n,merge:s,resolveKnownTags:c,schema:u,sortMapEntries:p,toStringDefaults:d}){this.compat=Array.isArray(e)?l.getTags(e,"compat"):e?l.getTags(null,e):null,this.name="string"==typeof u&&u||"core",this.knownTags=c?l.coreKnownTags:{},this.tags=l.getTags(n,this.name,s),this.toStringOptions=d??null,Object.defineProperty(this,i.MAP,{value:r.map}),Object.defineProperty(this,i.SCALAR,{value:a.string}),Object.defineProperty(this,i.SEQ,{value:o.seq}),this.sortMapEntries="function"==typeof p?p:!0===p?sortMapEntriesByKey:null}clone(){const e=Object.create(Schema.prototype,Object.getOwnPropertyDescriptors(this));return e.tags=this.tags.slice(),e}}n.Schema=Schema},3334(e,n,s){"use strict";var i=s(484),r=s(1755);const o={collection:"map",default:!0,nodeClass:r.YAMLMap,tag:"tag:yaml.org,2002:map",resolve:(e,n)=>(i.isMap(e)||n("Expected a mapping for this tag"),e),createNode:(e,n,s)=>r.YAMLMap.from(e,n,s)};n.map=o},6055(e,n,s){"use strict";var i=s(9714);const r={identify:e=>null==e,createNode:()=>new i.Scalar(null),default:!0,tag:"tag:yaml.org,2002:null",test:/^(?:~|[Nn]ull|NULL)?$/,resolve:()=>new i.Scalar(null),stringify:({source:e},n)=>"string"==typeof e&&r.test.test(e)?e:n.options.nullStr};n.nullTag=r},1919(e,n,s){"use strict";var i=s(484),r=s(6010);const o={collection:"seq",default:!0,nodeClass:r.YAMLSeq,tag:"tag:yaml.org,2002:seq",resolve:(e,n)=>(i.isSeq(e)||n("Expected a sequence for this tag"),e),createNode:(e,n,s)=>r.YAMLSeq.from(e,n,s)};n.seq=o},8531(e,n,s){"use strict";var i=s(7180);const r={identify:e=>"string"==typeof e,default:!0,tag:"tag:yaml.org,2002:str",resolve:e=>e,stringify:(e,n,s,r)=>(n=Object.assign({actualString:!0},n),i.stringifyString(e,n,s,r))};n.string=r},5132(e,n,s){"use strict";var i=s(9714);const r={identify:e=>"boolean"==typeof e,default:!0,tag:"tag:yaml.org,2002:bool",test:/^(?:[Tt]rue|TRUE|[Ff]alse|FALSE)$/,resolve:e=>new i.Scalar("t"===e[0]||"T"===e[0]),stringify({source:e,value:n},s){if(e&&r.test.test(e)){if(n===("t"===e[0]||"T"===e[0]))return e}return n?s.options.trueStr:s.options.falseStr}};n.boolTag=r},988(e,n,s){"use strict";var i=s(9714),r=s(3144);const o={identify:e=>"number"==typeof e,default:!0,tag:"tag:yaml.org,2002:float",test:/^(?:[-+]?\.(?:inf|Inf|INF)|\.nan|\.NaN|\.NAN)$/,resolve:e=>"nan"===e.slice(-3).toLowerCase()?NaN:"-"===e[0]?Number.NEGATIVE_INFINITY:Number.POSITIVE_INFINITY,stringify:r.stringifyNumber},a={identify:e=>"number"==typeof e,default:!0,tag:"tag:yaml.org,2002:float",format:"EXP",test:/^[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)[eE][-+]?[0-9]+$/,resolve:e=>parseFloat(e),stringify(e){const n=Number(e.value);return isFinite(n)?n.toExponential():r.stringifyNumber(e)}},l={identify:e=>"number"==typeof e,default:!0,tag:"tag:yaml.org,2002:float",test:/^[-+]?(?:\.[0-9]+|[0-9]+\.[0-9]*)$/,resolve(e){const n=new i.Scalar(parseFloat(e)),s=e.indexOf(".");return-1!==s&&"0"===e[e.length-1]&&(n.minFractionDigits=e.length-s-1),n},stringify:r.stringifyNumber};n.float=l,n.floatExp=a,n.floatNaN=o},2891(e,n,s){"use strict";var i=s(3144);const intIdentify=e=>"bigint"==typeof e||Number.isInteger(e),intResolve=(e,n,s,{intAsBigInt:i})=>i?BigInt(e):parseInt(e.substring(n),s);function intStringify(e,n,s){const{value:r}=e;return intIdentify(r)&&r>=0?s+r.toString(n):i.stringifyNumber(e)}const r={identify:e=>intIdentify(e)&&e>=0,default:!0,tag:"tag:yaml.org,2002:int",format:"OCT",test:/^0o[0-7]+$/,resolve:(e,n,s)=>intResolve(e,2,8,s),stringify:e=>intStringify(e,8,"0o")},o={identify:intIdentify,default:!0,tag:"tag:yaml.org,2002:int",test:/^[-+]?[0-9]+$/,resolve:(e,n,s)=>intResolve(e,0,10,s),stringify:i.stringifyNumber},a={identify:e=>intIdentify(e)&&e>=0,default:!0,tag:"tag:yaml.org,2002:int",format:"HEX",test:/^0x[0-9a-fA-F]+$/,resolve:(e,n,s)=>intResolve(e,2,16,s),stringify:e=>intStringify(e,16,"0x")};n.int=o,n.intHex=a,n.intOct=r},8523(e,n,s){"use strict";var i=s(3334),r=s(6055),o=s(1919),a=s(8531),l=s(5132),c=s(988),u=s(2891);const p=[i.map,o.seq,a.string,r.nullTag,l.boolTag,u.intOct,u.int,u.intHex,c.floatNaN,c.floatExp,c.float];n.schema=p},4988(e,n,s){"use strict";var i=s(9714),r=s(3334),o=s(1919);function intIdentify(e){return"bigint"==typeof e||Number.isInteger(e)}const stringifyJSON=({value:e})=>JSON.stringify(e),a=[{identify:e=>"string"==typeof e,default:!0,tag:"tag:yaml.org,2002:str",resolve:e=>e,stringify:stringifyJSON},{identify:e=>null==e,createNode:()=>new i.Scalar(null),default:!0,tag:"tag:yaml.org,2002:null",test:/^null$/,resolve:()=>null,stringify:stringifyJSON},{identify:e=>"boolean"==typeof e,default:!0,tag:"tag:yaml.org,2002:bool",test:/^true$|^false$/,resolve:e=>"true"===e,stringify:stringifyJSON},{identify:intIdentify,default:!0,tag:"tag:yaml.org,2002:int",test:/^-?(?:0|[1-9][0-9]*)$/,resolve:(e,n,{intAsBigInt:s})=>s?BigInt(e):parseInt(e,10),stringify:({value:e})=>intIdentify(e)?e.toString():JSON.stringify(e)},{identify:e=>"number"==typeof e,default:!0,tag:"tag:yaml.org,2002:float",test:/^-?(?:0|[1-9][0-9]*)(?:\.[0-9]*)?(?:[eE][-+]?[0-9]+)?$/,resolve:e=>parseFloat(e),stringify:stringifyJSON}],l={default:!0,tag:"",test:/^/,resolve:(e,n)=>(n(`Unresolved plain scalar ${JSON.stringify(e)}`),e)},c=[r.map,o.seq].concat(a,l);n.schema=c},975(e,n,s){"use strict";var i=s(3334),r=s(6055),o=s(1919),a=s(8531),l=s(5132),c=s(988),u=s(2891),p=s(8523),d=s(4988),f=s(8080),h=s(9637),m=s(692),g=s(8416),y=s(5822),b=s(2557),v=s(5437);const S=new Map([["core",p.schema],["failsafe",[i.map,o.seq,a.string]],["json",d.schema],["yaml11",y.schema],["yaml-1.1",y.schema]]),x={binary:f.binary,bool:l.boolTag,float:c.float,floatExp:c.floatExp,floatNaN:c.floatNaN,floatTime:v.floatTime,int:u.int,intHex:u.intHex,intOct:u.intOct,intTime:v.intTime,map:i.map,merge:h.merge,null:r.nullTag,omap:m.omap,pairs:g.pairs,seq:o.seq,set:b.set,timestamp:v.timestamp},w={"tag:yaml.org,2002:binary":f.binary,"tag:yaml.org,2002:merge":h.merge,"tag:yaml.org,2002:omap":m.omap,"tag:yaml.org,2002:pairs":g.pairs,"tag:yaml.org,2002:set":b.set,"tag:yaml.org,2002:timestamp":v.timestamp};n.coreKnownTags=w,n.getTags=function getTags(e,n,s){const i=S.get(n);if(i&&!e)return s&&!i.includes(h.merge)?i.concat(h.merge):i.slice();let r=i;if(!r){if(!Array.isArray(e)){const e=Array.from(S.keys()).filter(e=>"yaml11"!==e).map(e=>JSON.stringify(e)).join(", ");throw new Error(`Unknown schema "${n}"; use one of ${e} or define customTags array`)}r=[]}if(Array.isArray(e))for(const n of e)r=r.concat(n);else"function"==typeof e&&(r=e(r.slice()));return s&&(r=r.concat(h.merge)),r.reduce((e,n)=>{const s="string"==typeof n?x[n]:n;if(!s){const e=JSON.stringify(n),s=Object.keys(x).map(e=>JSON.stringify(e)).join(", ");throw new Error(`Unknown custom tag ${e}; use one of ${s}`)}return e.includes(s)||e.push(s),e},[])}},8080(e,n,s){"use strict";var i=s(181),r=s(9714),o=s(7180);const a={identify:e=>e instanceof Uint8Array,default:!1,tag:"tag:yaml.org,2002:binary",resolve(e,n){if("function"==typeof i.Buffer)return i.Buffer.from(e,"base64");if("function"==typeof atob){const n=atob(e.replace(/[\n\r]/g,"")),s=new Uint8Array(n.length);for(let e=0;e<n.length;++e)s[e]=n.charCodeAt(e);return s}return n("This environment does not support reading binary tags; either Buffer or atob is required"),e},stringify({comment:e,type:n,value:s},a,l,c){if(!s)return"";const u=s;let p;if("function"==typeof i.Buffer)p=u instanceof i.Buffer?u.toString("base64"):i.Buffer.from(u.buffer).toString("base64");else{if("function"!=typeof btoa)throw new Error("This environment does not support writing binary tags; either Buffer or btoa is required");{let e="";for(let n=0;n<u.length;++n)e+=String.fromCharCode(u[n]);p=btoa(e)}}if(n??(n=r.Scalar.BLOCK_LITERAL),n!==r.Scalar.QUOTE_DOUBLE){const e=Math.max(a.options.lineWidth-a.indent.length,a.options.minContentWidth),s=Math.ceil(p.length/e),i=new Array(s);for(let n=0,r=0;n<s;++n,r+=e)i[n]=p.substr(r,e);p=i.join(n===r.Scalar.BLOCK_LITERAL?"\n":" ")}return o.stringifyString({comment:e,type:n,value:p},a,l,c)}};n.binary=a},7969(e,n,s){"use strict";var i=s(9714);function boolStringify({value:e,source:n},s){return n&&(e?r:o).test.test(n)?n:e?s.options.trueStr:s.options.falseStr}const r={identify:e=>!0===e,default:!0,tag:"tag:yaml.org,2002:bool",test:/^(?:Y|y|[Yy]es|YES|[Tt]rue|TRUE|[Oo]n|ON)$/,resolve:()=>new i.Scalar(!0),stringify:boolStringify},o={identify:e=>!1===e,default:!0,tag:"tag:yaml.org,2002:bool",test:/^(?:N|n|[Nn]o|NO|[Ff]alse|FALSE|[Oo]ff|OFF)$/,resolve:()=>new i.Scalar(!1),stringify:boolStringify};n.falseTag=o,n.trueTag=r},7191(e,n,s){"use strict";var i=s(9714),r=s(3144);const o={identify:e=>"number"==typeof e,default:!0,tag:"tag:yaml.org,2002:float",test:/^(?:[-+]?\.(?:inf|Inf|INF)|\.nan|\.NaN|\.NAN)$/,resolve:e=>"nan"===e.slice(-3).toLowerCase()?NaN:"-"===e[0]?Number.NEGATIVE_INFINITY:Number.POSITIVE_INFINITY,stringify:r.stringifyNumber},a={identify:e=>"number"==typeof e,default:!0,tag:"tag:yaml.org,2002:float",format:"EXP",test:/^[-+]?(?:[0-9][0-9_]*)?(?:\.[0-9_]*)?[eE][-+]?[0-9]+$/,resolve:e=>parseFloat(e.replace(/_/g,"")),stringify(e){const n=Number(e.value);return isFinite(n)?n.toExponential():r.stringifyNumber(e)}},l={identify:e=>"number"==typeof e,default:!0,tag:"tag:yaml.org,2002:float",test:/^[-+]?(?:[0-9][0-9_]*)?\.[0-9_]*$/,resolve(e){const n=new i.Scalar(parseFloat(e.replace(/_/g,""))),s=e.indexOf(".");if(-1!==s){const i=e.substring(s+1).replace(/_/g,"");"0"===i[i.length-1]&&(n.minFractionDigits=i.length)}return n},stringify:r.stringifyNumber};n.float=l,n.floatExp=a,n.floatNaN=o},6936(e,n,s){"use strict";var i=s(3144);const intIdentify=e=>"bigint"==typeof e||Number.isInteger(e);function intResolve(e,n,s,{intAsBigInt:i}){const r=e[0];if("-"!==r&&"+"!==r||(n+=1),e=e.substring(n).replace(/_/g,""),i){switch(s){case 2:e=`0b${e}`;break;case 8:e=`0o${e}`;break;case 16:e=`0x${e}`}const n=BigInt(e);return"-"===r?BigInt(-1)*n:n}const o=parseInt(e,s);return"-"===r?-1*o:o}function intStringify(e,n,s){const{value:r}=e;if(intIdentify(r)){const e=r.toString(n);return r<0?"-"+s+e.substr(1):s+e}return i.stringifyNumber(e)}const r={identify:intIdentify,default:!0,tag:"tag:yaml.org,2002:int",format:"BIN",test:/^[-+]?0b[0-1_]+$/,resolve:(e,n,s)=>intResolve(e,2,2,s),stringify:e=>intStringify(e,2,"0b")},o={identify:intIdentify,default:!0,tag:"tag:yaml.org,2002:int",format:"OCT",test:/^[-+]?0[0-7_]+$/,resolve:(e,n,s)=>intResolve(e,1,8,s),stringify:e=>intStringify(e,8,"0")},a={identify:intIdentify,default:!0,tag:"tag:yaml.org,2002:int",test:/^[-+]?[0-9][0-9_]*$/,resolve:(e,n,s)=>intResolve(e,0,10,s),stringify:i.stringifyNumber},l={identify:intIdentify,default:!0,tag:"tag:yaml.org,2002:int",format:"HEX",test:/^[-+]?0x[0-9a-fA-F_]+$/,resolve:(e,n,s)=>intResolve(e,2,16,s),stringify:e=>intStringify(e,16,"0x")};n.int=a,n.intBin=r,n.intHex=l,n.intOct=o},9637(e,n,s){"use strict";var i=s(484),r=s(9714);const o="<<",a={identify:e=>e===o||"symbol"==typeof e&&e.description===o,default:"key",tag:"tag:yaml.org,2002:merge",test:/^<<$/,resolve:()=>Object.assign(new r.Scalar(Symbol(o)),{addToJSMap:addMergeToJSMap}),stringify:()=>o};function addMergeToJSMap(e,n,s){if(s=e&&i.isAlias(s)?s.resolve(e.doc):s,i.isSeq(s))for(const i of s.items)mergeValue(e,n,i);else if(Array.isArray(s))for(const i of s)mergeValue(e,n,i);else mergeValue(e,n,s)}function mergeValue(e,n,s){const r=e&&i.isAlias(s)?s.resolve(e.doc):s;if(!i.isMap(r))throw new Error("Merge sources must be maps or map aliases");const o=r.toJSON(null,e,Map);for(const[e,s]of o)n instanceof Map?n.has(e)||n.set(e,s):n instanceof Set?n.add(e):Object.prototype.hasOwnProperty.call(n,e)||Object.defineProperty(n,e,{value:s,writable:!0,enumerable:!0,configurable:!0});return n}n.addMergeToJSMap=addMergeToJSMap,n.isMergeKey=(e,n)=>(a.identify(n)||i.isScalar(n)&&(!n.type||n.type===r.Scalar.PLAIN)&&a.identify(n.value))&&e?.doc.schema.tags.some(e=>e.tag===a.tag&&e.default),n.merge=a},692(e,n,s){"use strict";var i=s(484),r=s(3732),o=s(1755),a=s(6010),l=s(8416);class YAMLOMap extends a.YAMLSeq{constructor(){super(),this.add=o.YAMLMap.prototype.add.bind(this),this.delete=o.YAMLMap.prototype.delete.bind(this),this.get=o.YAMLMap.prototype.get.bind(this),this.has=o.YAMLMap.prototype.has.bind(this),this.set=o.YAMLMap.prototype.set.bind(this),this.tag=YAMLOMap.tag}toJSON(e,n){if(!n)return super.toJSON(e);const s=new Map;n?.onCreate&&n.onCreate(s);for(const e of this.items){let o,a;if(i.isPair(e)?(o=r.toJS(e.key,"",n),a=r.toJS(e.value,o,n)):o=r.toJS(e,"",n),s.has(o))throw new Error("Ordered maps must not include duplicate keys");s.set(o,a)}return s}static from(e,n,s){const i=l.createPairs(e,n,s),r=new this;return r.items=i.items,r}}YAMLOMap.tag="tag:yaml.org,2002:omap";const c={collection:"seq",identify:e=>e instanceof Map,nodeClass:YAMLOMap,default:!1,tag:"tag:yaml.org,2002:omap",resolve(e,n){const s=l.resolvePairs(e,n),r=[];for(const{key:e}of s.items)i.isScalar(e)&&(r.includes(e.value)?n(`Ordered maps must not include duplicate keys: ${e.value}`):r.push(e.value));return Object.assign(new YAMLOMap,s)},createNode:(e,n,s)=>YAMLOMap.from(e,n,s)};n.YAMLOMap=YAMLOMap,n.omap=c},8416(e,n,s){"use strict";var i=s(484),r=s(7902),o=s(9714),a=s(6010);function resolvePairs(e,n){if(i.isSeq(e))for(let s=0;s<e.items.length;++s){let a=e.items[s];if(!i.isPair(a)){if(i.isMap(a)){a.items.length>1&&n("Each pair must have its own sequence indicator");const e=a.items[0]||new r.Pair(new o.Scalar(null));if(a.commentBefore&&(e.key.commentBefore=e.key.commentBefore?`${a.commentBefore}\n${e.key.commentBefore}`:a.commentBefore),a.comment){const n=e.value??e.key;n.comment=n.comment?`${a.comment}\n${n.comment}`:a.comment}a=e}e.items[s]=i.isPair(a)?a:new r.Pair(a)}}else n("Expected a sequence for this tag");return e}function createPairs(e,n,s){const{replacer:i}=s,o=new a.YAMLSeq(e);o.tag="tag:yaml.org,2002:pairs";let l=0;if(n&&Symbol.iterator in Object(n))for(let e of n){let a,c;if("function"==typeof i&&(e=i.call(n,String(l++),e)),Array.isArray(e)){if(2!==e.length)throw new TypeError(`Expected [key, value] tuple: ${e}`);a=e[0],c=e[1]}else if(e&&e instanceof Object){const n=Object.keys(e);if(1!==n.length)throw new TypeError(`Expected tuple with one key, not ${n.length} keys`);a=n[0],c=e[a]}else a=e;o.items.push(r.createPair(a,c,s))}return o}const l={collection:"seq",default:!1,tag:"tag:yaml.org,2002:pairs",resolve:resolvePairs,createNode:createPairs};n.createPairs=createPairs,n.pairs=l,n.resolvePairs=resolvePairs},5822(e,n,s){"use strict";var i=s(3334),r=s(6055),o=s(1919),a=s(8531),l=s(8080),c=s(7969),u=s(7191),p=s(6936),d=s(9637),f=s(692),h=s(8416),m=s(2557),g=s(5437);const y=[i.map,o.seq,a.string,r.nullTag,c.trueTag,c.falseTag,p.intBin,p.intOct,p.int,p.intHex,u.floatNaN,u.floatExp,u.float,l.binary,d.merge,f.omap,h.pairs,m.set,g.intTime,g.floatTime,g.timestamp];n.schema=y},2557(e,n,s){"use strict";var i=s(484),r=s(7902),o=s(1755);class YAMLSet extends o.YAMLMap{constructor(e){super(e),this.tag=YAMLSet.tag}add(e){let n;n=i.isPair(e)?e:e&&"object"==typeof e&&"key"in e&&"value"in e&&null===e.value?new r.Pair(e.key,null):new r.Pair(e,null);o.findPair(this.items,n.key)||this.items.push(n)}get(e,n){const s=o.findPair(this.items,e);return!n&&i.isPair(s)?i.isScalar(s.key)?s.key.value:s.key:s}set(e,n){if("boolean"!=typeof n)throw new Error("Expected boolean value for set(key, value) in a YAML set, not "+typeof n);const s=o.findPair(this.items,e);s&&!n?this.items.splice(this.items.indexOf(s),1):!s&&n&&this.items.push(new r.Pair(e))}toJSON(e,n){return super.toJSON(e,n,Set)}toString(e,n,s){if(!e)return JSON.stringify(this);if(this.hasAllNullValues(!0))return super.toString(Object.assign({},e,{allNullValues:!0}),n,s);throw new Error("Set items must all have null values")}static from(e,n,s){const{replacer:i}=s,o=new this(e);if(n&&Symbol.iterator in Object(n))for(let e of n)"function"==typeof i&&(e=i.call(n,e,e)),o.items.push(r.createPair(e,null,s));return o}}YAMLSet.tag="tag:yaml.org,2002:set";const a={collection:"map",identify:e=>e instanceof Set,nodeClass:YAMLSet,default:!1,tag:"tag:yaml.org,2002:set",createNode:(e,n,s)=>YAMLSet.from(e,n,s),resolve(e,n){if(i.isMap(e)){if(e.hasAllNullValues(!0))return Object.assign(new YAMLSet,e);n("Set items must all have null values")}else n("Expected a mapping for this tag");return e}};n.YAMLSet=YAMLSet,n.set=a},5437(e,n,s){"use strict";var i=s(3144);function parseSexagesimal(e,n){const s=e[0],i="-"===s||"+"===s?e.substring(1):e,num=e=>n?BigInt(e):Number(e),r=i.replace(/_/g,"").split(":").reduce((e,n)=>e*num(60)+num(n),num(0));return"-"===s?num(-1)*r:r}function stringifySexagesimal(e){let{value:n}=e,num=e=>e;if("bigint"==typeof n)num=e=>BigInt(e);else if(isNaN(n)||!isFinite(n))return i.stringifyNumber(e);let s="";n<0&&(s="-",n*=num(-1));const r=num(60),o=[n%r];return n<60?o.unshift(0):(n=(n-o[0])/r,o.unshift(n%r),n>=60&&(n=(n-o[0])/r,o.unshift(n))),s+o.map(e=>String(e).padStart(2,"0")).join(":").replace(/000000\d*$/,"")}const r={identify:e=>"bigint"==typeof e||Number.isInteger(e),default:!0,tag:"tag:yaml.org,2002:int",format:"TIME",test:/^[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+$/,resolve:(e,n,{intAsBigInt:s})=>parseSexagesimal(e,s),stringify:stringifySexagesimal},o={identify:e=>"number"==typeof e,default:!0,tag:"tag:yaml.org,2002:float",format:"TIME",test:/^[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\.[0-9_]*$/,resolve:e=>parseSexagesimal(e,!1),stringify:stringifySexagesimal},a={identify:e=>e instanceof Date,default:!0,tag:"tag:yaml.org,2002:timestamp",test:RegExp("^([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})(?:(?:t|T|[ \\t]+)([0-9]{1,2}):([0-9]{1,2}):([0-9]{1,2}(\\.[0-9]+)?)(?:[ \\t]*(Z|[-+][012]?[0-9](?::[0-9]{2})?))?)?$"),resolve(e){const n=e.match(a.test);if(!n)throw new Error("!!timestamp expects a date, starting with yyyy-mm-dd");const[,s,i,r,o,l,c]=n.map(Number),u=n[7]?Number((n[7]+"00").substr(1,3)):0;let p=Date.UTC(s,i-1,r,o||0,l||0,c||0,u);const d=n[8];if(d&&"Z"!==d){let e=parseSexagesimal(d,!1);Math.abs(e)<30&&(e*=60),p-=6e4*e}return new Date(p)},stringify:({value:e})=>e?.toISOString().replace(/(T00:00:00)?\.000Z$/,"")??""};n.floatTime=o,n.intTime=r,n.timestamp=a},6170(e,n){"use strict";const s="block",i="quoted";function consumeMoreIndentedLines(e,n,s){let i=n,r=n+1,o=e[r];for(;" "===o||"\t"===o;)if(n<r+s)o=e[++n];else{do{o=e[++n]}while(o&&"\n"!==o);i=n,r=n+1,o=e[r]}return i}n.FOLD_BLOCK=s,n.FOLD_FLOW="flow",n.FOLD_QUOTED=i,n.foldFlowLines=function foldFlowLines(e,n,r="flow",{indentAtStart:o,lineWidth:a=80,minContentWidth:l=20,onFold:c,onOverflow:u}={}){if(!a||a<0)return e;a<l&&(l=0);const p=Math.max(1+l,1+a-n.length);if(e.length<=p)return e;const d=[],f={};let h,m,g=a-n.length;"number"==typeof o&&(o>a-Math.max(2,l)?d.push(0):g=a-o);let y=!1,b=-1,v=-1,S=-1;r===s&&(b=consumeMoreIndentedLines(e,b,n.length),-1!==b&&(g=b+p));for(let o;o=e[b+=1];){if(r===i&&"\\"===o){switch(v=b,e[b+1]){case"x":b+=3;break;case"u":b+=5;break;case"U":b+=9;break;default:b+=1}S=b}if("\n"===o)r===s&&(b=consumeMoreIndentedLines(e,b,n.length)),g=b+n.length+p,h=void 0;else{if(" "===o&&m&&" "!==m&&"\n"!==m&&"\t"!==m){const n=e[b+1];n&&" "!==n&&"\n"!==n&&"\t"!==n&&(h=b)}if(b>=g)if(h)d.push(h),g=h+p,h=void 0;else if(r===i){for(;" "===m||"\t"===m;)m=o,o=e[b+=1],y=!0;const n=b>S+1?b-2:v-1;if(f[n])return e;d.push(n),f[n]=!0,g=n+p,h=void 0}else y=!0}m=o}if(y&&u&&u(),0===d.length)return e;c&&c();let x=e.slice(0,d[0]);for(let s=0;s<d.length;++s){const o=d[s],a=d[s+1]||e.length;0===o?x=`\n${n}${e.slice(0,a)}`:(r===i&&f[o]&&(x+=`${e[o]}\\`),x+=`\n${n}${e.slice(o+1,a)}`)}return x}},3793(e,n,s){"use strict";var i=s(6261),r=s(484),o=s(248),a=s(7180);n.createStringifyContext=function createStringifyContext(e,n){const s=Object.assign({blockQuote:!0,commentString:o.stringifyComment,defaultKeyType:null,defaultStringType:"PLAIN",directives:null,doubleQuotedAsJSON:!1,doubleQuotedMinMultiLineLength:40,falseStr:"false",flowCollectionPadding:!0,indentSeq:!0,lineWidth:80,minContentWidth:20,nullStr:"null",simpleKeys:!1,singleQuote:null,trailingComma:!1,trueStr:"true",verifyAliasOrder:!0},e.schema.toStringOptions,n);let i;switch(s.collectionStyle){case"block":i=!1;break;case"flow":i=!0;break;default:i=null}return{anchors:new Set,doc:e,flowCollectionPadding:s.flowCollectionPadding?" ":"",indent:"",indentStep:"number"==typeof s.indent?" ".repeat(s.indent):"  ",inFlow:i,options:s}},n.stringify=function stringify(e,n,s,o){if(r.isPair(e))return e.toString(n,s,o);if(r.isAlias(e)){if(n.doc.directives)return e.toString(n);if(n.resolvedAliases?.has(e))throw new TypeError("Cannot stringify circular structure without alias nodes");n.resolvedAliases?n.resolvedAliases.add(e):n.resolvedAliases=new Set([e]),e=e.resolve(n.doc)}let l;const c=r.isNode(e)?e:n.doc.createNode(e,{onTagObj:e=>l=e});l??(l=function getTagObject(e,n){if(n.tag){const s=e.filter(e=>e.tag===n.tag);if(s.length>0)return s.find(e=>e.format===n.format)??s[0]}let s,i;if(r.isScalar(n)){i=n.value;let r=e.filter(e=>e.identify?.(i));if(r.length>1){const e=r.filter(e=>e.test);e.length>0&&(r=e)}s=r.find(e=>e.format===n.format)??r.find(e=>!e.format)}else i=n,s=e.find(e=>e.nodeClass&&i instanceof e.nodeClass);if(!s)throw new Error(`Tag not resolved for ${i?.constructor?.name??(null===i?"null":typeof i)} value`);return s}(n.doc.schema.tags,c));const u=function stringifyProps(e,n,{anchors:s,doc:o}){if(!o.directives)return"";const a=[],l=(r.isScalar(e)||r.isCollection(e))&&e.anchor;l&&i.anchorIsValid(l)&&(s.add(l),a.push(`&${l}`));const c=e.tag??(n.default?null:n.tag);return c&&a.push(o.directives.tagString(c)),a.join(" ")}(c,l,n);u.length>0&&(n.indentAtStart=(n.indentAtStart??0)+u.length+1);const p="function"==typeof l.stringify?l.stringify(c,n,s,o):r.isScalar(c)?a.stringifyString(c,n,s,o):c.toString(n,s,o);return u?r.isScalar(c)||"{"===p[0]||"["===p[0]?`${u} ${p}`:`${u}\n${n.indent}${p}`:p}},81(e,n,s){"use strict";var i=s(484),r=s(3793),o=s(248);function stringifyBlockCollection({comment:e,items:n},s,{blockItemPrefix:a,flowChars:l,itemIndent:c,onChompKeep:u,onComment:p}){const{indent:d,options:{commentString:f}}=s,h=Object.assign({},s,{indent:c,type:null});let m=!1;const g=[];for(let e=0;e<n.length;++e){const l=n[e];let u=null;if(i.isNode(l))!m&&l.spaceBefore&&g.push(""),addCommentBefore(s,g,l.commentBefore,m),l.comment&&(u=l.comment);else if(i.isPair(l)){const e=i.isNode(l.key)?l.key:null;e&&(!m&&e.spaceBefore&&g.push(""),addCommentBefore(s,g,e.commentBefore,m))}m=!1;let p=r.stringify(l,h,()=>u=null,()=>m=!0);u&&(p+=o.lineComment(p,c,f(u))),m&&u&&(m=!1),g.push(a+p)}let y;if(0===g.length)y=l.start+l.end;else{y=g[0];for(let e=1;e<g.length;++e){const n=g[e];y+=n?`\n${d}${n}`:"\n"}}return e?(y+="\n"+o.indentComment(f(e),d),p&&p()):m&&u&&u(),y}function stringifyFlowCollection({items:e},n,{flowChars:s,itemIndent:a}){const{indent:l,indentStep:c,flowCollectionPadding:u,options:{commentString:p}}=n;a+=c;const d=Object.assign({},n,{indent:a,inFlow:!0,type:null});let f=!1,h=0;const m=[];for(let s=0;s<e.length;++s){const l=e[s];let c=null;if(i.isNode(l))l.spaceBefore&&m.push(""),addCommentBefore(n,m,l.commentBefore,!1),l.comment&&(c=l.comment);else if(i.isPair(l)){const e=i.isNode(l.key)?l.key:null;e&&(e.spaceBefore&&m.push(""),addCommentBefore(n,m,e.commentBefore,!1),e.comment&&(f=!0));const s=i.isNode(l.value)?l.value:null;s?(s.comment&&(c=s.comment),s.commentBefore&&(f=!0)):null==l.value&&e?.comment&&(c=e.comment)}c&&(f=!0);let u=r.stringify(l,d,()=>c=null);f||(f=m.length>h||u.includes("\n")),s<e.length-1?u+=",":n.options.trailingComma&&(n.options.lineWidth>0&&(f||(f=m.reduce((e,n)=>e+n.length+2,2)+(u.length+2)>n.options.lineWidth)),f&&(u+=",")),c&&(u+=o.lineComment(u,a,p(c))),m.push(u),h=m.length}const{start:g,end:y}=s;if(0===m.length)return g+y;if(!f){const e=m.reduce((e,n)=>e+n.length+2,2);f=n.options.lineWidth>0&&e>n.options.lineWidth}if(f){let e=g;for(const n of m)e+=n?`\n${c}${l}${n}`:"\n";return`${e}\n${l}${y}`}return`${g}${u}${m.join(" ")}${u}${y}`}function addCommentBefore({indent:e,options:{commentString:n}},s,i,r){if(i&&r&&(i=i.replace(/^\n+/,"")),i){const r=o.indentComment(n(i),e);s.push(r.trimStart())}}n.stringifyCollection=function stringifyCollection(e,n,s){return(n.inFlow??e.flow?stringifyFlowCollection:stringifyBlockCollection)(e,n,s)}},248(e,n){"use strict";function indentComment(e,n){return/^\n+$/.test(e)?e.substring(1):n?e.replace(/^(?! *$)/gm,n):e}n.indentComment=indentComment,n.lineComment=(e,n,s)=>e.endsWith("\n")?indentComment(s,n):s.includes("\n")?"\n"+indentComment(s,n):(e.endsWith(" ")?"":" ")+s,n.stringifyComment=e=>e.replace(/^(?!$)(?: $)?/gm,"#")},1768(e,n,s){"use strict";var i=s(484),r=s(3793),o=s(248);n.stringifyDocument=function stringifyDocument(e,n){const s=[];let a=!0===n.directives;if(!1!==n.directives&&e.directives){const n=e.directives.toString(e);n?(s.push(n),a=!0):e.directives.docStart&&(a=!0)}a&&s.push("---");const l=r.createStringifyContext(e,n),{commentString:c}=l.options;if(e.commentBefore){1!==s.length&&s.unshift("");const n=c(e.commentBefore);s.unshift(o.indentComment(n,""))}let u=!1,p=null;if(e.contents){if(i.isNode(e.contents)){if(e.contents.spaceBefore&&a&&s.push(""),e.contents.commentBefore){const n=c(e.contents.commentBefore);s.push(o.indentComment(n,""))}l.forceBlockIndent=!!e.comment,p=e.contents.comment}const n=p?void 0:()=>u=!0;let d=r.stringify(e.contents,l,()=>p=null,n);p&&(d+=o.lineComment(d,"",c(p))),"|"!==d[0]&&">"!==d[0]||"---"!==s[s.length-1]?s.push(d):s[s.length-1]=`--- ${d}`}else s.push(r.stringify(e.contents,l));if(e.directives?.docEnd)if(e.comment){const n=c(e.comment);n.includes("\n")?(s.push("..."),s.push(o.indentComment(n,""))):s.push(`... ${n}`)}else s.push("...");else{let n=e.comment;n&&u&&(n=n.replace(/^\n+/,"")),n&&(u&&!p||""===s[s.length-1]||s.push(""),s.push(o.indentComment(c(n),"")))}return s.join("\n")+"\n"}},3144(e,n){"use strict";n.stringifyNumber=function stringifyNumber({format:e,minFractionDigits:n,tag:s,value:i}){if("bigint"==typeof i)return String(i);const r="number"==typeof i?i:Number(i);if(!isFinite(r))return isNaN(r)?".nan":r<0?"-.inf":".inf";let o=Object.is(i,-0)?"-0":JSON.stringify(i);if(!e&&n&&(!s||"tag:yaml.org,2002:float"===s)&&/^\d/.test(o)){let e=o.indexOf(".");e<0&&(e=o.length,o+=".");let s=n-(o.length-e-1);for(;s-- >0;)o+="0"}return o}},8017(e,n,s){"use strict";var i=s(484),r=s(9714),o=s(3793),a=s(248);n.stringifyPair=function stringifyPair({key:e,value:n},s,l,c){const{allNullValues:u,doc:p,indent:d,indentStep:f,options:{commentString:h,indentSeq:m,simpleKeys:g}}=s;let y=i.isNode(e)&&e.comment||null;if(g){if(y)throw new Error("With simple keys, key nodes cannot have comments");if(i.isCollection(e)||!i.isNode(e)&&"object"==typeof e){throw new Error("With simple keys, collection cannot be used as a key value")}}let b=!g&&(!e||y&&null==n&&!s.inFlow||i.isCollection(e)||(i.isScalar(e)?e.type===r.Scalar.BLOCK_FOLDED||e.type===r.Scalar.BLOCK_LITERAL:"object"==typeof e));s=Object.assign({},s,{allNullValues:!1,implicitKey:!b&&(g||!u),indent:d+f});let v,S,x,w=!1,k=!1,E=o.stringify(e,s,()=>w=!0,()=>k=!0);if(!b&&!s.inFlow&&E.length>1024){if(g)throw new Error("With simple keys, single line scalar must not span more than 1024 characters");b=!0}if(s.inFlow){if(u||null==n)return w&&l&&l(),""===E?"?":b?`? ${E}`:E}else if(u&&!g||null==n&&b)return E=`? ${E}`,y&&!w?E+=a.lineComment(E,s.indent,h(y)):k&&c&&c(),E;w&&(y=null),b?(y&&(E+=a.lineComment(E,s.indent,h(y))),E=`? ${E}\n${d}:`):(E=`${E}:`,y&&(E+=a.lineComment(E,s.indent,h(y)))),i.isNode(n)?(v=!!n.spaceBefore,S=n.commentBefore,x=n.comment):(v=!1,S=null,x=null,n&&"object"==typeof n&&(n=p.createNode(n))),s.implicitKey=!1,b||y||!i.isScalar(n)||(s.indentAtStart=E.length+1),k=!1,m||!(f.length>=2)||s.inFlow||b||!i.isSeq(n)||n.flow||n.tag||n.anchor||(s.indent=s.indent.substring(2));let A=!1;const C=o.stringify(n,s,()=>A=!0,()=>k=!0);let O=" ";if(y||v||S){if(O=v?"\n":"",S){const e=h(S);O+=`\n${a.indentComment(e,s.indent)}`}""!==C||s.inFlow?O+=`\n${s.indent}`:"\n"===O&&x&&(O="\n\n")}else if(!b&&i.isCollection(n)){const e=C[0],i=C.indexOf("\n"),r=-1!==i,o=s.inFlow??n.flow??0===n.items.length;if(r||!o){let n=!1;if(r&&("&"===e||"!"===e)){let s=C.indexOf(" ");"&"===e&&-1!==s&&s<i&&"!"===C[s+1]&&(s=C.indexOf(" ",s+1)),(-1===s||i<s)&&(n=!0)}n||(O=`\n${s.indent}`)}}else""!==C&&"\n"!==C[0]||(O="");return E+=O+C,s.inFlow?A&&l&&l():x&&!A?E+=a.lineComment(E,s.indent,h(x)):k&&c&&c(),E}},7180(e,n,s){"use strict";var i=s(9714),r=s(6170);const getFoldOptions=(e,n)=>({indentAtStart:n?e.indent.length:e.indentAtStart,lineWidth:e.options.lineWidth,minContentWidth:e.options.minContentWidth}),containsDocumentMarker=e=>/^(%|---|\.\.\.)/m.test(e);function doubleQuotedString(e,n){const s=JSON.stringify(e);if(n.options.doubleQuotedAsJSON)return s;const{implicitKey:i}=n,o=n.options.doubleQuotedMinMultiLineLength,a=n.indent||(containsDocumentMarker(e)?"  ":"");let l="",c=0;for(let e=0,n=s[e];n;n=s[++e])if(" "===n&&"\\"===s[e+1]&&"n"===s[e+2]&&(l+=s.slice(c,e)+"\\ ",e+=1,c=e,n="\\"),"\\"===n)switch(s[e+1]){case"u":{l+=s.slice(c,e);const n=s.substr(e+2,4);switch(n){case"0000":l+="\\0";break;case"0007":l+="\\a";break;case"000b":l+="\\v";break;case"001b":l+="\\e";break;case"0085":l+="\\N";break;case"00a0":l+="\\_";break;case"2028":l+="\\L";break;case"2029":l+="\\P";break;default:"00"===n.substr(0,2)?l+="\\x"+n.substr(2):l+=s.substr(e,6)}e+=5,c=e+1}break;case"n":if(i||'"'===s[e+2]||s.length<o)e+=1;else{for(l+=s.slice(c,e)+"\n\n";"\\"===s[e+2]&&"n"===s[e+3]&&'"'!==s[e+4];)l+="\n",e+=2;l+=a," "===s[e+2]&&(l+="\\"),e+=1,c=e+1}break;default:e+=1}return l=c?l+s.slice(c):s,i?l:r.foldFlowLines(l,a,r.FOLD_QUOTED,getFoldOptions(n,!1))}function singleQuotedString(e,n){if(!1===n.options.singleQuote||n.implicitKey&&e.includes("\n")||/[ \t]\n|\n[ \t]/.test(e))return doubleQuotedString(e,n);const s=n.indent||(containsDocumentMarker(e)?"  ":""),i="'"+e.replace(/'/g,"''").replace(/\n+/g,`$&\n${s}`)+"'";return n.implicitKey?i:r.foldFlowLines(i,s,r.FOLD_FLOW,getFoldOptions(n,!1))}function quotedString(e,n){const{singleQuote:s}=n.options;let i;if(!1===s)i=doubleQuotedString;else{const n=e.includes('"'),r=e.includes("'");i=n&&!r?singleQuotedString:r&&!n?doubleQuotedString:s?singleQuotedString:doubleQuotedString}return i(e,n)}let o;try{o=new RegExp("(^|(?<!\n))\n+(?!\n|$)","g")}catch{o=/\n+(?!\n|$)/g}function blockString({comment:e,type:n,value:s},a,l,c){const{blockQuote:u,commentString:p,lineWidth:d}=a.options;if(!u||/\n[\t ]+$/.test(s))return quotedString(s,a);const f=a.indent||(a.forceBlockIndent||containsDocumentMarker(s)?"  ":""),h="literal"===u||"folded"!==u&&n!==i.Scalar.BLOCK_FOLDED&&(n===i.Scalar.BLOCK_LITERAL||!function lineLengthOverLimit(e,n,s){if(!n||n<0)return!1;const i=n-s,r=e.length;if(r<=i)return!1;for(let n=0,s=0;n<r;++n)if("\n"===e[n]){if(n-s>i)return!0;if(s=n+1,r-s<=i)return!1}return!0}(s,d,f.length));if(!s)return h?"|\n":">\n";let m,g;for(g=s.length;g>0;--g){const e=s[g-1];if("\n"!==e&&"\t"!==e&&" "!==e)break}let y=s.substring(g);const b=y.indexOf("\n");-1===b?m="-":s===y||b!==y.length-1?(m="+",c&&c()):m="",y&&(s=s.slice(0,-y.length),"\n"===y[y.length-1]&&(y=y.slice(0,-1)),y=y.replace(o,`$&${f}`));let v,S=!1,x=-1;for(v=0;v<s.length;++v){const e=s[v];if(" "===e)S=!0;else{if("\n"!==e)break;x=v}}let w=s.substring(0,x<v?x+1:v);w&&(s=s.substring(w.length),w=w.replace(/\n+/g,`$&${f}`));let k=(S?f?"2":"1":"")+m;if(e&&(k+=" "+p(e.replace(/ ?[\r\n]+/g," ")),l&&l()),!h){const e=s.replace(/\n+/g,"\n$&").replace(/(?:^|\n)([\t ].*)(?:([\n\t ]*)\n(?![\n\t ]))?/g,"$1$2").replace(/\n+/g,`$&${f}`);let o=!1;const l=getFoldOptions(a,!0);"folded"!==u&&n!==i.Scalar.BLOCK_FOLDED&&(l.onOverflow=()=>{o=!0});const c=r.foldFlowLines(`${w}${e}${y}`,f,r.FOLD_BLOCK,l);if(!o)return`>${k}\n${f}${c}`}return`|${k}\n${f}${w}${s=s.replace(/\n+/g,`$&${f}`)}${y}`}n.stringifyString=function stringifyString(e,n,s,o){const{implicitKey:a,inFlow:l}=n,c="string"==typeof e.value?e:Object.assign({},e,{value:String(e.value)});let{type:u}=e;u!==i.Scalar.QUOTE_DOUBLE&&/[\x00-\x08\x0b-\x1f\x7f-\x9f\u{D800}-\u{DFFF}]/u.test(c.value)&&(u=i.Scalar.QUOTE_DOUBLE);const _stringify=e=>{switch(e){case i.Scalar.BLOCK_FOLDED:case i.Scalar.BLOCK_LITERAL:return a||l?quotedString(c.value,n):blockString(c,n,s,o);case i.Scalar.QUOTE_DOUBLE:return doubleQuotedString(c.value,n);case i.Scalar.QUOTE_SINGLE:return singleQuotedString(c.value,n);case i.Scalar.PLAIN:return function plainString(e,n,s,o){const{type:a,value:l}=e,{actualString:c,implicitKey:u,indent:p,indentStep:d,inFlow:f}=n;if(u&&l.includes("\n")||f&&/[[\]{},]/.test(l))return quotedString(l,n);if(/^[\n\t ,[\]{}#&*!|>'"%@`]|^[?-]$|^[?-][ \t]|[\n:][ \t]|[ \t]\n|[\n\t ]#|[\n\t :]$/.test(l))return u||f||!l.includes("\n")?quotedString(l,n):blockString(e,n,s,o);if(!u&&!f&&a!==i.Scalar.PLAIN&&l.includes("\n"))return blockString(e,n,s,o);if(containsDocumentMarker(l)){if(""===p)return n.forceBlockIndent=!0,blockString(e,n,s,o);if(u&&p===d)return quotedString(l,n)}const h=l.replace(/\n+/g,`$&\n${p}`);if(c){const test=e=>e.default&&"tag:yaml.org,2002:str"!==e.tag&&e.test?.test(h),{compat:e,tags:s}=n.doc.schema;if(s.some(test)||e?.some(test))return quotedString(l,n)}return u?h:r.foldFlowLines(h,p,r.FOLD_FLOW,getFoldOptions(n,!1))}(c,n,s,o);default:return null}};let p=_stringify(u);if(null===p){const{defaultKeyType:e,defaultStringType:s}=n.options,i=a&&e||s;if(p=_stringify(i),null===p)throw new Error(`Unsupported default string type ${i}`)}return p}},9125(e,n,s){"use strict";var i=s(484);const r=Symbol("break visit"),o=Symbol("skip children"),a=Symbol("remove node");function visit(e,n){const s=initVisitor(n);if(i.isDocument(e)){visit_(null,e.contents,s,Object.freeze([e]))===a&&(e.contents=null)}else visit_(null,e,s,Object.freeze([]))}function visit_(e,n,s,o){const l=callVisitor(e,n,s,o);if(i.isNode(l)||i.isPair(l))return replaceNode(e,o,l),visit_(e,l,s,o);if("symbol"!=typeof l)if(i.isCollection(n)){o=Object.freeze(o.concat(n));for(let e=0;e<n.items.length;++e){const i=visit_(e,n.items[e],s,o);if("number"==typeof i)e=i-1;else{if(i===r)return r;i===a&&(n.items.splice(e,1),e-=1)}}}else if(i.isPair(n)){o=Object.freeze(o.concat(n));const e=visit_("key",n.key,s,o);if(e===r)return r;e===a&&(n.key=null);const i=visit_("value",n.value,s,o);if(i===r)return r;i===a&&(n.value=null)}return l}async function visitAsync(e,n){const s=initVisitor(n);if(i.isDocument(e)){await visitAsync_(null,e.contents,s,Object.freeze([e]))===a&&(e.contents=null)}else await visitAsync_(null,e,s,Object.freeze([]))}async function visitAsync_(e,n,s,o){const l=await callVisitor(e,n,s,o);if(i.isNode(l)||i.isPair(l))return replaceNode(e,o,l),visitAsync_(e,l,s,o);if("symbol"!=typeof l)if(i.isCollection(n)){o=Object.freeze(o.concat(n));for(let e=0;e<n.items.length;++e){const i=await visitAsync_(e,n.items[e],s,o);if("number"==typeof i)e=i-1;else{if(i===r)return r;i===a&&(n.items.splice(e,1),e-=1)}}}else if(i.isPair(n)){o=Object.freeze(o.concat(n));const e=await visitAsync_("key",n.key,s,o);if(e===r)return r;e===a&&(n.key=null);const i=await visitAsync_("value",n.value,s,o);if(i===r)return r;i===a&&(n.value=null)}return l}function initVisitor(e){return"object"==typeof e&&(e.Collection||e.Node||e.Value)?Object.assign({Alias:e.Node,Map:e.Node,Scalar:e.Node,Seq:e.Node},e.Value&&{Map:e.Value,Scalar:e.Value,Seq:e.Value},e.Collection&&{Map:e.Collection,Seq:e.Collection},e):e}function callVisitor(e,n,s,r){return"function"==typeof s?s(e,n,r):i.isMap(n)?s.Map?.(e,n,r):i.isSeq(n)?s.Seq?.(e,n,r):i.isPair(n)?s.Pair?.(e,n,r):i.isScalar(n)?s.Scalar?.(e,n,r):i.isAlias(n)?s.Alias?.(e,n,r):void 0}function replaceNode(e,n,s){const r=n[n.length-1];if(i.isCollection(r))r.items[e]=s;else if(i.isPair(r))"key"===e?r.key=s:r.value=s;else{if(!i.isDocument(r)){const e=i.isAlias(r)?"alias":"scalar";throw new Error(`Cannot replace node with ${e} parent`)}r.contents=s}}visit.BREAK=r,visit.SKIP=o,visit.REMOVE=a,visitAsync.BREAK=r,visitAsync.SKIP=o,visitAsync.REMOVE=a,n.visit=visit,n.visitAsync=visitAsync},4339(e,n,s){e=s.nmd(e);const i=s(9896),r=s(857),o=s(6928),{execSync:a,spawnSync:l}=s(5317),c=s(1198),u=s(132),p=s(948),{analyzeTemplateHints:d,findFirstKeyOccurrence:f}=s(652),h="6d15af64-176c-496d-b583-fd2ae21d4df4@1",m=Object.freeze({script:"CmdLine@2",bash:"Bash@3",pwsh:"PowerShell@2",powershell:"PowerShell@2",checkout:h});class AzurePipelineParser{constructor(e={}){this.expressionCache=new Map,this.globQuotePattern=/[\*\?\[\]]|\/[\*\?\[]|[*/]\/|\/[*/]/,this.skipSyntax=e.skipSyntax||!1}expandPipelineFromFile(e,n={}){const s=i.readFileSync(e,"utf8"),r={...n,fileName:e,baseDir:o.dirname(e),templateStack:[e]};return this.expandPipelineFromString(s,r)}expandPipelineFromString(e,n={}){const{yaml:s}=this.expandPipeline(e,n);return s}expandPipeline(e,n={}){const s=void 0!==n.skipSyntax?n.skipSyntax:this.skipSyntax,i=n.timing||!1,t=e=>i&&console.time("[aps] "+e),te=e=>i&&console.timeEnd("[aps] "+e),r=i?Date.now():0;i&&console.log("[aps] start: "+new Date(r).toISOString()),t("1. parseYamlDocument");const{yamlDoc:o,jsonDoc:a}=this.parseYamlDocument(e,void 0,s);te("1. parseYamlDocument"),t("2. buildExecutionContext + captureQuoteStyles");const l=this.buildExecutionContext(a,n);l.errors=[],l.sourceLines=e.split("\n"),l.sourceText=e;const{quoteStyles:u,save:p}=this.captureQuoteStyles(o.contents,[]);l.quoteResult={quoteStyles:u,save:p},l.quoteResult.stringsWithExpressions=new Set,l.quoteResult.fullParameterExpressions=new Set,l.azureCompatible=n.azureCompatible||!1,l.templateQuoteStyles=new Map,l.timing=i;const d=new Set,f=o.contents;if(f?.items){const e=f.items.find(e=>"variables"===e.key?.value);if(e?.value?.items)for(const n of e.value.items)if(n.items){const e=n.items.find(e=>"name"===e.key?.value),s=n.items.find(e=>"value"===e.key?.value),i=s?.value?.type;!e?.value?.value||"BLOCK_LITERAL"!==i&&"BLOCK_FOLDED"!==i||d.add(e.value.value)}}l.sourceBlockVarNames=d,te("2. buildExecutionContext + captureQuoteStyles"),t("3. expandNode (template expansion)");const h=this.expandNode(a,l);if(te("3. expandNode (template expansion)"),l.errors.length>0){const e=[],n=new Set;for(const s of l.errors){const i=s.message.split("\n  Template call stack:")[0].replace(/\d+/g,"#");n.has(i)||(e.push(s.message),n.add(i))}const s=e.join("\n\n");throw new Error(s)}t("4. convertVariablesToArrayFormat"),this.convertVariablesToArrayFormat(h,l),te("4. convertVariablesToArrayFormat"),t("5. YAML.parseDocument + restoreQuoteStyles");const m=c.parseDocument(c.stringify(h));this.restoreQuoteStyles(m.contents,[],l),te("5. YAML.parseDocument + restoreQuoteStyles"),console.log(`Azure Compatibility mode: ${l.azureCompatible}`),t("6. applyBlockScalarStyles"),this.applyBlockScalarStyles(m.contents,l),te("6. applyBlockScalarStyles"),t("7. finalYamlDoc.toString + post-processing");let g=m.toString({lineWidth:0,indent:2,defaultStringType:"PLAIN",defaultKeyType:"PLAIN",simpleKeys:!1,aliasDuplicateObjects:!1});if(g=g.replace(/^(\s*(?:-\s+)?[^":\n]+:\s*)["'](\d+(?:\.\d+)?)["']/gm,(e,n,s)=>n.includes('"')?e:n+s),g=g.replace(/(['\"]?)__(TRUE|FALSE)__\1/g,(e,n,s)=>{const i="TRUE"===s?"True":"False";return n?`${n}${i}${n}`:i}),l.azureCompatible?(g=g.replace(/^(\S.+)\n\n(\s*-\s)/gm,"$1\n$2"),g=g.replace(/^(\S.+)\n\n(\s*\w+:)/gm,"$1\n$2"),g.endsWith("\n\n\n")||(g=g.replace(/\n*$/,"\n\n\n"))):g=g.replace(/\n*$/,"\n"),l.azureCompatible&&(g=this.addHeredocListSpacing(g)),te("7. finalYamlDoc.toString + post-processing"),i){const e=Date.now();console.log("[aps] end:   "+new Date(e).toISOString()),console.log("[aps] total: "+(e-r)+"ms")}return{document:h,yaml:g,context:l}}convertVariablesToArrayFormat(e,n){if(!e.variables||"object"!=typeof e.variables||Array.isArray(e.variables))return;const s=new Map,i=this.getQuoteStylesMap(n);Object.entries(e.variables).forEach(([e,n])=>{if("string"==typeof n){const r=this.getQuoteStyleUniqueKey(["variables",e],n),o=i.get(r);o&&s.set(e,{value:n,quoteStyle:o})}}),e.variables=Object.entries(e.variables).map(([e,n])=>({name:e,value:n})),0!==s.size&&e.variables.forEach((e,n)=>{const r=s.get(e.name);if(r&&r.value===e.value){const s=this.getQuoteStyleUniqueKey(["variables",n,"value"],e.value);i.set(s,r.quoteStyle)}})}extractQuoteStyles(e,n,s){const i=this.buildQuoteHandler(this.setQuoteStyle.bind(this),{});this.traverseQuoteStyleNodes(e,n,i,s)}captureQuoteStyles(e,n){const s=new Map;try{this.extractQuoteStyles(e,n,s)}catch(e){}return{quoteStyles:s,save:(e,n)=>{const i=new Map(s);if(n&&n.templateQuoteStyles)for(const[,e]of n.templateQuoteStyles.entries())for(const[n,s]of e.entries())i.has(n)||i.set(n,s);return e.__quoteStyles=i,i}}}validateYamlSyntaxHints(e,n){const s=d(e);if(s.length){const e=`\n  ${s.join("\n  ")}`;throw new Error(n?`Template '${n}' potential issues:${e}`:`Potential template issues:${e}`)}}parseYamlDocument(e,n,s=!1,i=void 0,r=null){if(!s)try{this.validateYamlSyntaxHints(e,n)}catch(e){const n=e&&e.message?e.message:String(e);throw new Error(this.formatErrorWithStack(n,i,r))}try{let s;try{if(s=c.parseAllDocuments(e,{uniqueKeys:!0}).find(e=>null!==e.contents&&void 0!==e.contents),!s)throw new Error("Empty YAML document")}catch(n){s=c.parseDocument(e)}if(s.errors&&s.errors.length>0){const i=e.split("\n"),r=s.errors.filter(e=>{if(!e.message)return!1;const n=e.message.toLowerCase();return n.includes("block sequence")&&n.includes("implicit map key")});if(r.length>0){const e=r.map(e=>e.message.split("\n")[0]);throw new Error(e.join("\n"))}const o=s.errors.filter(e=>{if(!e.message)return!1;if(!e.message.toLowerCase().includes("map keys must be unique"))return!1;const n=e.message.match(/at line (\d+)/);if(!n)return!0;return!(i[parseInt(n[1],10)-1]||"").includes("${{")});if(o.length>0){const s=o.map(s=>{const r=s.message.match(/at line (\d+), column (\d+)/);if(!r)return s.message.split("\n")[0];const o=parseInt(r[1],10)-1,a=parseInt(r[2],10)-1,l=(i[o]||"").slice(a).match(/^([^:\s]+)/),c=l?l[1]:"key",u=n?`${n}:`:"",p=f(e,o,a),d=`${u}${o+1}:${a+1}`;if(p){return`Duplicate key '${c}' detected\n  First defined at: ${`${u}${p.line+1}:${p.column+1}`}\n  Duplicate found at: ${d}`}return`Duplicate key '${c}' at ${d}`});throw new Error(s.join("\n\n"))}}c.visit(s,{Scalar(e,n){"number"==typeof n.value&&n.source&&n.source.includes(".")&&(n.value=n.source)}});const i=s.toJSON()||{};return{yamlDoc:s,jsonDoc:i}}catch(e){const s=n?`Failed to parse template '${n}': ${e.message}`:`Failed to parse YAML: ${e.message}`;throw new Error(this.formatErrorWithStack(s,i,r))}}restoreQuoteStyles(e,n,s={}){const i=this.getQuoteStylesMap(s),r=this.buildQuoteHandler(this.getQuoteStyle.bind(this),{post:(e,n,i)=>{if(!this.isStringNodeValue(n))return;const r=n.value,o=this.hasFullParameterExpression(r,i,s);""===r?n.type="QUOTE_DOUBLE"!==e||o?"QUOTE_SINGLE":"QUOTE_DOUBLE":o?this.hasColon(r)||this.isConditionExpression(r)||(this.isGlobPattern(r)||this.isKeyValueLike(r))&&(n.type="QUOTE_SINGLE"):this.hadMixedExpression(r,i,s)||this.hasRuntimeVariable(r)?r!==r.trimEnd()?n.type="QUOTE_SINGLE":n.type="PLAIN":this.isKeyValueLike(r)?n.type="QUOTE_SINGLE":e&&(n.type=e)}});this.traverseQuoteStyleNodes(e,n,r,i)}getQuoteStyleUniqueKey(e,n){return`${e.filter(e=>!this.hasTemplateExpr(e)).join(".")}:${n}`}setQuoteStyle(e,n,s,i){const r=s.type;if("QUOTE_SINGLE"!==r&&"QUOTE_DOUBLE"!==r)return;if("string"!=typeof s.value)return;const o=this.getQuoteStyleUniqueKey(e,s.value);i.set(o,r)}getQuoteStyle(e,n,s,i){if(!i)return;const r=n&&n.value?n.value:void 0,o=this.isStringNodeValue(s)?s.value:void 0;if(void 0!==r&&void 0!==o){const n=this.getQuoteStyleUniqueKey(e,o);return i.get(n)}}traverseQuoteStyleNodes(e,n,s,i=new Map){if(e)if(e.items&&"YAMLMap"===e.constructor.name)for(const r of e.items){const e=r.key;if(e&&e.value){n.push(e.value);try{s(r,n,i)}catch(e){}r.value&&this.traverseQuoteStyleNodes(r.value,n,s,i),n.pop()}}else if(e.items&&"YAMLSeq"===e.constructor.name)for(let r=0;r<e.items.length;r+=1)n.push(r),this.traverseQuoteStyleNodes(e.items[r],n,s,i),n.pop()}buildQuoteHandler(e,n={}){const{post:s=null}=n;return(n,i,r)=>{const o=n.key,a=n.value;if(!this.isStringNodeValue(o)||!this.isStringNodeValue(a))return;const l=e(i,o,a,r);if("function"==typeof s)try{s(l,a,i)}catch(e){}}}applyBlockScalarStyles(e,n={},s=[]){if(e)if(e.items&&"YAMLMap"===e.constructor.name)for(const i of e.items){if(!i.key?.value||!i.value)continue;const{value:r}=i,o=i.key.value,a=[...s,o];if(!this.isMultilineString(r.value)){this.applyBlockScalarStyles(r,n,a);continue}let l=r.value;const c=n.azureCompatible&&this.hasTrailingSpaces(l);if(c||"QUOTE_DOUBLE"===r.type){c&&(r.type="QUOTE_DOUBLE"),this.applyBlockScalarStyles(r,n,a);continue}const u=l.replace(/\s+$/,""),p=n.scriptsWithExpressions?.has(u);let d=!1;if(a.length>=2&&"variables"===a[0]&&"value"===a[a.length-1]){const s=e.items.find(e=>"name"===e.key?.value),i=s?.value?.value;i&&n.sourceBlockVarNames?.has(i)&&(d=!0)}d||(p&&n.azureCompatible?r.type="BLOCK_FOLDED":r.type="BLOCK_LITERAL"),r.value=this.normalizeTrailingNewlines(l,n.azureCompatible),this.applyBlockScalarStyles(r,n,a)}else e.items&&"YAMLSeq"===e.constructor.name&&e.items.forEach((e,i)=>this.applyBlockScalarStyles(e,n,[...s,i]))}getExpansionValuePath(e){if(!e?.expansionPath)return[];if(e.stepIndex>=0){const n=this.relativePathAfterKey(e.expansionPath,"steps");return["stages",e.stageIndex,"jobs",e.jobIndex,"steps",e.stepIndex,...n]}if(e.jobIndex>=0){const n=this.relativePathAfterKey(e.expansionPath,"jobs");return["stages",e.stageIndex,"jobs",e.jobIndex,...n]}if(e.stageIndex>=0){const n=this.relativePathAfterKey(e.expansionPath,"stages");return["stages",e.stageIndex,...n]}return[...e.expansionPath]}buildExecutionContext(e,n){const{parameters:s,parameterMap:i}=this.extractParameters(e),r=this.extractVariables(e),a=this.normalizeResourcesConfig(e&&"object"==typeof e?e.resources:void 0),l=n.parameters||{},c=n.variables||{},u=this.normalizeResourcesConfig(n.resources),p=n.locals||{},d=n.baseDir||(n.fileName?o.dirname(n.fileName):process.cwd()),f=void 0!==n.repoBaseDir?n.repoBaseDir:d,h=void 0!==n.rootRepoBaseDir?n.rootRepoBaseDir:f,m=this.mergeResourcesConfig(a,u),g=n.resourceLocations||{},y=void 0!==n.skipSyntax?n.skipSyntax:this.skipSyntax,b=n.fileName||n.rootTemplate||"pipeline",v=n.fileScopes||{};return v[b]||(v[b]={...r,...c}),{parameters:{...s,...l},parameterMap:{...i},variables:{...r,...c},inheritedVariables:{...c},globalVariables:{...r,...c},stageVariables:{},jobVariables:{},resources:m,locals:{...p},baseDir:d,repoBaseDir:f,rootRepoBaseDir:h,resourceLocations:g,templateStack:n.templateStack||[],rootTemplate:n.rootTemplate||n.fileName||(Array.isArray(n.templateStack)?n.templateStack[0]:void 0),expansionPath:[],scriptsWithExpressions:new Set,scriptsWithLastLineExpressions:new Set,stringsWithExpressions:new Set,stageIndex:-1,jobIndex:-1,stepIndex:-1,skipSyntax:y,currentFile:b,fileScopes:v}}normalizeResourcesConfig(e){if(!e||"object"!=typeof e)return{};const n=Object.keys(e).reduce((n,s)=>("repositories"===s||(n[s]=this.deepClone(e[s])),n),{});return void 0!==e.repositories&&(n.repositories=this.normalizeRepositoryList(e.repositories)),n}mergeResourcesConfig(e={},n={}){const s={};return Object.entries(e||{}).forEach(([e,n])=>{"repositories"!==e&&(s[e]=this.deepClone(n))}),s.repositories=this.mergeRepositoryConfigs(e?.repositories,n?.repositories),Object.entries(n||{}).forEach(([e,n])=>{"repositories"!==e&&(s[e]=this.deepClone(n))}),s}normalizeRepositoryList(e){if(!e)return[];const n=[];if(Array.isArray(e))for(const s of e)s&&"object"==typeof s&&n.push(this.deepClone(s));else if("object"==typeof e)for(const[s,i]of Object.entries(e)){if(!i||"object"!=typeof i)continue;const e=this.deepClone(i);!e.repository&&s&&(e.repository=s),n.push(e)}return this.attachRepositoryAliases(n)}mergeRepositoryConfigs(e,n){const s=this.normalizeRepositoryList(e),i=this.normalizeRepositoryList(n);if(!i.length)return s;const r=[],o=new Map,addEntry=(e,n)=>{if(!e||"object"!=typeof e)return;const s=this.deepClone(e),i=s.__match&&"object"==typeof s.__match?s.__match:void 0;i&&delete s.__match;const a=this.getRepositoryAlias(s),l=a&&!this.isNumericString(a)?a:`__index_${r.length}`;s.repository||!a||this.isNumericString(a)||(s.repository=a);const c=o.get(l);"override"===n&&c&&i&&!this.repositoryMatchesCriteria(c,i)||("override"===n&&s.location&&c&&!c.location&&(c.location=s.location),c?o.set(l,{...c,...s}):(o.set(l,s),r.push(l)))};s.forEach(e=>addEntry(e,"base")),i.forEach(e=>addEntry(e,"override"));const a=r.map(e=>this.deepClone(o.get(e)));return this.attachRepositoryAliases(a)}attachRepositoryAliases(e){if(!Array.isArray(e))return e;const n=new Set;return e.forEach(s=>{const i=this.getRepositoryAlias(s);!i||this.isNumericString(i)||n.has(i)||(Object.defineProperty(e,i,{value:s,writable:!0,enumerable:!0,configurable:!0}),n.add(i))}),e}getRepositoryAlias(e){if(e&&"object"==typeof e)return"string"==typeof e.repository&&e.repository.length?e.repository:"string"==typeof e.alias&&e.alias.length?e.alias:"string"==typeof e.name&&e.name.length?e.name:void 0}repositoryMatchesCriteria(e,n={}){if(!e||"object"!=typeof e)return!1;for(const[s,i]of Object.entries(n))if(null!=i&&""!==i){if(!Object.prototype.hasOwnProperty.call(e,s))return!1;if(e[s]!==i)return!1}return!0}deepClone(e){return null==e||"object"!=typeof e?e:JSON.parse(JSON.stringify(e))}isNumericString(e){return"string"==typeof e&&/^\d+$/.test(e)}extractParameters(e){const n={parameters:{},parameterMap:{},parameterTypes:{}};if(!e||"object"!=typeof e)return n;const{parameters:s}=e;if(!s)return n;const coerceToParamType=(e,n)=>"boolean"!==n&&"boolean"==typeof e?String(e):e;if(Array.isArray(s)){for(const e of s)if(e&&"object"==typeof e&&e.name){const i=e.type?String(e.type).toLowerCase():"string";n.parameterTypes[e.name]=i;const r=e.default;n.parameters[e.name]=void 0!==r?coerceToParamType(r,i):null,n.parameterMap[`parameters.${e.name}`]=`parameters.${s.indexOf(e)}.default`}}else if("object"==typeof s)for(const[e,i]of Object.entries(s)){if(n.parameterTypes[e]="string",i&&"object"==typeof i){const s=i.default;n.parameters[e]=void 0!==s?coerceToParamType(s,"string"):null}else n.parameters[e]=coerceToParamType(i,"string");n.parameterMap[`parameters.${e}`]=`parameters.${e}`}return n}validateTemplateParameters(e,n,s,i){if(!e||"object"!=typeof e||!e.parameters)return;const r={missingRequired:[],invalidValues:[],typeErrors:[],unknownParameters:[]},checkParameter=(e,s)=>this.validateParameter(e,s,n,r);if(Array.isArray(e.parameters))for(const n of e.parameters)checkParameter(n);else if("object"==typeof e.parameters)for(const[n,s]of Object.entries(e.parameters))checkParameter(s,n);this.checkUnknownParameters(e.parameters,n,r),this.reportValidationErrors(r,s,i)}validateParameter(e,n,s,i){if(!e||"object"!=typeof e)return;const r=n||e.name;if(!r)return;const o=void 0!==e.default||void 0!==e.value||void 0!==e.values,a=s&&Object.prototype.hasOwnProperty.call(s,r),l=a?s[r]:void 0;o||a||i.missingRequired.push(r);const c="string"==typeof l&&/\$\([^)]+\)/.test(l);if(a&&void 0!==e.type&&void 0!==l&&!c){const n=this.validateParameterType(r,e.type,l);n&&i.typeErrors.push(n)}a&&e.values&&Array.isArray(e.values)&&(c||e.values.includes(l)||i.invalidValues.push({name:r,value:l,allowed:e.values}))}validateParameterType(e,n,s){const i=String(n).toLowerCase(),r=typeof s;switch(i){case"string":if(!["string","number","boolean"].includes(r))return{name:e,expected:"string",actual:r,value:s};break;case"number":if("number"!==r&&("string"!==r||isNaN(s)))return{name:e,expected:"number",actual:r,value:s};break;case"boolean":if("boolean"!==r){if("string"!==r)return{name:e,expected:"boolean",actual:r,value:s};{const n=s.toLowerCase();if(!["true","false","__true__","__false__"].includes(n))return{name:e,expected:"boolean",actual:r,value:s}}}break;case"object":if("dependsOn"===e){if("string"!==r&&("object"!==r||null===s))return{name:e,expected:"object",actual:r,value:s}}else if("object"!==r||null===s)return{name:e,expected:"object",actual:r,value:s};break;case"step":case"steplist":case"job":case"joblist":case"deployment":case"deploymentlist":case"stage":case"stagelist":if(!Array.isArray(s))return{name:e,expected:"array ("+i+")",actual:r,value:s}}return null}checkUnknownParameters(e,n,s){if(!n||"object"!=typeof n)return;const i=new Set;Array.isArray(e)?e.forEach(e=>e?.name&&i.add(e.name)):"object"==typeof e&&Object.keys(e).forEach(e=>i.add(e)),Object.keys(n).forEach(e=>{""===e||i.has(e)||s.unknownParameters.push(e)})}getTemplateCallStack(e,n){const s=Array.isArray(e?.templateStack)?[...e.templateStack]:[];if(e?.rootTemplate&&(0!==s.length&&s[0]===e.rootTemplate||s.unshift(e.rootTemplate)),0===s.length)return"";const i=[];i.push("Template call stack:");let r=null;if(s.length>1){const e=s[1].match(/:(\d+)(?=\s|$|\()/);e&&(r=e[1])}else n&&(r=n);const o=r?`${s[0]}:${r}`:s[0];i.push("  "+o);for(let e=1;e<s.length;e++){let r=s[e];if(e===s.length-1&&n)r=r.includes(":")?r.replace(/:(\d+)(?=\s|$|\()/,`:${n}`):r.replace(/(@[^:\s\(]+)(?=\s|$|\()/,`$1:${n}`).replace(/(\.ya?ml)(?=\s|$|\()/,`$1:${n}`);else if(e<s.length-1){const n=s[e+1].match(/:(\d+)(?=\s|$|\()/);if(n){const e=n[1];r=r.includes(":")?r.replace(/:(\d+)(?=\s|$|\()/,`:${e}`):r.replace(/(@[^:\s\(]+)(?=\s|$|\()/,`$1:${e}`).replace(/(\.ya?ml)(?=\s|$|\()/,`$1:${e}`)}}i.push("  "+"  ".repeat(e)+"└── "+r)}return"\n"+i.join("\n")}formatErrorWithStack(e,n,s=null){try{if(e.includes("Template call stack:"))return e;const i=this.getTemplateCallStack(n,s||void 0);return i?`${e}${i}`:e}catch(n){return e}}reportValidationErrors(e,n,s){const i=[],r=n||"template";if(e.missingRequired.length>0){const n=e.missingRequired.map(e=>`  * ${e}`).join("\n");i.push(`Missing required parameter(s) for template '${r}'\nFollowing parameters do not have default values and must be provided when calling the template.\n${n}`)}if(e.typeErrors.length>0){const n=e.typeErrors.map(e=>`Parameter '${e.name}' expects type '${e.expected}' but received '${e.actual}' (value: ${JSON.stringify(e.value)})`).join("\n  ");i.push(`Invalid parameter type(s) for template '${r}':\n  ${n}`)}if(e.invalidValues.length>0){const n=e.invalidValues.map(e=>`Parameter '${e.name}' has value '${e.value}' which is not in allowed values: [${e.allowed.join(", ")}]`).join("\n  ");i.push(`Invalid parameter value(s) for template '${r}':\n  ${n}`)}if(e.unknownParameters.length>0){const n=e.unknownParameters.map(e=>`* ${e}`).join("\n  ");i.push(`Unknown parameter(s) for template: '${r}'\nFollowing parameters are not defined in the template\n  ${n}`)}if(i.length>0){let n=i.join("\n\n"),r=null;if(s.sourceLines&&Array.isArray(s.sourceLines)){let n=null;if(e.typeErrors.length>0?n=e.typeErrors[0].name:e.missingRequired.length>0?n=e.missingRequired[0]:e.invalidValues.length>0&&(n=e.invalidValues[0].name),n)for(let e=0;e<s.sourceLines.length;e++){if(s.sourceLines[e].match(new RegExp(`^\\s*${n}\\s*:`))){r=e+1;break}}}const o=this.getTemplateCallStack(s,r);throw o&&(n+=o),new Error(n)}}extractVariables(e){const n={};if(!e||"object"!=typeof e)return n;const{variables:s}=e;if(!s)return n;if(Array.isArray(s))for(const e of s)e&&"object"==typeof e&&e.name&&(n[e.name]=e.value);else if("object"==typeof s)for(const[e,i]of Object.entries(s))n[e]=i&&"object"==typeof i&&"value"in i?i.value:i;return n}expandNode(e,n,s=null){let i;if(i=Array.isArray(e)?this.expandArray(e,n,s):e&&"object"==typeof e?this.expandObject(e,n,s):this.expandScalar(e,n),null===s&&this.isNonArrayObject(i)){i.__scriptsWithExpressions=n.scriptsWithExpressions||new Set,i.__scriptsWithLastLineExpressions=n.scriptsWithLastLineExpressions||new Set;const e=n.quoteResult;e&&"function"==typeof e.save&&e.save(i,n),n.scriptsWithExpressions=i.__scriptsWithExpressions||new Set,delete i.__scriptsWithExpressions,n.scriptsWithLastLineExpressions=i.__scriptsWithLastLineExpressions||new Set,delete i.__scriptsWithLastLineExpressions,i.__quoteStyles&&delete i.__quoteStyles}return i}expandArray(e,n,s=null){const i=[],r="variables"===s;for(let o=0;o<e.length;o+=1){const a=e[o];if(!a)continue;const l=this.isTemplateReference(a),c=this.isSingleKeyObject(a)&&(this.isConditionalDirective(Object.keys(a)[0])||this.isEachDirective(Object.keys(a)[0])),u=c||l?o:this.trackIndicesForItems(a,s,n,o);n.expansionPath&&!c&&n.expansionPath.push(u);try{if(l){this.expandTemplateReferenceToResult(a,n,i,s);continue}const c=this.handleSingleKeyObject(a,e,o,n,i,s);if(c.handled){o="number"==typeof c.nextIndex?c.nextIndex:o;continue}const u=this.createScopedContext(n,a,s),p=this.expandNode(a,u,s);if(void 0===p)continue;const d=Array.isArray(p)?p:[p];this.expandAndAppendArrayItems(d,n,i,r,s)}finally{n.expansionPath&&!c&&n.expansionPath.pop()}}if("steps"===s){const e=new Map;i.forEach((s,i)=>{s&&"object"==typeof s&&"string"==typeof s.name&&s.name&&(e.has(s.name)?n.errors.push({message:this.formatErrorWithStack("Duplicate step name '"+s.name+"' found in job. Step names must be unique within a job (first occurrence at step index "+(e.get(s.name)+1)+", duplicate at step index "+(i+1)+").",n)}):e.set(s.name,i))})}return i}expandTemplateReferenceToResult(e,n,s,i=""){const r=e.template,a=this.expandTemplateReference(e,n);if(Array.isArray(a)&&a.length){const e=s.length,l={steps:n.stepIndex,jobs:n.jobIndex,stages:n.stageIndex}[i],c=void 0!==l&&l>=0?Math.max(e,l+1):e;s.push(...a);for(let s=0;s<a.length;s++){const r=a[s];if(r&&"object"==typeof r&&!Array.isArray(r)){if("variables"===i&&r.name&&void 0!==r.value){const e="boolean"==typeof r.value?String(r.value):r.value;n.variables[r.name]=e,n.currentFile&&n.fileScopes&&(n.fileScopes[n.currentFile]||(n.fileScopes[n.currentFile]={}),n.fileScopes[n.currentFile][r.name]=e)}this.trackIndicesForItems(r,i,n,e+s)}}let u=[];if("jobs"===i?u=["stages",n.stageIndex]:"steps"===i?u=["stages",n.stageIndex,"jobs",n.jobIndex]:"variables"===i?n.jobIndex>=0?u=["stages",n.stageIndex,"jobs",n.jobIndex]:n.expansionPath&&n.expansionPath.length>=2?u=n.expansionPath.slice(0,-2):n.stageIndex>=0&&(u=["stages",n.stageIndex,"jobs",0]):n.expansionPath&&n.expansionPath.length>=2&&(u=n.expansionPath.slice(0,-2)),r&&n.templateQuoteStyles){const e=this.replaceExpressionsInString(r,n);for(const[s]of n.templateQuoteStyles.entries())(s.includes(e)||e.includes(o.basename(s)))&&this.remapTemplateQuoteStylesByValue(s,i,a,c,u,n)}}}remapTemplateQuoteStylesByValue(e,n,s,i,r,o){const a=this.getQuoteStylesMap(o),l=o.templateQuoteStyles.get(e);if(l&&0!==l.size)for(const[e,o]of l.entries()){const l=e.lastIndexOf(":");if(-1===l)continue;const c=e.substring(0,l),u=e.substring(l+1);if(c.startsWith("parameters."))continue;const p=c.split(".");let d=-1;for(let e=p.length-1;e>=0;e--)if(p[e]===n){d=e;break}if(-1===d)continue;const f=parseInt(p[d+1],10);if(isNaN(f))continue;const h=p.slice(d+2).join(".");let m=-1;if(f>=0&&f<s.length){const e=s[f];if(e&&"object"==typeof e){this.getNestedValue(e,h)===u&&(m=f)}}if(-1===m)for(let e=0;e<s.length;e++){const n=s[e];if(!n||"object"!=typeof n)continue;if(this.getNestedValue(n,h)===u){m=e;break}}if(-1===m&&h&&h.includes(".")){for(let e=0;e<s.length;e++){const l=this.findKeyValuePath(s[e],u);if(null!==l){const s=[...r,n,i+e,...l];a.set(`${s.join(".")}:${u}`,o);break}}continue}if(-1===m)continue;const g=i+m,y=[...r,n,g];h&&y.push(...h.split("."));const b=`${y.join(".")}:${u}`;a.set(b,o)}}getNestedValue(e,n){if(!n)return e;const s=n.split(".");let i=e;for(const e of s){if(null==i||"object"!=typeof i)return;i=i[e]}return i}findKeyValuePath(e,n,s=[]){if(!e||"object"!=typeof e)return null;if(Array.isArray(e))for(let i=0;i<e.length;i++){const r=this.findKeyValuePath(e[i],n,[...s,i]);if(null!==r)return r}else for(const i of Object.keys(e)){if("string"==typeof e[i]&&e[i]===n)return[...s,i];const r=this.findKeyValuePath(e[i],n,[...s,i]);if(null!==r)return r}return null}expandAndAppendArrayItems(e,n,s,i,r=""){const o=r||(i?"variables":"");for(const r of e)this.isTemplateReference(r)?this.expandTemplateReferenceToResult(r,n,s,o):(s.push(r),this.updateVariableContext(r,i,n))}updateVariableContext(e,n,s){if(!n||!e||"object"!=typeof e||Array.isArray(e))return;const i=e.name,r=e.value,o="boolean"==typeof r?String(r):r;i&&void 0!==o&&(s.variables[i]=o,s.currentFile&&s.fileScopes&&(s.fileScopes[s.currentFile]||(s.fileScopes[s.currentFile]={}),s.fileScopes[s.currentFile][i]=o),s.jobIndex>=0?s.jobVariables[i]=o:s.stageIndex>=0?s.stageVariables[i]=o:s.globalVariables[i]=o)}getQuoteStylesMap(e){return e.quoteResult?.quoteStyles||new Map}ensureContextSet(e,n){const s=e&&e[n];if(s instanceof Set)return s;const i=new Set;return e&&(e[n]=i),i}ensureStringsWithExpressions(e){return this.ensureContextSet(e.quoteResult,"stringsWithExpressions")}ensureFullParameterExpressions(e){return this.ensureContextSet(e.quoteResult,"fullParameterExpressions")}trackExpressionValue(e,n,s){const{hadMultilineExpr:i,lastLineHadExpression:r}=s;if(!i||"string"!=typeof e)return;const o=e.replace(/\s+$/,"");this.ensureContextSet(n,"scriptsWithExpressions").add(o),r&&this.ensureContextSet(n,"scriptsWithLastLineExpressions").add(o)}trackQuoteStylesForExpressions(e,n,s,i){const{isMixedExpression:r,isSingleLineFullExpression:o}=i;if(!s.expansionPath||"string"!=typeof e)return;const a=this.getQuoteStylesMap(s),l=this.getExpansionValuePath(s),c=this.getQuoteStyleUniqueKey(l,e);if(r&&!this.isMultilineString(e))return void(this.isKeyValueLike(e)||this.ensureStringsWithExpressions(s).add(c));let u=null;if(o){const i=this.getQuoteStyleUniqueKey(l,n),r=this.isConditionExpression(e);if(u=a.get(i),!u&&(""===e||this.isGlobPattern(e)&&!r)){const i=this.stripExpressionDelimiters(n);let o=null;if(i.includes("(")&&i.includes(")")?o=this.extractSourceParameter(i):this.isParameter(n)&&(o=i),o){let n=l;s.parameterMap[o]&&(n=s.parameterMap[o].split("."));const i=this.getQuoteStyleUniqueKey(n,e);this.hasColon(e)||(u=a.get(i))}u||!this.isGlobPattern(e)||r||(u="QUOTE_SINGLE")}if(u&&(this.hasColon(e)||a.set(c,this.isKeyValueLike(e)?"QUOTE_SINGLE":u),s.expansionPath.length>=3&&"variables"===s.expansionPath[2])){const n=s.expansionPath.filter((e,n)=>2!==n),i=this.getQuoteStyleUniqueKey(n,e);a.set(i,u)}if(this.ensureFullParameterExpressions(s).add(c),""===e){const n=this.getQuoteStyleUniqueKey(l,e);this.ensureStringsWithExpressions(s).add(n)}}}trackIndicesForItems(e,n,s,i=0){return Array.isArray(e)?i:"stages"===n&&e&&"object"==typeof e&&"stage"in e?(s.stageIndex+=1,s.jobIndex=-1,s.stepIndex=-1,s.stageIndex):"jobs"===n&&e&&"object"==typeof e&&"job"in e?(s.jobIndex+=1,s.stepIndex=-1,s.jobIndex):"steps"===n&&e&&"object"==typeof e?(s.stepIndex+=1,s.stepIndex):i}handleSingleKeyObject(e,n,s,i,r,o=null){if(!this.isSingleKeyObject(e))return{handled:!1};const a=Object.keys(e)[0];if(this.isEachDirective(a)){const n=this.applyEachDirective(a,e[a],i);return n&&Array.isArray(n.items)&&n.items.length&&(this.trackIndicesForItems(n.items,o,i),r.push(...n.items)),{handled:!0}}if(this.isConditionalDirective(a)){const e=this.expandConditionalBlock(n,s,i,o);return e&&Array.isArray(e.items)&&e.items.length&&(this.trackIndicesForItems(e.items,o,i),r.push(...e.items)),{handled:!0,nextIndex:e.nextIndex}}return{handled:!1}}expandObject(e,n,s=null){const i=Object.entries(e),r={};for(let e=0;e<i.length;e+=1){const[s,o]=i[e];if(this.isEachDirective(s)){const s=this.expandEachEntries(i,e,n);Object.assign(r,s.merged),e=s.nextIndex;continue}if(this.isConditionalDirective(s)){const s=this.expandConditionalEntries(i,e,n);Object.assign(r,s.merged),e=s.nextIndex;continue}if(this.isInsertDirective(s)){const e=this.expandNodePreservingTemplates(o,n);if(this.isNonArrayObject(e)){const s=Object.keys(e).filter(e=>Object.prototype.hasOwnProperty.call(r,e));if(s.length>0&&n&&n.errors)for(const e of s)n.errors.push({message:this.formatErrorWithStack("Duplicate key '"+e+"' introduced by ${{ insert }} expansion conflicts with an existing key.",n)});Object.assign(r,e)}continue}const a=this.replaceExpressionsInString(s,n);n.expansionPath&&n.expansionPath.push(a);try{const e={hadMultilineExpr:this.hasTemplateExpr(o)&&this.isMultilineString(o),stringHadExpressions:this.hasTemplateExpr(o),lastLineHadExpression:this.lastLineHasTemplateExpression(o)&&this.isMultilineString(o),isSingleLineFullExpression:this.isSingleLineFullExpression(o),isMixedExpression:!1};e.isMixedExpression=e.stringHadExpressions&&!e.isSingleLineFullExpression;const s=this.expandNode(o,n,a);if(void 0===s)continue;if(this.trackQuoteStylesForExpressions(s,o,n,e),this.trackExpressionValue(s,n,e),e.isSingleLineFullExpression&&this.isMultilineString(s)){const e=s.replace(/\s+$/,"");n.scriptsWithExpressions.add(e),n.scriptsWithLastLineExpressions.add(e)}r[a]=s}finally{n.expansionPath&&n.expansionPath.pop()}}const o=["bash","script","pwsh","powershell","checkout"].find(e=>Object.prototype.hasOwnProperty.call(r,e));if(o&&!r.task&&!r.inputs&&!r.targetType&&"inputs"!==s){const e=r[o];delete r[o];const n={task:m[o]};if("checkout"===o){const{condition:s,displayName:i,...o}=r;i&&(n.displayName=i);const a=void 0!==s?s:"none"!==e&&void 0;void 0!==a&&(n.condition=a),n.inputs=Object.assign({repository:e},o)}else{const{workingDirectory:s,...i}=r;let a;Object.assign(n,i),"script"!==o?(a={targetType:"inline",script:e},"pwsh"===o&&(a.pwsh=!0)):a={script:e},void 0!==s&&(a.workingDirectory=s),n.inputs=a}return n}return r.pool&&"string"==typeof r.pool&&(r.pool={name:r.pool}),r.dependsOn&&"string"==typeof r.dependsOn&&(r.dependsOn=[r.dependsOn]),r.task!==h||"none"!==r.inputs?.repository||r.condition||(r.condition=!1),r}expandScalar(e,n){if("string"!=typeof e)return e;const s=e.trim();if(this.isFullExpression(s)){const e=this.stripExpressionDelimiters(s),i=this.evaluateExpression(e,n);if(this.isTemplateReference(i)){const e=this.expandTemplateReference(i,n);return 1===e.length?e[0]:e}return"boolean"==typeof i?this.returnBoolean(i):i}return this.replaceExpressionsInString(e,n,{preserveEmptyLines:this.isMultilineString(e)})}expandConditionalBlock(e,n,s,i=null){let r=n,o=!1,a=[];for(;r<e.length;){const l=e[r];if(!this.isSingleKeyObject(l))break;const[c]=Object.keys(l),u=l[c];if(!this.isConditionalDirective(c))break;if(this.isIfDirective(c)&&r!==n)break;if(!o&&this.evaluateConditional(c,s)&&(a=this.flattenBranchValue(u,s,i),o=!0),r+=1,this.isElseDirective(c))break}return{items:a,nextIndex:r-1}}expandConditionalEntries(e,n,s){let i=n,r=!1,o={};for(;i<e.length;){const[n,a]=e[i];if(!this.isConditionalDirective(n))break;if(!r&&this.evaluateConditional(n,s)&&(o=this.expandConditionalMappingBranch(a,s),r=!0),i+=1,this.isElseDirective(n))break}return{merged:o,nextIndex:Math.max(n,i-1)}}expandConditionalMappingBranch(e,n){if(Array.isArray(e))return this.expandArray(e,n).reduce((e,n)=>this.isNonArrayObject(n)?{...e,...n}:e,{});if(e&&"object"==typeof e){return this.expandObject(e,n)}const s=this.expandScalar(e,n);return void 0===s?{}:{value:s}}expandEachEntries(e,n,s){let i=n;const r={};for(;i<e.length;){const[n,o]=e[i];if(!this.isEachDirective(n))break;const a=this.parseEachDirective(n);if(!a){i+=1;continue}const l=this.evaluateExpression(a.collection,s);this.normalizeCollection(l).forEach((e,n)=>{const i={[a.variable]:e,[`${a.variable}Index`]:n},l=this.createChildContext(s,i),c=this.expandConditionalMappingBranch(o,l);if(Object.prototype.hasOwnProperty.call(c,"--")){const s=this.resolveEachIterationKey(e,n,l,a.variable),i=c["--"];delete c["--"],null!=s&&(r[s]=i)}Object.assign(r,c)}),i+=1}return{merged:r,nextIndex:Math.max(n,i-1)}}resolveEachIterationKey(e,n,s,i){if(null==e)return String(n);const unwrap=e=>{if(null!=e)return"string"==typeof e||"number"==typeof e||"boolean"==typeof e?String(e):void 0},r=unwrap(e);if(void 0!==r)return r;if(e&&"object"==typeof e){const n=["key","name","matrixKey","label","id"];for(const s of n)if(Object.prototype.hasOwnProperty.call(e,s)){const n=unwrap(e[s]);if(void 0!==n)return n}if(Object.prototype.hasOwnProperty.call(e,"value")){const n=unwrap(e.value);if(void 0!==n)return n}}if("string"==typeof i&&i.length){const e=unwrap(this.evaluateExpression(i,s));if(void 0!==e)return e}return String(n)}flattenBranchValue(e,n,s=null){if(Array.isArray(e))return this.expandArray(e,n,s);if(e&&"object"==typeof e)return[this.expandObject(e,n,s)];const i=this.expandScalar(e,n);return void 0===i?[]:[i]}applyEachDirective(e,n,s,i=null){const r=this.parseEachDirective(e);if(!r)return{items:[]};const o=this.evaluateExpression(r.collection,s),a=this.normalizeCollection(o),l=[];return a.forEach((e,o)=>{const a={[r.variable]:e,[`${r.variable}Index`]:o},c=this.createChildContext(s,a),u=this.flattenBranchValue(n,c,i);l.push(...u)}),{items:l}}replaceExpressionsInString(e,n,s={}){if("string"!=typeof e)return e;const i=void 0!==s.preserveEmptyLines?s.preserveEmptyLines:this.isMultilineString(e)&&!0===n?.azureCompatible;let r=e.replace(/\$\{\{\s*(.+?)\s*\}\}/g,(e,s)=>{const i=this.evaluateExpression(s,n);if(null==i){if(s.trim().startsWith("parameters.")){return`$(${s.trim().substring(11)})`}return""}if("object"==typeof i)return JSON.stringify(i);if("string"==typeof i){const e=i.toLowerCase();if("__true__"===e)return"True";if("__false__"===e)return"False"}return"boolean"==typeof i?this.returnBoolean(i):String(i)});return i||(r=r.replace(/^[ \t]+$/gm,"")),n?.azureCompatible&&(r=this.addHeredocListSpacing(r)),r}addHeredocListSpacing(e){if(!e||"string"!=typeof e)return e;const n=e.split("\n"),s=[];let i=!1,r="";const isBullet=e=>/^\s*-\s*\[/.test(e.trim());for(let e=0;e<n.length;e+=1){const o=n[e];if(!i){const e=o.match(/<<\s*([A-Za-z0-9_]+)/);e&&(i=!0,r=e[1]),s.push(o);continue}const a=o.trim();if(r&&a===r){i=!1,r="",s.push(o);continue}s.push(o);const l=n[e+1];void 0!==l&&(isBullet(o)&&isBullet(l)&&l.trim().length>0&&s.push(""))}return s.join("\n")}evaluateExpression(e,n){if(null==e)return;const s=String(e).trim();if(0===s.length)return;const i=this.parseExpressionAst(s);if(i)return this.evaluateAst(i,n);const r=this.resolveContextValue(s,n);return void 0!==r?r:this.looksLikeContextPath(s)?void 0:s}evaluateFunction(e,n){const s=String(e||""),i=p[s];return i?i(n):void 0}parseExpressionAst(e){if(this.expressionCache.has(e))return this.expressionCache.get(e);try{const n=this.preprocessExpressionString(e),s=u(n);return this.expressionCache.set(e,s),s}catch(n){return this.expressionCache.set(e,null),null}}preprocessExpressionString(e){return"string"!=typeof e?e:e.replace(/(['"])((?:\\.|(?!\1).)*?)\1/g,(e,n,s)=>{let i="",r=0;for(;r<s.length;)if("\\"===s[r]){let e=0;for(;r<s.length&&"\\"===s[r];)e++,r++;i+="\\".repeat(e%2==1?e+1:e)}else i+=s[r++];return n+i+n})}evaluateAst(e,n){if(e)switch(e.type){case"Literal":return e.value;case"Identifier":return this.resolveIdentifier(e.name,n);case"ThisExpression":return n;case"ArrayExpression":return e.elements.map(e=>this.evaluateAst(e,n));case"ObjectExpression":{const s={};return e.properties.forEach(e=>{const i=e.key,r=this.evaluatePropertyKey(i,e.computed,n);void 0!==r&&(s[r]=this.evaluateAst(e.value,n))}),s}case"UnaryExpression":return this.evaluateUnary(e.operator,this.evaluateAst(e.argument,n));case"BinaryExpression":return this.evaluateBinary(e.operator,this.evaluateAst(e.left,n),this.evaluateAst(e.right,n));case"LogicalExpression":{const s=this.evaluateAst(e.left,n);return"&&"===e.operator?this.toBoolean(s)?this.evaluateAst(e.right,n):s:"||"===e.operator?this.toBoolean(s)?s:this.evaluateAst(e.right,n):"??"===e.operator?null!=s?s:this.evaluateAst(e.right,n):void 0}case"ConditionalExpression":return this.toBoolean(this.evaluateAst(e.test,n))?this.evaluateAst(e.consequent,n):this.evaluateAst(e.alternate,n);case"MemberExpression":{const s=this.evaluateAst(e.object,n);if(null==s)return;const i=this.evaluatePropertyKey(e.property,e.computed,n);if(null==i)return;if(s===n.parameters&&!Object.prototype.hasOwnProperty.call(s,i)){const e=String(i),s=[`Undefined template parameter '${e}'.`];let r=null;if(n.sourceLines){const s=[`parameters.${e}`,e];for(const e of s){for(let s=0;s<n.sourceLines.length;s++)if(n.sourceLines[s].includes(e)){r=s+1;break}if(r)break}}s.push("Tips:"),s.push(`- Ensure '${e}' is declared in the 'parameters' section`);const o=`- Check if the reference should use a loop object instead of parameters (For e.g. {{ each cfg in configurations }}:, properties inside cfg should be referred with cfg.${e})`;s.push(o);const a=s.join("\n"),l=this.formatErrorWithStack(a,n,r);if(n.errors)return void n.errors.push({message:l,line:r});throw new Error(l)}return s[i]}case"CallExpression":{const s=this.resolveCallable(e.callee,n),i=e.arguments.map(e=>this.evaluateAst(e,n));if(s?.builtinName){const e=this.evaluateFunction(s.builtinName,i);if(void 0!==e)return e}return s&&"function"==typeof s.fn?s.fn.apply(void 0!==s.thisArg?s.thisArg:n,i):void 0}default:return}}resolveIdentifier(e,n){if(!e)return;const s=e.toLowerCase();if("true"===s)return!0;if("false"===s)return!1;if("null"===s)return null;if("undefined"!==s){if(n.locals&&Object.prototype.hasOwnProperty.call(n.locals,e))return n.locals[e];if(Object.prototype.hasOwnProperty.call(n.parameters,e))return n.parameters[e];if(Object.prototype.hasOwnProperty.call(n.variables,e))return n.variables[e];switch(e){case"parameters":return n.parameters;case"variables":return n.variables;case"resources":return n.resources;case"locals":return n.locals;default:return}}}resolveCallable(e,n){if(!e)return{};if("Identifier"===e.type){const s=e.name,i=this.resolveIdentifier(s,n);return"function"==typeof i?{fn:i}:{builtinName:s}}if("MemberExpression"===e.type){const s=this.evaluateAst(e.object,n);if(null==s)return{};const i=this.evaluatePropertyKey(e.property,e.computed,n);if(null==i)return{};const r=s[i];return"function"==typeof r?{fn:r,thisArg:s}:{builtinName:i}}const s=this.evaluateAst(e,n);return"function"==typeof s?{fn:s}:{}}evaluateUnary(e,n){switch(e){case"!":return!this.toBoolean(n);case"+":return Number(n);case"-":return-Number(n);default:return}}evaluateBinary(e,n,s){switch(e){case"==":case"===":return 0===this.compareValues(n,s);case"!=":case"!==":return 0!==this.compareValues(n,s);case"<":return this.compareValues(n,s)<0;case"<=":return this.compareValues(n,s)<=0;case">":return this.compareValues(n,s)>0;case">=":return this.compareValues(n,s)>=0;case"+":return"string"==typeof n||"string"==typeof s?`${n??""}${s??""}`:(Number(n)||0)+(Number(s)||0);case"-":return(Number(n)||0)-(Number(s)||0);case"*":return(Number(n)||0)*(Number(s)||0);case"/":return(Number(n)||0)/(Number(s)||0);case"%":return(Number(n)||0)%(Number(s)||0);default:return}}contains(e,n){return"string"==typeof e?"string"==typeof n&&e.includes(n):Array.isArray(e)?e.some(e=>0===this.compareValues(e,n)):!(!e||"object"!=typeof e)&&Object.prototype.hasOwnProperty.call(e,n)}compareValues(e,n){const normalize=e=>{if(null==e)return"";if("string"==typeof e){const n=e.trim();if(0===n.length)return"";const s=n.toLowerCase();return"true"===s||"__true__"===s||"false"!==s&&"__false__"!==s&&(/^-?\d+(?:\.\d+)?$/.test(n)?Number(n):n)}return e},s=normalize(e),i=normalize(n);if(s===i)return 0;if(typeof s==typeof i&&("number"==typeof s||"boolean"==typeof s))return s>i?1:-1;const r=String(s),o=String(i);return r===o?0:r>o?1:-1}resolveContextValue(e,n){const s=this.sanitizePath(e).split(".").filter(e=>e.length>0);if(0===s.length)return;const[i,...r]=s;if("parameters"===i){const e=n.parameters||{};if(0===r.length)return e;const s=r[0];if(!Object.prototype.hasOwnProperty.call(e,s)){const e=[`Undefined template parameter '${s}'.`];let i=null;if(n.sourceLines){const e=[`parameters.${s}`,s];for(const s of e){for(let e=0;e<n.sourceLines.length;e++)if(n.sourceLines[e].includes(s)){i=e+1;break}if(i)break}}e.push("Tips:"),e.push(`- Ensure '${s}' is declared in the 'parameters' section`);const r=`- Check if the reference should use a loop object instead of parameters (For e.g. {{ each cfg in configurations }}:, properties inside cfg should be referred with cfg.${s})`;e.push(r);const o=e.join("\n"),a=this.formatErrorWithStack(o,n,i);if(n.errors)return void n.errors.push({message:a,line:i});throw new Error(a)}return this.walkSegments(e,r)}const walkIfHas=e=>e&&Object.prototype.hasOwnProperty.call(e,i)?this.walkSegments(e[i],r):void 0,o=walkIfHas(n.locals);if(void 0!==o)return o;const a={variables:n.variables,resources:n.resources};if(Object.prototype.hasOwnProperty.call(a,i))return this.walkSegments(a[i],r);const l=walkIfHas(n.parameters);if(void 0!==l)return l;const c=walkIfHas(n.variables);return void 0!==c?c:void 0}walkSegments(e,n){let s=e;for(let e=0;e<n.length;e++){const i=n[e];if(null==s)return;if(e>0&&this.isNonArrayObject(s)&&!(i in s))return"";s=s[i]}return s}sanitizePath(e){return e.replace(/\[(\d+)\]/g,".$1").replace(/\[(?:'|")([^'"]+)(?:'|")\]/g,".$1")}looksLikeContextPath(e){return"string"==typeof e&&/^[a-zA-Z_][\w]*[.\[]/.test(e.trim())}toBoolean(e){switch(typeof e){case"boolean":return e;case"number":return 0!==e;case"string":{const n=e.toLowerCase();return"__true__"===n||"true"===n||"__false__"!==n&&"false"!==n&&0!==n.length&&Boolean(e)}default:return Boolean(e)}}returnBoolean(e){return e?"__TRUE__":"__FALSE__"}createChildContext(e,n){return{parameters:e.parameters,parameterMap:e.parameterMap,variables:e.variables,globalVariables:e.globalVariables,stageVariables:e.stageVariables,jobVariables:e.jobVariables,resources:e.resources,locals:{...e.locals,...n},baseDir:e.baseDir,repoBaseDir:e.repoBaseDir,rootRepoBaseDir:e.rootRepoBaseDir,resourceLocations:e.resourceLocations||{},scriptsWithExpressions:e.scriptsWithExpressions,scriptsWithLastLineExpressions:e.scriptsWithLastLineExpressions,templateQuoteStyles:e.templateQuoteStyles,quoteResult:e.quoteResult,stageIndex:e.stageIndex,jobIndex:e.jobIndex,stepIndex:e.stepIndex,templateStack:e.templateStack||[],rootTemplate:e.rootTemplate,sourceLines:e.sourceLines,sourceText:e.sourceText,errors:e.errors}}createTemplateContext(e,n,s,i={}){const r=i.templateFile||"template";return{parameters:{...n},parameterMap:{...e.parameterMap},variables:{...e.inheritedVariables||{}},inheritedVariables:{...e.inheritedVariables||{}},globalVariables:e.globalVariables,stageVariables:e.stageVariables,jobVariables:e.jobVariables,resources:e.resources,locals:{...e.locals},baseDir:s||e.baseDir,repoBaseDir:void 0!==i.repoBaseDir?i.repoBaseDir:e.repoBaseDir,rootRepoBaseDir:e.rootRepoBaseDir,currentRepoAlias:void 0!==i.currentRepoAlias?i.currentRepoAlias:e.currentRepoAlias,resourceLocations:e.resourceLocations||{},templateStack:e.templateStack||[],templateQuoteStyles:e.templateQuoteStyles,scriptsWithExpressions:e.scriptsWithExpressions,scriptsWithLastLineExpressions:e.scriptsWithLastLineExpressions,expansionPath:[],stringsWithExpressions:e.stringsWithExpressions,quoteResult:e.quoteResult,stageIndex:e.stageIndex,jobIndex:e.jobIndex,stepIndex:e.stepIndex,rootTemplate:e.rootTemplate,sourceLines:e.sourceLines,sourceText:e.sourceText,errors:e.errors,currentFile:r,fileScopes:{}}}normalizeCollection(e){return Array.isArray(e)?e:e&&"object"==typeof e?Object.entries(e).map(([e,n])=>({key:e,value:n})):[]}createScopedContext(e,n,s){if("stages"===s&&n&&"object"==typeof n&&"stage"in n){const s={...e};if(s.stageVariables={},s.jobVariables={},s.variables={...e.globalVariables},n.variables){const e=this.extractVariablesFromNode(n.variables);Object.assign(s.stageVariables,e),Object.assign(s.variables,e)}return s}if("jobs"===s&&n&&"object"==typeof n&&"job"in n){const s={...e};if(s.jobVariables={},s.variables={...e.globalVariables,...e.stageVariables},n.variables){const e=this.extractVariablesFromNode(n.variables);Object.assign(s.jobVariables,e),Object.assign(s.variables,e)}return s}return e}extractVariablesFromNode(e){const n={};if(!e)return n;if(Array.isArray(e)){for(const s of e)if(this.isNonArrayObject(s)){const e=s.name,i=s.value;e&&void 0!==i&&(n[e]=i)}}else if("object"==typeof e)for(const[s,i]of Object.entries(e))if(this.isNonArrayObject(i)){const e=i.value;void 0!==e&&(n[s]=e)}else n[s]=i;return n}isSingleKeyObject(e){return this.isNonArrayObject(e)&&1===Object.keys(e).length}isEmptyObject(e){return this.isNonArrayObject(e)&&0===Object.keys(e).length}isTemplateReference(e){return this.isNonArrayObject(e)&&"template"in e}isNonArrayObject(e){return e&&"object"==typeof e&&!Array.isArray(e)}expandTemplateReference(e,n){const s=e.template,i="string"==typeof s?this.replaceExpressionsInString(s,n):this.expandScalar(s,n);if(!i||"string"!=typeof i)return[];let r=null;if(n.sourceLines&&Array.isArray(n.sourceLines)){const e="string"==typeof s?s:String(s);for(let s=0;s<n.sourceLines.length;s++){const i=n.sourceLines[s];if(i.includes("template:")&&i.includes(e)){r=s+1;break}}}const a=this.parseRepositoryTemplateReference(i),l=a&&this.isSelfRepositoryAlias(a.repository);let c,u,p=n.repoBaseDir||void 0,d=null;if(l){const e=n.rootRepoBaseDir||n.repoBaseDir,s=this.resolveRepoBaseDirectory(e,n);p=s;const i=n.baseDir||s;if(c=this.resolveRepoTemplate(a.templatePath,i,s,{preferRepoBaseDir:!1}),!c)throw new Error(this.formatErrorWithStack(`Template file not found for repository '${a.repository}': ${a.templatePath}`,n,r));u=o.dirname(c)}else if(a){const e=this.resolveRepositoryEntry(a.repository,n);if(!e)throw new Error(this.formatErrorWithStack(`Repository resource '${a.repository}' is not defined for template '${i}'.`,n,r));const s=this.resolveRepositoryLocation(e,n);if(!s)throw new Error(this.formatErrorWithStack(`Repository resource '${a.repository}' does not define a local location. Set a 'location' for this resource (for example via the 'azurePipelineStudio.resourceLocations' setting).`,n,r));const l=this.resolveRepoBaseDirectory(s,n);p=l;const d=n.baseDir||l;if(c=this.resolveRepoTemplate(a.templatePath,d,l),!c)throw new Error(this.formatErrorWithStack(`Template file not found for repository '${a.repository}': ${a.templatePath}`,n,r));u=o.dirname(c)}else{const e=n.repoBaseDir||void 0,s="string"==typeof i&&i.startsWith("/");d=n.currentRepoAlias||null;const r=this.resolveRepoTemplate(i,n.baseDir,e,{preferRepoBaseDir:s});if(r)c=r,u=o.dirname(c),p=p||e;else{const e=n.baseDir||process.cwd();c=o.isAbsolute(i)?i:o.resolve(e,i),u=o.dirname(c)}}if(c=this.resolveSymlink(c),!this.isReadableFile(c)){let e;if(a){e=`Template file not found: ${`${a.templatePath}@${a.repository}`} (${c})`}else if(d&&p){const s=`/${o.relative(p,c).replace(/\\/g,"/")}`,i=n.currentFile&&n.repoBaseDir?`/${o.relative(n.repoBaseDir,n.currentFile).replace(/\\/g,"/")}@${d}`:null;e=i?`${i}: Could not find ${s} in repository ${d} (${c})`:`Template file not found: ${s}@${d} (${c})`}else e=`Template file not found: ${i} (${c})`;throw new Error(this.formatErrorWithStack(e,n,r))}const f=n.timing?"template: "+(a?a.templatePath+"@"+a.repository:i):null;f&&console.time("[aps] "+f);const h=this.readFileContent(c,"utf8"),m=a?`${a.templatePath}@${a.repository}`:i;let g;try{const e=void 0!==n.skipSyntax&&n.skipSyntax,{yamlDoc:s,jsonDoc:i}=this.parseYamlDocument(h,m,e,n,r);g=i;const o=new Map;if(this.extractQuoteStyles(s.contents,[],o),o.size>0&&(n.templateQuoteStyles.set(c,o),n.quoteResult&&n.quoteResult.quoteStyles))for(const[e,s]of o.entries())n.quoteResult.quoteStyles.has(e)||n.quoteResult.quoteStyles.set(e,s)}catch(e){const s="string"==typeof e?.message?e.message:String(e),o=a?`${a.templatePath}@${a.repository}`:i;if(s.includes(o))throw new Error(this.formatErrorWithStack(s,n,r));throw new Error(this.formatErrorWithStack(`Failed to parse template '${i}': ${s}`,n,r))}const y=this.extractParameters(g),b=this.normalizeTemplateParameters(e.parameters,n),v={...y.parameters};for(const[e,n]of Object.entries(b)){const s=y.parameterTypes[e]||"string";v[e]="boolean"!==s&&"boolean"==typeof n?String(n):n}const S=a?`${a.templatePath}@${a.repository}`:d&&p?`/${o.relative(p,c).replace(/\\/g,"/")}@${d}`:i;let x;x=r?`${S}:${r} (${c})`:`${S} (${c})`;const w={...n,templateStack:[...n.templateStack||[],x],parameterMap:{...y.parameterMap}};this.validateTemplateParameters(g,b,i,w);const k=this.createTemplateContext(w,v,u,{repoBaseDir:p,templateFile:c,currentRepoAlias:a?a.repository:n.currentRepoAlias});k.sourceLines=h.split("\n");const E=this.expandNode(g,k)||{};this.convertVariablesToArrayFormat(E,k);const A=this.extractTemplateBody(E);return f&&console.timeEnd("[aps] "+f),A}parseRepositoryTemplateReference(e){if("string"!=typeof e)return;const n=e.lastIndexOf("@");if(n<=0||n===e.length-1)return;const s=e.slice(0,n).trim(),i=e.slice(n+1).trim();return s&&i?{templatePath:s,repository:i}:void 0}isSelfRepositoryAlias(e){return"string"==typeof e&&"self"===e.trim().toLowerCase()}resolveRepositoryEntry(e,n){if(!e||!n)return;let s;if(n.resources){const i=n.resources.repositories;i&&(i[e]?s=i[e]:Array.isArray(i)&&(s=i.find(n=>this.getRepositoryAlias(n)===e)))}if(s&&n.resourceLocations&&n.resourceLocations[e]){s.location||s.path||s.directory||s.localPath||(s={...s,location:n.resourceLocations[e]})}return!s&&n.resourceLocations&&n.resourceLocations[e]&&(s={repository:e,location:n.resourceLocations[e]}),s}resolveRepositoryLocation(e,n){if(!e||"object"!=typeof e)return;const s=[e.location,e.path,e.directory,e.localPath].find(e=>"string"==typeof e&&e.trim().length);if(!s)return;const i=this.replaceExpressionsInString(s,n);if(!i||"string"!=typeof i)return;const r=i.trim();if(!r)return;const o=this.expandUserHome(r);return o&&"object"==typeof e&&(e.__resolvedLocation=o,e.location&&e.location!==s&&e.location!==r?e.localLocation||(e.localLocation=o):e.location=o),o}expandUserHome(e){return"string"!=typeof e?e:e.startsWith("~")?o.join(r.homedir(),e.slice(1)):e}resolveRepoBaseDirectory(e,n){const s=n.baseDir||process.cwd();if(!e)return s;const r=o.isAbsolute(e)?e:o.resolve(s,e);try{const e=i.statSync(r);if(e.isFile())return o.dirname(r);if(e.isDirectory())return r}catch(e){}return r}resolveRepoTemplate(e,n,s,i={}){if(!e)return;const r=String(e).replace(/^[\\/]+/,"").split(/[\\/]+/).filter(e=>e?.length),a=[];if(!1!==i.preferRepoBaseDir?(s&&a.push(s),!n||s&&o.normalize(s)===o.normalize(n)||a.push(n)):(n&&a.push(n),!s||n&&o.normalize(s)===o.normalize(n)||a.push(s)),!a.length)return;const l=a.map(e=>r.length?o.resolve(e,...r):o.normalize(e));for(const e of l){const n=this.resolveSymlink(e);if(this.isReadableFile(n))return o.normalize(n)}return this.resolveSymlink(l[0])}isReadableFile(e){if(!e)return!1;try{return i.statSync(e).isFile()}catch{return!1}}readFileContent(e,n="utf8"){return i.readFileSync(e,n)}resolveSymlink(e){if(!e)return e;try{if(!i.lstatSync(e).isSymbolicLink())return e;const n=i.readlinkSync(e);return o.resolve(o.dirname(e),n)}catch(n){if("EISDIR"!==n.code)return e;if(this._symlinkCache||(this._symlinkCache=new Map),this._symlinkCache.has(e))return this._symlinkCache.get(e);const s=e.match(/^\\\\wsl(?:\.localhost|\$)\\([^\\]+)(\\.*)?$/i);if(!s)return this._symlinkCache.set(e,e),e;const i=s[1],o=(s[2]||"\\").replace(/\\/g,"/"),a=l("wsl.exe",["-d",i,"--","readlink","-f",o],{encoding:"utf8",timeout:1e4,cwd:r.tmpdir()});if(0===a.status&&a.stdout?.trim()){const n=`\\\\wsl.localhost\\${i}${a.stdout.trim().replace(/\//g,"\\")}`;return this._symlinkCache.set(e,n),n}return this._symlinkCache.set(e,e),e}}expandNodePreservingTemplates(e,n){return null===e?e:Array.isArray(e)?this.expandArrayPreservingTemplates(e,n):"object"==typeof e?this.expandObjectPreservingTemplates(e,n):this.expandScalar(e,n)}expandArrayPreservingTemplates(e,n){const s=[];let i=0;for(;i<e.length;){const r=e[i];if(this.isTemplateReference(r)){s.push(r),i++;continue}if(this.isNonArrayObject(r)){const o=this.handleSingleKeyObject(r,e,i,n,s);if(o&&o.handled){i=void 0!==o.nextIndex?o.nextIndex+1:i+1;continue}}const o=this.expandNodePreservingTemplates(r,n);if(null!==o){if(this.isEmptyObject(o)){i++;continue}s.push(o)}i++}return s}expandObjectPreservingTemplates(e,n){if(this.isTemplateReference(e)){const s={template:e.template};return e.parameters&&(s.parameters=this.expandNodePreservingTemplates(e.parameters,n)),s}const s={},i=Object.entries(e);let r=0;for(;r<i.length;){const[e,o]=i[r];if(this.isConditionalDirective(e)){let e=!1,o=r;for(;o<i.length;){const[r,a]=i[o];if(!this.isConditionalDirective(r))break;if(!e&&this.evaluateConditional(r,n)){const i=this.expandNodePreservingTemplates(a,n);this.isNonArrayObject(i)&&Object.assign(s,i),e=!0}if(o++,this.isElseDirective(r))break}r=o;continue}if(this.isInsertDirective(e)){const e=this.expandNodePreservingTemplates(o,n);if(e&&this.isNonArrayObject(e)){const i=Object.keys(e).filter(e=>Object.prototype.hasOwnProperty.call(s,e));if(i.length>0&&n&&n.errors)for(const e of i)n.errors.push({message:this.formatErrorWithStack("Duplicate key '"+e+"' introduced by ${{ insert }} expansion conflicts with an existing key.",n)});Object.assign(s,e)}r++;continue}const a="string"==typeof e?this.replaceExpressionsInString(e,n):e;s[a]=this.expandNodePreservingTemplates(o,n),r++}return s}normalizeTemplateParameters(e,n){if(void 0===e)return{};const s=this.expandNodePreservingTemplates(e,n);return s&&this.isNonArrayObject(s)?s:this.normalizeParameterArray(s)}normalizeParameterArray(e){const n={};return e.forEach(e=>{if(e&&"object"==typeof e&&!Array.isArray(e)){if(Object.prototype.hasOwnProperty.call(e,"name")){const s=e.name;if("string"==typeof s&&s.trim().length){const i=e.default;n[s.trim()]=i}return}Object.entries(e).forEach(([e,s])=>{"string"==typeof e&&e.trim().length&&(n[e.trim()]=s)})}}),n}extractTemplateBody(e){if(!e||"object"!=typeof e)return[];if(Array.isArray(e))return e;const n=["stages","jobs","steps","variables","stage","job","deployment","deployments"];for(const s of n)if("parameters"!==s&&Object.prototype.hasOwnProperty.call(e,s)){const n=e[s];if(Array.isArray(n))return n;if(void 0!==n)return[n]}return[]}evaluatePropertyKey(e,n,s){return n?this.evaluateAst(e,s):"Identifier"===e.type?e.name:this.evaluateAst(e,s)}isVariableArray(e){return!(!Array.isArray(e)||0===e.length)&&e.some(e=>this.isNonArrayObject(e)&&("name"in e&&"value"in e||1===Object.keys(e).length&&!("template"in e)))}evaluateConditional(e,n){if(this.isElseDirective(e))return!0;const s=this.isIfDirective(e)?this.parseIfCondition(e):this.parseElseIfCondition(e);return this.toBoolean(this.evaluateExpression(s,n))}isFullExpression(e){if("string"!=typeof e)return!1;const n=e.trim();if(!n.startsWith("${{")||!n.endsWith("}}"))return!1;return!n.slice(3,-2).includes("}}")}stripExpressionDelimiters(e){if("string"!=typeof e)return"";return e.trim().replace(/^\$\{\{/,"").replace(/\}\}$/,"").trim()}isInsertDirective(e){const n=e.trim();return!!this.isFullExpression(n)&&("string"==typeof e&&/^\$\{\{\s*insert\s*\}\}$/.test(n))}isEachDirective(e){return"string"==typeof e&&/^\$\{\{\s*each\s+/.test(e.trim())}isConditionalDirective(e){return this.isIfDirective(e)||this.isElseIfDirective(e)||this.isElseDirective(e)}isIfDirective(e){return"string"==typeof e&&/^\$\{\{\s*if\s+/.test(e.trim())}isElseIfDirective(e){return"string"==typeof e&&/^\$\{\{\s*elseif\s+/.test(e.trim())}isElseDirective(e){return"string"==typeof e&&/^\$\{\{\s*else\s*\}\}$/.test(e.trim())}isParameter(e){return"string"==typeof e&&/^\$\{\{\s*parameters\./.test(e.trim())}isVariable(e){return"string"==typeof e&&/^\$\{\{\s*variables\./.test(e.trim())}hasTrailingSpaces(e){const n=e.split("\n");return n.some((e,s)=>(s<n.length-1||""!==e)&&/[ \t]$/.test(e))}isMultilineString(e){return"string"==typeof e&&e.includes("\n")}isSingleLineFullExpression(e){if("string"!=typeof e)return!1;const n=e.trim();return this.isFullExpression(n)&&!n.includes("\n")}hasTemplateExpr(e){return"string"==typeof e&&e.includes("${{")}hasRuntimeVariable(e){return"string"==typeof e&&/\$\([^)]+\)/.test(e)}isKeyValueLike(e){return"string"==typeof e&&/: /.test(e)}relativePathAfterKey(e,n){if(!Array.isArray(e))return[];const s=e.indexOf(n);return s>=0?e.slice(s+2):e}hasColon(e){return"string"==typeof e&&e.includes(":")}isGlobPattern(e){return"string"==typeof e&&this.globQuotePattern.test(e)}isConditionExpression(e){if("string"!=typeof e)return!1;const n=e.trim();if(!n)return!1;const s=/^[a-zA-Z_][\w\.]*\(.*\)$/.test(n),i=/\b(?:variables|parameters|env|dependencies)\[/.test(n);return s||i}extractSourceParameter(e){const n=e.match(/parameters\.[a-zA-Z_][\w.]*/g);return n&&n.length>0?n[n.length-1]:/^parameters\.[a-zA-Z_][\w.]*$/.test(e)?e:null}isStringNodeValue(e){return void 0!==e?.value&&"string"==typeof e.value}hadMixedExpression(e,n,s){if("string"!=typeof e||!s.stringsWithExpressions)return!1;const i=this.getQuoteStyleUniqueKey(n,e);return s.stringsWithExpressions.has(i)}hasFullParameterExpression(e,n,s){const i=s.quoteResult?.fullParameterExpressions;if("string"!=typeof e||!i)return!1;const r=this.getQuoteStyleUniqueKey(n,e);return i.has(r)}normalizeTrailingNewlines(e,n){return n?/\n[ \t]*\n\s*$/.test(e)?e.replace(/\n+$/,"")+"\n\n":e:/\n\n+$/.test(e)?e.replace(/\n+$/,"")+"\n":e}lastLineHasTemplateExpression(e){if(!e||!this.isMultilineString(e))return!1;const n=e.split("\n");for(let e=n.length-1;e>=0;e--){const s=n[e].trim();if(s)return s.endsWith("}}")}return!1}parseIfCondition(e){if("string"!=typeof e)return"";const n=e.trim().match(/^\$\{\{\s*if\s+(.+?)\s*\}\}$/);return n?n[1]:""}parseElseIfCondition(e){if("string"!=typeof e)return"";const n=e.trim().match(/^\$\{\{\s*elseif\s+(.+?)\s*\}\}$/);return n?n[1]:""}parseEachDirective(e){if("string"!=typeof e)return;const n=e.trim().match(/^\$\{\{\s*each\s+([a-zA-Z_]\w*)\s+in\s+(.+?)\s*\}\}$/);return n?{variable:n[1],collection:n[2]}:void 0}}if(e.exports={AzurePipelineParser},s.c[s.s]===e){const e=process.argv.slice(2);0===e.length&&(console.error("Usage: node parser.js <yaml-file-path>"),process.exit(1));const n=e[0],s=new AzurePipelineParser({printTree:!1});try{const e=s.expandPipelineFromFile(n);process.stdout.write(e)}catch(e){console.error(`Failed to expand pipeline: ${e.message}`),process.exit(1)}}},9008(e,n,s){"use strict";const{spawnSync:i}=s(5317),r=s(9896),o=s(857),a=s(6928),l=["bash","script","pwsh","powershell"],c=Object.freeze({"Bash@3":"bash","CmdLine@2":"bash","PowerShell@2":"pwsh","PowerShell@1":"pwsh"}),u=Object.freeze({"Build.Reason":"Manual","Build.SourceBranch":"refs/heads/main","Build.SourceBranchName":"main","Build.Repository.Name":"local-repo","Build.Repository.LocalPath":process.cwd(),"Build.ArtifactStagingDirectory":"/tmp/aps-sim-artifacts","Build.StagingDirectory":"/tmp/aps-sim-staging","Build.BinariesDirectory":"/tmp/aps-sim-binaries","Build.SourcesDirectory":process.cwd(),"Build.DefinitionName":"local-pipeline","Build.DefinitionId":"0","Build.BuildId":"0","Build.BuildNumber":"0.0.0","Build.QueuedBy":"local","Build.QueuedById":"0","Build.RequestedFor":"local","Build.RequestedForEmail":"local@localhost","Build.TriggeredBy.BuildId":"","Build.Repository.Provider":"Git","Build.Repository.Uri":"","Build.Repository.ID":"","Build.SourceVersionMessage":"","Build.SourceVersion":"HEAD","System.PullRequest.SourceBranch":"","System.PullRequest.TargetBranch":"","System.PullRequest.PullRequestId":"","System.PullRequest.PullRequestNumber":"","Agent.OS":"Linux","Agent.OSArchitecture":"X64","Agent.Name":"local-agent","Agent.MachineName":"localhost","Agent.WorkFolder":"/tmp/aps-sim-work","Agent.BuildDirectory":"/tmp/aps-sim-work","Agent.TempDirectory":"/tmp/aps-sim-temp","Agent.ToolsDirectory":"/tmp/aps-sim-tools","Agent.HomeDirectory":"/tmp/aps-sim-home","System.TeamProject":"local-project","System.TeamFoundationCollectionUri":"https://dev.azure.com/local/","System.DefinitionId":"0","System.JobId":"00000000-0000-0000-0000-000000000000","System.JobName":"Job","System.JobDisplayName":"Job","System.StageId":"00000000-0000-0000-0000-000000000000","System.StageName":"Stage","System.StageDisplayName":"Stage","System.JobAttempt":"1","System.StageAttempt":"1","System.PhaseAttempt":"1","System.PhaseDisplayName":"Job","System.AccessToken":"","System.Debug":"false","Pipeline.Workspace":"/tmp/aps-sim-work",buildCounter:"1"});e.exports={PipelineSimulator:class PipelineSimulator{constructor(e={}){this.mockCatalog=e.mockCatalog||{},this.mockTools=e.mockTools||[{name:"nuget"},{name:"msbuild"},{name:"MSBuild"},{name:"vstest.console"},{name:"signtool"},{name:"7z"},{name:"yq",stdout:"mock-version"},{name:"cygpath",stdout:"/mock-path"}],this._shimDir=null}simulate(e,n={}){const s={stages:[],totalPassed:0,totalFailed:0,totalSkipped:0},i=Array.isArray(e.stages)?e.stages:[],o=this._extractPipelineVariables(e),a={...u,...o,...n.variables||{}};for(const e of Object.values(a))if("string"==typeof e&&e.startsWith("/tmp/aps-sim-"))try{r.mkdirSync(e,{recursive:!0})}catch(e){}const l={};for(const e of i){const i={...a,...l},r=this._runStage(e,i,n);s.stages.push(r);const o=r.stage;for(const e of r.jobs){const n=e.job;l[`stageDependencies.${o}.${n}.result`]=e.result||"Succeeded";for(const[s,i]of Object.entries(e.outputVariables))l[`stageDependencies.${o}.${n}.outputs['${s}']`]=i}for(const e of r.jobs)for(const n of e.steps)"Succeeded"===n.result?s.totalPassed++:"Failed"===n.result?s.totalFailed++:s.totalSkipped++}return s}_runStage(e,n,s){const i=e.stage||"Stage",r={stage:i,displayName:e.displayName||i,jobs:[]},o=Array.isArray(e.jobs)?e.jobs:[],a={...n,...this._extractVariablesFromDoc(e,n)};for(const e of o){const n=this._runJob(e,{...a},s);r.jobs.push(n);const i=n.job;a[`dependencies.${i}.result`]=n.result||"Succeeded";for(const[e,s]of Object.entries(n.outputVariables))a[`dependencies.${i}.outputs['${e}']`]=s}return r}_runJob(e,n,s){const i=e.job||e.deployment||"Job",r={job:i,displayName:e.displayName||i,steps:[],outputVariables:{}},o=Array.isArray(e.steps)?e.steps:[],a={...n,...this._extractVariablesFromDoc(e,n)};for(const e of o){const n=this._runStep(e,a,s);if(r.steps.push(n),Object.assign(a,n.variables),n.stepName&&Object.keys(n.outputVariables).length)for(const[e,s]of Object.entries(n.outputVariables)){const i=`${n.stepName}.${e}`;a[i]=s,r.outputVariables[i]=s}if("Failed"===n.result&&!e.continueOnError)break}return r.result=r.steps.some(e=>"Failed"===e.result)?"Failed":"Succeeded",r}_runStep(e,n,s){const r=e.displayName||"Step",o={displayName:r,stepName:e.name||null,result:"Succeeded",variables:{},outputVariables:{},stdout:"",stderr:"",exitCode:0},u=this.mockCatalog[`step:${r}`];if(u){o.result=u.result||"Succeeded",o.stdout=void 0!==u.output?String(u.output):`[mock] ${r}`,o.stderr=u.stderr||"",o.exitCode="Succeeded"===o.result?0:1,o.variables={...u.variables||{}};const e=this._parseVsoDirectives(o.stdout);return Object.assign(o.variables,e.local,e.output),o.outputVariables={...e.output},o}const p=l.find(n=>void 0!==e[n]),applyDirectives=e=>{o.variables={...e.local,...e.output},o.outputVariables=e.output};if(void 0!==p){const i=String(e[p]),r=this._substituteVariables(i,n),a="pwsh"===p||"powershell"===p?"pwsh":"bash",l=e.workingDirectory||s&&s.workingDirectory||"",c=l&&this._substituteVariables(l,n)||process.cwd(),u=this._resolveStepEnv(e.env,n),d=this._executeScript(a,r,n,c,u);o.stdout=d.stdout,o.stderr=d.stderr,o.exitCode=d.exitCode,o.result=0===d.exitCode?"Succeeded":"Failed",applyDirectives(this._parseVsoDirectives(d.stdout))}else if(e.task){const r=c[e.task],l=e.inputs||{},u=l.workingDirectory||s&&s.workingDirectory||"",p=u&&this._substituteVariables(u,n)||process.cwd();if(r&&void 0!==l.script){const s=this._substituteVariables(String(l.script),n),i=this._resolveStepEnv(e.env,n),a=this._executeScript(r,s,n,p,i);o.stdout=a.stdout,o.stderr=a.stderr,o.exitCode=a.exitCode,o.result=0===a.exitCode?"Succeeded":"Failed",applyDirectives(this._parseVsoDirectives(a.stdout))}else if(r&&l.filePath){const e=a.resolve(p,l.filePath),s={...process.env};for(const[e,i]of Object.entries(n))s[e.toUpperCase().replace(/[^A-Z0-9_]/g,"_")]=String(i);const c=i(r,[e],{env:s,cwd:p,encoding:"utf8",timeout:6e4});o.stdout=c.stdout||"",o.stderr=c.stderr||(c.error?c.error.message:""),o.exitCode=null!==c.status?c.status:1,o.result=0===o.exitCode?"Succeeded":"Failed",applyDirectives(this._parseVsoDirectives(o.stdout))}else{const n=this._resolveMock(e.task,l);o.result=n.result||"Succeeded",o.stdout=void 0!==n.output?String(n.output):`[mock] Task: ${e.task}`,o.stderr=n.stderr||"",o.exitCode="Succeeded"===o.result?0:1,o.variables={...n.variables||{},...n.outputVariables||{}},o.outputVariables=n.outputVariables||{}}}else void 0!==e.checkout?o.stdout=`[skip] checkout ${e.checkout}`:void 0!==e.download?o.stdout=`[skip] download ${e.download}`:void 0!==e.publish&&(o.stdout=`[skip] publish ${e.publish}`);return o}_extractVariablesFromDoc(e,n={}){return this._extractPipelineVariables(e,n)}_extractPipelineVariables(e,n={}){const s={},i=e.variables;if(!i)return s;if(Array.isArray(i)){for(const e of i)if(e&&"object"==typeof e&&void 0!==e.name){const i=void 0!==e.value?String(e.value):"",r={...n,...s};s[e.name]=this._substituteVariables(this._normalizeValue(i,r),r)}}else if("object"==typeof i)for(const[e,r]of Object.entries(i)){if("group"===e)continue;const i={...n,...s};s[e]=this._substituteVariables(this._normalizeValue(void 0!==r?String(r):"",i),i)}return s}_normalizeValue(e,n={}){const s=e.toLowerCase();return"__true__"===s?"true":"__false__"===s?"false":this._resolveRuntimeExpression(e,n)}_resolveRuntimeExpression(e,n){if(/^\$\[\s*counter\b/.test(e))return"1";if(/^\$\{\{/.test(e))return"";if(!/^\$\[/.test(e))return e;const s=e.replace(/^\$\[\s*/,"").replace(/\s*\]$/,"").trim(),i=/^variables\.(.+)$/i.exec(s);if(i){const e=i[1].trim();return Object.prototype.hasOwnProperty.call(n,e)?n[e]:""}return Object.prototype.hasOwnProperty.call(n,s)?n[s]:""}_substituteVariables(e,n){return e.replace(/\$\(([^)]+)\)/g,(e,s)=>{const i=s.trim();return/[\s|>&;`]/.test(i)?e:Object.prototype.hasOwnProperty.call(n,i)?n[i]:(/^[a-z][a-z0-9_]*$/.test(i),e)})}_resolveStepEnv(e,n){const s={};if(!e||"object"!=typeof e)return s;for(const[i,r]of Object.entries(e))s[i]=this._substituteVariables(String(r),n);return s}_executeScript(e,n,s,l,c={}){const u=this._getShimDir(),p="bash"===e?".sh":".ps1",d=a.join(o.tmpdir(),`aps-sim-${Date.now()}-${Math.random().toString(36).slice(2)}${p}`);try{r.writeFileSync(d,n,{mode:493});const o={...process.env};for(const[e,n]of Object.entries(s)){o[e.toUpperCase().replace(/[^A-Z0-9_]/g,"_")]=String(n)}for(const[e,n]of Object.entries(c))o[e]=String(n);o.PATH=u+a.delimiter+(o.PATH||"");const p=i(e,[d],{env:o,cwd:l?a.resolve(l):process.cwd(),encoding:"utf8",timeout:6e4});return{stdout:p.stdout||"",stderr:p.stderr||(p.error?p.error.message:""),exitCode:null!==p.status?p.status:1}}finally{try{r.unlinkSync(d)}catch(e){}}}_getShimDir(){if(this._shimDir)return this._shimDir;const e=r.mkdtempSync(a.join(o.tmpdir(),"aps-shims-"));this._shimDir=e;for(const n of this.mockTools){const s=a.join(e,n.name),i=void 0!==n.exitCode?n.exitCode:0,o=n.stdout||"",l=`#!/usr/bin/env bash\n# Mock shim for ${n.name}\necho ${JSON.stringify(`[mock-tool] ${n.name} $*`)} >&2\n${o?`echo ${JSON.stringify(o)}`:""}\nexit ${i}\n`;r.writeFileSync(s,l,{mode:493})}return process.once("exit",()=>{try{r.rmSync(e,{recursive:!0,force:!0})}catch(e){}}),e}_parseVsoDirectives(e){const n={},s={},i=/##vso\[task\.setvariable\s+([^\]]+)\]([^\n]*)/g;let r;for(;null!==(r=i.exec(e));){const e=r[1],i=r[2].trim(),o=/variable=([^;\]]+)/i.exec(e);if(!o)continue;const a=o[1].trim();/isOutput=true/i.test(e)?s[a]=i:n[a]=i}return{local:n,output:s}}_resolveMock(e,n){const s=e.split("@")[0];return this.mockCatalog[e]||this.mockCatalog[s]||{result:"Succeeded",output:`[mock] Task: ${e}`,variables:{}}}},printSimulationResults:function printSimulationResults(e){const n={Succeeded:"✔",Failed:"✖",Skipped:"⧘"},s={Succeeded:"[32m",Failed:"[31m",Skipped:"[33m"},i="[0m",r="[1m",o="[2m";for(const a of e.stages){console.log(),console.log(`${r}${"═".repeat(64)}${i}`),console.log(`${r} Stage: ${a.displayName||a.stage}${i}`),console.log(`${r}${"═".repeat(64)}${i}`);for(const e of a.jobs){console.log(),console.log(`  ${r}▶ Job: ${e.displayName||e.job}${i}`);for(const r of e.steps){const e=r.result,a=n[e]||"?",l=s[e]||"";console.log(),console.log(`    ${l}${a} ${r.displayName}${i}`),console.log(`    ${o}${"─".repeat(58)}${i}`),r.stdout&&r.stdout.split("\n").filter(e=>e.trim()&&!e.startsWith("##vso[")).forEach(e=>console.log(`      ${e}`)),r.stderr&&r.stderr.split("\n").filter(e=>e.trim()).forEach(e=>console.error(`      ${o}[stderr]${i} ${e}`));const c=Object.entries(r.variables).filter(([e])=>!Object.prototype.hasOwnProperty.call(r.outputVariables,e)),u=Object.entries(r.outputVariables||{});for(const[e,n]of c)console.log(`      ${o}[var]${i} ${e}=${n}`);for(const[e,n]of u)console.log(`      ${o}[out]${i} ${e}=${n}`)}}}const a=e.totalPassed+e.totalFailed+e.totalSkipped;console.log(),console.log(`${r}${"═".repeat(64)}${i}`),console.log(` ${r}Summary${i}: ${a} step(s)  ${s.Succeeded}${e.totalPassed} passed${i}  ${s.Failed}${e.totalFailed} failed${i}  ${s.Skipped}${e.totalSkipped} skipped${i}`),console.log(`${r}${"═".repeat(64)}${i}`),console.log()}}},9243(e,n,s){const i=s(857),r=s(6928);e.exports={pickFirstString:function pickFirstString(...e){for(const n of e)if("string"==typeof n&&n.trim().length)return n},resolveConfiguredPath:function resolveConfiguredPath(e,n,s){if("string"!=typeof e)return;let o=e.trim();if(!o.length)return;const a=i.homedir();return o=o.replace(/^~(?=$|[\/])/,a),o=o.replace(/\$\{workspaceFolder\}/g,n||""),o=o.replace(/\$\{env:([^}]+)\}/g,(e,n)=>process.env[n]||""),o=o.replace(/\$\{([^}]+)\}/g,(e,s)=>"workspaceFolder"===s?n||"":Object.prototype.hasOwnProperty.call(process.env,s)?process.env[s]:e),r.isAbsolute(o)?r.normalize(o):n?r.normalize(r.resolve(n,o)):s?r.normalize(r.resolve(s,o)):r.normalize(r.resolve(process.cwd(),o))},normalizeExtension:function normalizeExtension(e){if("string"!=typeof e)return;const n=e.trim().toLowerCase();return n?n.startsWith(".")?n:`.${n}`:void 0}}}},n={};function __webpack_require__(s){var i=n[s];if(void 0!==i)return i.exports;var r=n[s]={id:s,loaded:!1,exports:{}};return e[s](r,r.exports,__webpack_require__),r.loaded=!0,r.exports}__webpack_require__.c=n,__webpack_require__.nmd=e=>(e.paths=[],e.children||(e.children=[]),e);var s=__webpack_require__(__webpack_require__.s=3307);module.exports=s})();
+const fs = require('fs');
+const path = require('path');
+const minimist = require('minimist');
+
+// Import utility functions and formatter
+const { pickFirstString, resolveConfiguredPath, normalizeExtension } = require('./utils');
+const { PipelineSimulator, printSimulationResults } = require('./simulator');
+const { formatYaml } = require('./formatter');
+const { DependencyAnalyzer } = require('./dependency-analyzer');
+
+let vscode;
+try {
+    vscode = require('vscode');
+} catch (error) {
+    vscode = undefined;
+}
+const { AzurePipelineParser } = require('./parser');
+const { NONAME } = require('dns');
+
+// Module-level state for cleanup
+let activeDebounceTimer;
+let activeErrorDebounceTimer;
+let activeDependenciesDebounceTimer;
+let activeDependenciesPanel;
+let extensionRuntimeGeneration = 0;
+
+const DEFAULT_COMPILE_TIME_VARIABLES = Object.freeze({
+    'Build.Reason': 'Manual',
+    'Build.SourceBranch': 'refs/heads/main',
+});
+
+function normalizeCompileTimeVariables(input) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+        return {};
+    }
+    return Object.fromEntries(Object.entries(input));
+}
+
+function applyDefaultBuildVariables(baseVariables) {
+    const settingsOrCliVariables = normalizeCompileTimeVariables(baseVariables);
+    const result = { ...settingsOrCliVariables };
+
+    Object.entries(DEFAULT_COMPILE_TIME_VARIABLES).forEach(([key, defaultValue]) => {
+        if (!Object.prototype.hasOwnProperty.call(result, key)) {
+            result[key] = defaultValue;
+        }
+    });
+
+    return result;
+}
+
+function printCompileTimeVariableSources(contextLabel, settingsVariables, commandLineVariables, effectiveVariables) {
+    const report = {
+        defaults: { ...DEFAULT_COMPILE_TIME_VARIABLES },
+        settingsJson: normalizeCompileTimeVariables(settingsVariables),
+        commandLine: normalizeCompileTimeVariables(commandLineVariables),
+        effective: normalizeCompileTimeVariables(effectiveVariables),
+    };
+
+    const formattedReport = JSON.stringify(report, null, 2);
+    console.error(`[APS] Compile-time variable sources (${contextLabel}):\n${formattedReport}`);
+}
+
+function activate(context) {
+    if (!vscode) {
+        console.warn('VS Code API unavailable; activate() skipped (CLI execution detected).');
+        return;
+    }
+
+    console.log('Azure Pipeline YAML Parser extension is now active!');
+    const runtimeGeneration = ++extensionRuntimeGeneration;
+    const parser = new AzurePipelineParser();
+    const dependencyAnalyzer = new DependencyAnalyzer(parser);
+    let lastRenderedDocument;
+    let debounceTimer;
+    let errorDebounceTimer;
+    const errorDebounceDelayMs = 500;
+    let isRendering = false;
+    let pendingDocument = null;
+    let pendingError = null;
+    const renderedScheme = 'ado-pipeline-expanded';
+    const renderedContent = new Map();
+    const renderedEmitter = new vscode.EventEmitter();
+    let dependenciesPanel;
+    let dependenciesPanelHtml = '';
+    let dependenciesDocumentUri;
+    let dependenciesDebounceTimer;
+    let isDependenciesRendering = false;
+    let pendingDependenciesDocument = null;
+    const canUseVsCodeUi = () => !!vscode && runtimeGeneration === extensionRuntimeGeneration;
+
+    context.subscriptions.push(renderedEmitter);
+    context.subscriptions.push(
+        vscode.workspace.registerTextDocumentContentProvider(renderedScheme, {
+            onDidChange: renderedEmitter.event,
+            provideTextDocumentContent: (uri) => renderedContent.get(uri.toString()) || '',
+        })
+    );
+
+    const getRenderTargetUri = (document) => {
+        const baseName = path.basename(document.fileName || 'pipeline.yml') || 'pipeline.yml';
+        const sourceId = encodeURIComponent(document.fileName || baseName);
+        return vscode.Uri.from({
+            scheme: renderedScheme,
+            path: '/' + baseName,
+            query: `${sourceId}|expanded`,
+        });
+    };
+
+    const getFormatSettings = (document) => {
+        const defaults = {
+            noArrayIndent: true,
+            indent: 2,
+            lineWidth: 0,
+            forceQuotes: false,
+            sortKeys: false,
+            firstBlockBlankLines: 2,
+            betweenSectionBlankLines: 1,
+            normalizeAzureVariablePaths: true,
+            newlineFormat: '\n',
+        };
+
+        if (!vscode) return defaults;
+
+        try {
+            const config = vscode.workspace.getConfiguration('azurePipelineStudio', document?.uri);
+            const result = { ...defaults };
+
+            const booleanSettings = [
+                'noArrayIndent',
+                'forceQuotes',
+                'sortKeys',
+                'stepSpacing',
+                'normalizeAzureVariablePaths',
+            ];
+            booleanSettings.forEach((key) => {
+                const value = config.get(`format.${key}`);
+                if (typeof value === 'boolean') result[key] = value;
+            });
+
+            const indent = config.get('format.indent');
+            if (Number.isInteger(indent) && indent > 0 && indent <= 8) {
+                result.indent = indent;
+            }
+
+            const lineWidth = config.get('format.lineWidth');
+            if (typeof lineWidth === 'number' && lineWidth >= 0) {
+                result.lineWidth = lineWidth;
+            }
+
+            const integerSettings = [
+                { key: 'firstBlockBlankLines', min: 0, max: 4 },
+                { key: 'betweenSectionBlankLines', min: 0, max: 4 },
+            ];
+            integerSettings.forEach(({ key, min, max }) => {
+                const value = config.get(`format.${key}`);
+                if (Number.isInteger(value) && value >= min && value <= max) {
+                    result[key] = value;
+                }
+            });
+
+            const newlineFormat = config.get('format.newlineFormat');
+            if (newlineFormat === '\n' || newlineFormat === '\r\n') {
+                result.newlineFormat = newlineFormat;
+            }
+
+            return result;
+        } catch (error) {
+            console.warn('Failed to read azurePipelineStudio.format settings:', error);
+            return defaults;
+        }
+    };
+
+    const formatOriginalDocument = async (document) => {
+        if (!document) {
+            return;
+        }
+
+        const originalText = document.getText();
+        let formatResult;
+        try {
+            const formatOptions = getFormatSettings(document);
+            formatOptions.fileName = document.fileName;
+            formatOptions.wasExpanded = false;
+            formatResult = formatYaml(originalText, formatOptions);
+
+            if (formatResult.error) {
+                const errorValue =
+                    formatResult.error instanceof Error ? formatResult.error : new Error(String(formatResult.error));
+                showErrorWebview(errorValue, context, 'formatting');
+                return;
+            }
+        } catch (error) {
+            const errorMessage =
+                error && error.message ? error.message : 'An unexpected error occurred during YAML formatting';
+            showErrorWebview(errorMessage, context, 'formatting');
+            return;
+        }
+
+        const fullRange = document.validateRange(
+            new vscode.Range(0, 0, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER)
+        );
+        const edit = new vscode.WorkspaceEdit();
+        edit.replace(document.uri, fullRange, formatResult.text);
+        const applied = await vscode.workspace.applyEdit(edit);
+        if (!applied) {
+            vscode.window.showErrorMessage('Failed to apply YAML formatting changes.');
+            return;
+        }
+
+        // Close error panel on successful formatting
+        closeErrorPanel();
+
+        if (formatResult.warning) {
+            vscode.window.showWarningMessage(formatResult.warning);
+        } else {
+            vscode.window.setStatusBarMessage('Applied YAML formatting.', 3000);
+        }
+    };
+
+    let errorPanelOpen = false;
+    let currentErrorPanel = null;
+
+    // Register openErrorFile command once at activation
+    context.subscriptions.push(
+        vscode.commands.registerCommand('azurePipelineStudio.openErrorFile', async (filePath, lineNumber) => {
+            try {
+                const document = await vscode.workspace.openTextDocument(filePath);
+                const options = { preview: false };
+                if (lineNumber && lineNumber > 0) {
+                    const position = new vscode.Position(lineNumber - 1, 0);
+                    options.selection = new vscode.Range(position, position);
+                }
+                await vscode.window.showTextDocument(document, options);
+            } catch (err) {
+                vscode.window.showErrorMessage(`Failed to open file: ${filePath}`);
+            }
+        })
+    );
+
+    const showErrorWebviewNow = (error, context, errorType = 'expansion') => {
+        if (!canUseVsCodeUi()) {
+            return;
+        }
+        const normalizedError = error instanceof Error ? error : new Error(String(error));
+        const errorStackText = normalizedError.stack || '';
+        // Dispose of existing error panel before creating a new one
+        if (currentErrorPanel) {
+            try {
+                currentErrorPanel.dispose();
+            } catch (e) {
+                // Panel already disposed, ignore
+            }
+            currentErrorPanel = null;
+        }
+
+        // Determine panel title based on error type
+        const titles = {
+            expansion: '❌ Pipeline Expansion Error',
+            formatting: '❌ YAML Formatting Error',
+            dependency: '❌ Dependency Analysis Error',
+        };
+        const title = titles[errorType] || '❌ Pipeline Error';
+
+        // Create webview panel
+        const panel = vscode.window.createWebviewPanel('azurePipelineError', title, vscode.ViewColumn.Two, {
+            enableScripts: true,
+        });
+
+        // Store reference to current error panel
+        currentErrorPanel = panel;
+
+        // Explicitly reveal the panel to ensure it's visible
+        panel.reveal(vscode.ViewColumn.Two);
+
+        // Mark error panel as open
+        errorPanelOpen = true;
+
+        // Clean up when panel is disposed
+        panel.onDidDispose(() => {
+            errorPanelOpen = false;
+            currentErrorPanel = null;
+        });
+
+        const escapeHtml = (text) => {
+            return String(text)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        };
+
+        // Collect repo root base dirs for resolving absolute-style template paths
+        // Primary: parse call stack pairs (/rel/path.yaml, \\unc\path.yaml) and strip the template
+        // suffix from the UNC path to derive the exact repo root.
+        // Fallback: use the parent directory of any bare UNC path found in the error text.
+        const templateResolveBaseDirs = [];
+        const errorText = normalizedError.message || String(normalizedError);
+
+        // Extract (templateRelPath, uncPath) pairs from call stack entries.
+        const stackPairRegex = /([^\s\(]+\.ya?ml(?:@[^:\s]+)?)(?::\d+)?\s+\((\\\\[^\)]+\.ya?ml)\)/g;
+        let stackPairMatch;
+        while ((stackPairMatch = stackPairRegex.exec(errorText)) !== null) {
+            const templateRef = stackPairMatch[1].split('@')[0]; // strip @repo suffix
+            const uncPath = stackPairMatch[2];
+            // Normalize separators to compare suffix
+            const uncNorm = uncPath.replace(/\\/g, '/');
+            const tmplNorm = templateRef.replace(/\\/g, '/');
+            if (uncNorm.endsWith(tmplNorm)) {
+                const root = uncPath.slice(0, uncPath.length - templateRef.length).replace(/[/\\]+$/, '');
+                if (root && !templateResolveBaseDirs.includes(root)) templateResolveBaseDirs.push(root);
+            }
+        }
+
+        // Fallback: use the immediate parent directory of any bare UNC path in the error text.
+        for (const uncFilePath of [...errorText.matchAll(/(\\\\[^\s\n\)]+\.ya?ml)/g)].map((m) => m[1])) {
+            const dir = path.dirname(uncFilePath);
+            if (dir && !templateResolveBaseDirs.includes(dir)) templateResolveBaseDirs.push(dir);
+        }
+
+        if (lastRenderedDocument) {
+            try {
+                const resourceOverrides = buildResourceOverridesForDocument(lastRenderedDocument);
+                if (resourceOverrides?.repositories) {
+                    for (const entry of Object.values(resourceOverrides.repositories)) {
+                        const loc = entry?.location;
+                        if (loc && typeof loc === 'string' && !templateResolveBaseDirs.includes(loc)) {
+                            templateResolveBaseDirs.push(loc);
+                        }
+                    }
+                }
+                const wf = vscode.workspace.getWorkspaceFolder(lastRenderedDocument.uri);
+                if (wf?.uri?.fsPath && !templateResolveBaseDirs.includes(wf.uri.fsPath)) {
+                    templateResolveBaseDirs.push(wf.uri.fsPath);
+                }
+            } catch (e) {
+                /* ignore */
+            }
+        }
+
+        // Convert file paths in text to clickable links
+        const makePathsClickable = (text) => {
+            const placeholders = [];
+            let placeholderIndex = 0;
+
+            // First handle template stack format with repository references:
+            // Format: /templates/file.yaml@repo:46 (\\actual\path\file.yaml)
+            // or: /templates/file.yaml:46 (\\actual\path\file.yaml)
+            // Also handle format without line number: /templates/file.yaml@repo (\\actual\path\file.yaml)
+            // Extract line number and actual path, make the template reference clickable, hide UNC path
+            const templateStackRegex =
+                /([^\s\(]+\.ya?ml(?:@[^:]+)?)(?::(\d+))?\s+\((\\\\[^\)]+\.ya?ml|[A-Za-z]:[^\)]+\.ya?ml|\/[^\)]+\.ya?ml)\)/g;
+            text = text.replace(templateStackRegex, (match, templatePath, lineNumber, actualPath) => {
+                // Skip extension bundle paths
+                if (actualPath && actualPath.includes('extension-bundle.js')) {
+                    return match;
+                }
+
+                if (actualPath) {
+                    const escapedPath = actualPath.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                    const displayText = lineNumber ? `${templatePath}:${lineNumber}` : templatePath;
+                    const link = `<a class="file-link" href="#" title="${escapeHtml(actualPath)}" onclick="openFile('${escapedPath}', ${lineNumber || 'null'}); return false;">${escapeHtml(displayText)}</a>`;
+                    const placeholder = `___PLACEHOLDER_${placeholderIndex}___`;
+                    placeholders.push(link);
+                    placeholderIndex++;
+                    return placeholder;
+                }
+                return match;
+            });
+
+            // Then handle standard format: path/file.yaml:LINE
+            const pathRegex =
+                /(\\\\[^\s\n:]+\.(?:ya?ml|js|ts))(?::(\d+))?(?::(\d+))?|([A-Za-z]:\\[^\s\n:]+\.(?:ya?ml|js|ts))(?::(\d+))?(?::(\d+))?|(\/[^\s\n:]+\.(?:ya?ml|js|ts))(?::(\d+))?(?::(\d+))?/g;
+
+            text = text.replace(
+                pathRegex,
+                (match, uncPath, uncLine, uncCol, winPath, winLine, winCol, unixPath, unixLine, unixCol) => {
+                    let filePath = uncPath || winPath || unixPath;
+                    const lineNumber = uncLine || winLine || unixLine;
+
+                    // Skip extension bundle paths
+                    if (filePath && filePath.includes('extension-bundle.js')) {
+                        return match;
+                    }
+
+                    // For absolute-style template paths, resolve against known repository roots so the link points to the actual file on disk.
+                    if (unixPath && templateResolveBaseDirs.length) {
+                        const resolved = templateResolveBaseDirs
+                            .map((base) => path.join(base, unixPath))
+                            .find((candidate) => {
+                                try {
+                                    return fs.existsSync(candidate);
+                                } catch {
+                                    return false;
+                                }
+                            });
+                        if (resolved) filePath = resolved;
+                    }
+
+                    if (filePath) {
+                        const escapedPath = filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                        const lineParam = lineNumber ? lineNumber : 'null';
+                        return `<a class="file-link" href="#" title="${escapeHtml(filePath)}" onclick="openFile('${escapedPath}', ${lineParam}); return false;">${escapeHtml(match)}</a>`;
+                    }
+                    return match;
+                }
+            );
+
+            // Restore placeholders
+            placeholders.forEach((link, index) => {
+                text = text.replace(`___PLACEHOLDER_${index}___`, link);
+            });
+
+            return text;
+        };
+
+        // Format error message with line breaks and proper indentation
+        const formatErrorMessage = (text) => {
+            // First escape HTML
+            const escaped = escapeHtml(text);
+            // Make paths clickable
+            const withLinks = makePathsClickable(escaped);
+            // Convert newlines to <br> and preserve spaces
+            return withLinks
+                .split('\n')
+                .map((line) => line.replace(/^( +)/, (match) => '&nbsp;'.repeat(match.length)))
+                .join('<br>');
+        };
+
+        const parseErrorSections = (text) => {
+            const lines = String(text || '').split('\n');
+            const messageLines = [];
+            const templateLines = [];
+            const tipLines = [];
+
+            let i = 0;
+            while (i < lines.length) {
+                const trimmed = lines[i].trim();
+                const tipHeaderMatch = /^.*tips?:/i.exec(trimmed);
+                if (trimmed.toLowerCase() === 'template call stack:') {
+                    i++;
+                    while (i < lines.length && lines[i].trim()) {
+                        templateLines.push(lines[i].trim());
+                        i++;
+                    }
+                    continue;
+                }
+                if (tipHeaderMatch) {
+                    const afterColon = trimmed.split(':').slice(1).join(':').trim();
+                    if (afterColon) {
+                        tipLines.push(afterColon);
+                    }
+                    i++;
+                    while (i < lines.length && lines[i].trim()) {
+                        tipLines.push(lines[i].trim());
+                        i++;
+                    }
+                    continue;
+                }
+
+                messageLines.push(lines[i]);
+                i++;
+            }
+
+            return { messageLines, templateLines, tipLines };
+        };
+
+        const extractTemplateCallStackFromText = (text) => {
+            const match = /Template call stack:\s*([\s\S]*?)(?:\n\s*\n|$)/i.exec(String(text || ''));
+            if (!match || !match[1]) {
+                return [];
+            }
+
+            return match[1]
+                .split('\n')
+                .map((line) => line.trim())
+                .filter((line) => line.length > 0);
+        };
+
+        const rawErrorText = normalizedError.message || String(normalizedError);
+        const undefinedParamMatch = /Undefined template parameter '([^']+)'/.exec(rawErrorText);
+        const parsedSections = parseErrorSections(rawErrorText);
+        let messageLines = parsedSections.messageLines.filter((line) => line.trim().length);
+        let templateLines = parsedSections.templateLines;
+        let tipLines = parsedSections.tipLines;
+
+        if (!templateLines.length) {
+            templateLines = extractTemplateCallStackFromText(rawErrorText);
+        }
+
+        if (!templateLines.length && errorStackText) {
+            templateLines = extractTemplateCallStackFromText(errorStackText);
+        }
+
+        if (undefinedParamMatch) {
+            const paramName = undefinedParamMatch[1];
+            messageLines = [`Undefined template parameter '${paramName}'.`];
+            tipLines = [
+                `- Ensure '${paramName}' is declared in the 'parameters' section`,
+                '- Check if the reference should use a loop object instead of parameters (For e.g. {{ each cfg in configurations }}:, properties inside cfg should be referred with cfg.name)',
+            ];
+            if (!templateLines.length && errorStackText) {
+                templateLines = extractTemplateCallStackFromText(errorStackText);
+            }
+        }
+
+        if (tipLines.length === 0 && errorType === 'expansion') {
+            tipLines = [
+                '- Undefined or circular template references',
+                '- Missing or incorrect parameter values',
+                '- Malformed YAML structure in referenced templates',
+                '- Use "Pipeline Diagram" to see the complete dependency graph and identify the root cause.',
+            ];
+        }
+
+        const detailsLines = [];
+        if (messageLines.length) {
+            detailsLines.push(...messageLines);
+        }
+
+        if (templateLines.length) {
+            detailsLines.push('Template call stack:');
+            templateLines.forEach((line) => {
+                detailsLines.push(`  ${line}`);
+            });
+        }
+
+        const errorDetailsText = detailsLines.join('\n');
+
+        const tipLinesNormalized = tipLines.map((line) =>
+            line.startsWith('-') || line.startsWith('•') ? line : `- ${line}`
+        );
+
+        const suggestPipelineRoot =
+            errorType === 'expansion' &&
+            lastRenderedDocument &&
+            !/^\s*-?\s*template\s*:.*@\w+/m.test(
+                typeof lastRenderedDocument.getText === 'function' ? lastRenderedDocument.getText() : ''
+            );
+        const pipelineRootTipLine = suggestPipelineRoot
+            ? `- <a class="file-link" href="#" onclick="configurePipelineRoot(); return false;">Configure Pipeline Root</a> if your templates use absolute paths (e.g. /stages/step.yaml) and no repository resources are defined.`
+            : '';
+
+        const tipsHtml =
+            tipLinesNormalized.length || pipelineRootTipLine
+                ? `
+                    <h2>Tips</h2>
+                    <div class="error-details">
+                        ${pipelineRootTipLine ? `<code>${pipelineRootTipLine}</code>` : ''}
+                        ${tipLinesNormalized.length ? `<code>${formatErrorMessage(tipLinesNormalized.join('\n'))}</code>` : ''}
+                    </div>
+            `
+                : '';
+
+        const stackLines = errorStackText
+            .split('\n')
+            .filter((line, index) => index === 0 || line.trim().startsWith('at '));
+        // Keep first line (error location), add indentation to 'at' lines
+        const sanitizedStackText =
+            stackLines.length > 0
+                ? stackLines
+                      .map((line, index) => {
+                          if (index === 0) return line; // Keep first line as is
+                          return line.trim().startsWith('at ') ? `  ${line.trim()}` : line;
+                      })
+                      .join('\n')
+                : '';
+
+        // Build HTML content with proper styling
+        let htmlContent = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <style>
+                    body {
+                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                        line-height: 1.6;
+                        color: #e0e0e0;
+                        background-color: #1e1e1e;
+                        padding: 20px;
+                        margin: 0;
+                    }
+                    .error-container {
+                        max-width: 900px;
+                        margin: 0 auto;
+                    }
+                    h1 {
+                        color: #ff6b6b;
+                        margin-top: 0;
+                        font-size: 1.8em;
+                    }
+                    h2 {
+                        color: #ff9f43;
+                        margin-top: 20px;
+                        font-size: 1.3em;
+                        border-bottom: 1px solid #444;
+                        padding-bottom: 8px;
+                    }
+                    .error-details {
+                        background-color: #252526;
+                        border-left: 3px solid #ff6b6b;
+                        padding: 12px;
+                        margin: 12px 0;
+                        border-radius: 4px;
+                        overflow-x: auto;
+                        line-height: 1.8;
+                    }
+                    .error-details code {
+                        font-family: 'Courier New', Courier, monospace;
+                        font-size: 0.95em;
+                        color: #ce9178;
+                        white-space: normal;
+                        display: block;
+                    }
+                    .tip-box {
+                        background-color: #1f3a2c;
+                        border-left: 3px solid #4ec9b0;
+                        padding: 12px;
+                        margin: 12px 0;
+                        border-radius: 4px;
+                    }
+                    .tip-label {
+                        font-weight: bold;
+                        color: #4ec9b0;
+                        margin-bottom: 8px;
+                    }
+                    ul {
+                        margin: 8px 0;
+                        padding-left: 20px;
+                    }
+                    li {
+                        margin: 4px 0;
+                    }
+                    .file-link {
+                        color: #569cd6;
+                        text-decoration: underline;
+                        cursor: pointer;
+                        font-family: inherit;
+                    }
+                    .file-link:hover {
+                        color: #4fc3f7;
+                    }
+                    .stack-trace {
+                        background-color: #252526;
+                        border-left: 3px solid #888;
+                        padding: 12px;
+                        margin: 12px 0;
+                        border-radius: 4px;
+                        overflow-x: auto;
+                        font-family: 'Courier New', Courier, monospace;
+                        font-size: 0.9em;
+                        color: #d4d4d4;
+                        max-height: 400px;
+                        overflow-y: auto;
+                    }
+                    .file-list {
+                        background-color: #252526;
+                        border-left: 3px solid #569cd6;
+                        padding: 12px;
+                        margin: 12px 0;
+                        border-radius: 4px;
+                    }
+                    .hr {
+                        border: none;
+                        border-top: 1px solid #444;
+                        margin: 16px 0;
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="error-container">
+                    <h1>${escapeHtml(title)}</h1>
+                    
+                    <h2>Error Details</h2>
+                    <div class="error-details">
+                        <code>${formatErrorMessage(errorDetailsText)}</code>
+                    </div>
+
+                    ${tipsHtml}
+
+                    <h2>Stack Trace</h2>
+                    <div class="stack-trace">
+                        <pre>${makePathsClickable(escapeHtml(sanitizedStackText || 'No stack trace available'))}</pre>
+                    </div>
+                </div>
+
+                <script>
+                    const vscode = acquireVsCodeApi();
+                    function openFile(filePath, lineNumber) {
+                        vscode.postMessage({
+                            command: 'openFile',
+                            filePath: filePath,
+                            lineNumber: lineNumber
+                        });
+                    }
+                    function configurePipelineRoot() {
+                        vscode.postMessage({ command: 'configurePipelineRoot' });
+                    }
+                </script>
+            </body>
+            </html>
+        `;
+
+        panel.webview.html = htmlContent;
+
+        // Handle messages from webview
+        panel.webview.onDidReceiveMessage((message) => {
+            if (message.command === 'openFile') {
+                vscode.commands.executeCommand(
+                    'azurePipelineStudio.openErrorFile',
+                    message.filePath,
+                    message.lineNumber
+                );
+            } else if (message.command === 'configurePipelineRoot') {
+                vscode.commands.executeCommand('azurePipelineStudio.configureRootDirectory');
+            }
+        });
+    };
+
+    const scheduleErrorDisplay = (delayMs = errorDebounceDelayMs) => {
+        clearTimeout(errorDebounceTimer);
+        clearTimeout(activeErrorDebounceTimer);
+        errorDebounceTimer = activeErrorDebounceTimer = setTimeout(() => {
+            if (!canUseVsCodeUi()) return;
+            if (!pendingError) return;
+            if (isRendering) {
+                scheduleErrorDisplay(delayMs);
+                return;
+            }
+            const { error: err, context: ctx, errorType: type } = pendingError;
+            pendingError = null;
+            errorDebounceTimer = activeErrorDebounceTimer = undefined;
+            showErrorWebviewNow(err, ctx, type);
+        }, delayMs);
+    };
+
+    const showErrorWebview = (error, context, errorType = 'expansion', options = {}) => {
+        const immediate = options.immediate === true;
+        const normalizedError = error instanceof Error ? error : new Error(String(error));
+
+        if (immediate) {
+            clearTimeout(errorDebounceTimer);
+            clearTimeout(activeErrorDebounceTimer);
+            errorDebounceTimer = activeErrorDebounceTimer = undefined;
+            pendingError = null;
+            showErrorWebviewNow(normalizedError, context, errorType);
+            return;
+        }
+
+        pendingError = { error, context, errorType };
+        scheduleErrorDisplay();
+    };
+
+    const closeErrorPanel = () => {
+        if (currentErrorPanel) {
+            try {
+                currentErrorPanel.dispose();
+            } catch (e) {
+                // Panel already disposed, ignore
+            }
+            currentErrorPanel = null;
+            errorPanelOpen = false;
+        }
+    };
+
+    const isExpansionViewOpenForDocument = (document) => {
+        if (!canUseVsCodeUi() || !document) {
+            return false;
+        }
+
+        const targetUri = getRenderTargetUri(document).toString();
+        return vscode.window.visibleTextEditors.some((editor) => editor.document.uri.toString() === targetUri);
+    };
+
+    const scheduleRender = (document, delayMs = 500) => {
+        if (!shouldRenderDocument(document)) return;
+
+        // Only refresh if a panel is already open; never auto-open panels here.
+        if (!lastRenderedDocument || lastRenderedDocument.fileName !== document.fileName) {
+            return;
+        }
+
+        if (!errorPanelOpen && !isExpansionViewOpenForDocument(document)) {
+            return;
+        }
+
+        // When delayMs is 0, this is typically from save or explicit command; otherwise check refreshOnType preference
+        if (delayMs > 0) {
+            const expansionConfig = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
+            const refreshOnType = expansionConfig.get('expansion.refreshOnType', true);
+            if (!refreshOnType) {
+                return;
+            }
+
+            const configuredDelay = expansionConfig.get('expansion.refreshDelayMs', 500);
+            delayMs = Number.isInteger(configuredDelay) && configuredDelay >= 0 ? configuredDelay : delayMs;
+        }
+
+        pendingDocument = document;
+        clearTimeout(debounceTimer);
+        clearTimeout(activeDebounceTimer);
+        debounceTimer = activeDebounceTimer = setTimeout(() => {
+            if (!canUseVsCodeUi()) return;
+            if (isRendering) return;
+            const doc = pendingDocument;
+            pendingDocument = null;
+            void renderYamlDocument(doc, { silent: true });
+        }, delayMs);
+    };
+
+    const enrichErrorWithLineNumbers = async (error) => {
+        try {
+            const errorText = error.message || String(error);
+
+            // Extract file paths and parameters from error
+            const filePathRegex = /(\\\\[^\s\n:]+\.ya?ml|[A-Za-z]:\\[^\s\n:]+\.ya?ml|\/[^\s\n:]+\.ya?ml)/g;
+            const undefinedParamRegex = /Undefined template parameter '([^']+)'/g;
+
+            let paramName = null;
+            const paramMatch = undefinedParamRegex.exec(errorText);
+            if (paramMatch) {
+                paramName = paramMatch[1];
+            }
+
+            let filePath = null;
+            const fileMatch = filePathRegex.exec(errorText);
+            if (fileMatch) {
+                filePath = fileMatch[1];
+            }
+
+            if (paramName && filePath) {
+                try {
+                    const fileUri = vscode.Uri.file(filePath);
+                    const fileContent = await vscode.workspace.fs.readFile(fileUri);
+                    const fileText = new TextDecoder().decode(fileContent);
+                    const lines = fileText.split('\n');
+
+                    // Search for the parameter in the file
+                    for (let i = 0; i < lines.length; i++) {
+                        if (lines[i].includes(paramName)) {
+                            const lineNumber = i + 1;
+                            // Add line number to error message
+                            const enrichedError = new Error(errorText.replace(filePath, `${filePath}:${lineNumber}`));
+                            enrichedError.stack = error.stack;
+                            return enrichedError;
+                        }
+                    }
+                } catch (e) {
+                    // If we can't read the file, just return the original error
+                    return error;
+                }
+            }
+
+            return error;
+        } catch (e) {
+            return error;
+        }
+    };
+
+    const renderYamlDocument = async (document, options = {}) => {
+        if (!document) return;
+        if (!canUseVsCodeUi()) return;
+        const expansionPanelOpen = isExpansionViewOpenForDocument(document);
+        const manualOpenRequested = options.manualOpen === true;
+        const errorPanelWasOpen = errorPanelOpen;
+        const allowPanelOpen = manualOpenRequested || expansionPanelOpen || errorPanelWasOpen;
+        const shouldRevealAfterSuccess = manualOpenRequested || expansionPanelOpen || errorPanelWasOpen;
+
+        lastRenderedDocument = document;
+        const sourceText = document.getText();
+
+        isRendering = true;
+        try {
+            const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
+            const settingsCompileTimeVariables = config.get('expansion.variables', {});
+            const effectiveCompileTimeVariables = applyDefaultBuildVariables(settingsCompileTimeVariables);
+            printCompileTimeVariableSources(
+                'VS Code Expand Pipeline',
+                settingsCompileTimeVariables,
+                {},
+                effectiveCompileTimeVariables
+            );
+
+            const configuredSkipSyntaxCheck = config.get('expansion.skipSyntaxCheck', false);
+            const skipSyntaxCheck = options.silent ? configuredSkipSyntaxCheck : false;
+            const resourceOverrides = buildResourceOverridesForDocument(document);
+            const rootDirectoryOverride = buildRootDirectoryOverrideForDocument(document);
+            const azureCompatible = options.azureCompatible ?? false;
+
+            const resourceLocations =
+                resourceOverrides?.repositories && typeof resourceOverrides.repositories === 'object'
+                    ? Object.fromEntries(
+                          Object.entries(resourceOverrides.repositories)
+                              .map(([alias, entry]) => [alias, entry?.location])
+                              .filter(([, location]) => typeof location === 'string' && location.trim().length)
+                      )
+                    : undefined;
+
+            const parserOverrides = {
+                fileName: document.fileName,
+                azureCompatible,
+                skipSyntaxCheck,
+                ...(resourceOverrides && { resources: resourceOverrides }),
+                ...(rootDirectoryOverride && { rootRepoBaseDir: rootDirectoryOverride }),
+                ...(resourceLocations && { resourceLocations }),
+                ...(Object.keys(effectiveCompileTimeVariables).length && { variables: effectiveCompileTimeVariables }),
+            };
+
+            const expandedYaml = parser.expandPipelineFromString(sourceText, parserOverrides);
+
+            const formatOptions = getFormatSettings(document);
+            formatOptions.fileName = document.fileName;
+            formatOptions.wasExpanded = true;
+            const formatted = formatYaml(expandedYaml, formatOptions);
+
+            if (formatted.error) {
+                const errorValue =
+                    formatted.error instanceof Error ? formatted.error : new Error(String(formatted.error));
+                if (allowPanelOpen) {
+                    try {
+                        showErrorWebviewNow(errorValue, context, 'expansion');
+                    } catch (displayError) {
+                        console.error(
+                            '[Azure Pipeline Studio] Failed to render expansion error webview:',
+                            displayError
+                        );
+                    }
+                    if (canUseVsCodeUi()) {
+                        vscode.window.showErrorMessage(errorValue.message || 'Pipeline expansion failed.');
+                    }
+                }
+                return;
+            }
+
+            const targetUri = getRenderTargetUri(document);
+            renderedContent.set(targetUri.toString(), formatted.text);
+            renderedEmitter.fire(targetUri);
+
+            clearTimeout(errorDebounceTimer);
+            clearTimeout(activeErrorDebounceTimer);
+            errorDebounceTimer = activeErrorDebounceTimer = undefined;
+            pendingError = null;
+
+            // Close error panel on successful expansion
+            closeErrorPanel();
+
+            if (shouldRevealAfterSuccess) {
+                const targetDoc = await vscode.workspace.openTextDocument(targetUri);
+                await vscode.window.showTextDocument(targetDoc, {
+                    viewColumn: vscode.ViewColumn.Two,
+                    preview: false,
+                    preserveFocus: true,
+                });
+            }
+        } catch (error) {
+            console.error('Error expanding pipeline:', error);
+            const enhancedError = new Error(formatTemplateExpansionError(document.fileName, error));
+            enhancedError.stack = error.stack;
+            if (allowPanelOpen) {
+                try {
+                    showErrorWebviewNow(enhancedError, context, 'expansion');
+                } catch (displayError) {
+                    console.error('[Azure Pipeline Studio] Failed to render expansion error webview:', displayError);
+                }
+                if (canUseVsCodeUi()) {
+                    vscode.window.showErrorMessage(enhancedError.message || 'Pipeline expansion failed.');
+                }
+            }
+        } finally {
+            isRendering = false;
+            pendingDocument && scheduleRender(pendingDocument, 0);
+        }
+    };
+
+    function buildResourceOverridesForDocument(document) {
+        if (!vscode || !document) return undefined;
+
+        const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
+        const configuredResources = config.get('resourceLocations');
+
+        if (!Array.isArray(configuredResources) || !configuredResources.length) {
+            return undefined;
+        }
+
+        const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+        const workspaceDir = workspaceFolder?.uri.fsPath;
+        const documentDir = document.fileName ? path.dirname(document.fileName) : undefined;
+        const repositories = {};
+
+        for (const entry of configuredResources) {
+            if (!entry || typeof entry !== 'object') continue;
+
+            const alias = entry.repository?.trim();
+            const rawPath = pickFirstString(entry.path, entry.location);
+            if (!alias || !rawPath) continue;
+
+            const resolvedPath = resolveConfiguredPath(rawPath, workspaceDir, documentDir);
+            if (!resolvedPath) continue;
+
+            const overrideEntry = { location: resolvedPath };
+            const matchCriteria = {};
+
+            ['repository', 'name', 'endpoint', 'ref', 'type'].forEach((key) => {
+                const value = entry[key]?.trim();
+                if (value) matchCriteria[key] = value;
+            });
+
+            if (Object.keys(matchCriteria).length) {
+                overrideEntry.__match = matchCriteria;
+            }
+
+            repositories[alias] = overrideEntry;
+        }
+
+        return Object.keys(repositories).length ? { repositories } : undefined;
+    }
+
+    function buildRootDirectoryOverrideForDocument(document) {
+        if (!vscode || !document) return undefined;
+
+        const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
+        const rawRootDirectory = config.get('pipelineRoot');
+        if (typeof rawRootDirectory !== 'string' || !rawRootDirectory.trim().length) return undefined;
+
+        const text = document.getText();
+
+        // If any template reference uses @repoAlias syntax, repository resources
+        // take precedence — don't apply the root directory override.
+        if (/^\s*-?\s*template\s*:.*@\w+/m.test(text)) return undefined;
+
+        const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+        return resolveConfiguredPath(
+            rawRootDirectory,
+            workspaceFolder?.uri.fsPath,
+            document.fileName ? path.dirname(document.fileName) : undefined
+        );
+    }
+
+    const shouldRenderDocument = (document) => {
+        if (!document || !document.fileName) {
+            return false;
+        }
+        const lower = document.fileName.toLowerCase();
+        return lower.endsWith('.yaml') || lower.endsWith('.yml');
+    };
+
+    const isRelevantDocument = (document) =>
+        shouldRenderDocument(document) && lastRenderedDocument?.fileName === document.fileName;
+
+    const commandDisposable = vscode.commands.registerCommand('azurePipelineStudio.showRenderedYaml', async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor || !shouldRenderDocument(editor.document)) {
+            vscode.window.showInformationMessage('Open an Azure Pipeline YAML file to view the expanded contents.');
+            return;
+        }
+
+        closeErrorPanel();
+        await renderYamlDocument(editor.document, { azureCompatible: false, manualOpen: true });
+    });
+    context.subscriptions.push(commandDisposable);
+
+    const commandAzureCompatibleDisposable = vscode.commands.registerCommand(
+        'azurePipelineStudio.showRenderedYamlAzureCompatible',
+        async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor || !shouldRenderDocument(editor.document)) {
+                vscode.window.showInformationMessage('Open an Azure Pipeline YAML file to view the expanded contents.');
+                return;
+            }
+
+            closeErrorPanel();
+            await renderYamlDocument(editor.document, { azureCompatible: true, manualOpen: true });
+        }
+    );
+    context.subscriptions.push(commandAzureCompatibleDisposable);
+
+    const formatOriginalCommandDisposable = vscode.commands.registerCommand(
+        'azurePipelineStudio.formatOriginalYaml',
+        async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor || !shouldRenderDocument(editor.document)) {
+                vscode.window.showInformationMessage('Open an Azure Pipeline YAML file before formatting.');
+                return;
+            }
+
+            closeErrorPanel();
+            await formatOriginalDocument(editor.document);
+        }
+    );
+    context.subscriptions.push(formatOriginalCommandDisposable);
+
+    const configureCommandDisposable = vscode.commands.registerCommand(
+        'azurePipelineStudio.configureResourceLocations',
+        async () => {
+            try {
+                await handleConfigureResourceLocationRequest();
+            } catch (error) {
+                console.error('[Azure Pipeline Studio] Error in configure command:', error);
+                vscode.window.showErrorMessage(`Configuration error: ${error.message}`);
+            }
+        }
+    );
+    context.subscriptions.push(configureCommandDisposable);
+
+    const commandRootDirectoryDisposable = vscode.commands.registerCommand(
+        'azurePipelineStudio.configureRootDirectory',
+        async () => {
+            try {
+                await handleConfigurePipelineRootRequest();
+            } catch (error) {
+                console.error('[Azure Pipeline Studio] Error in configure pipeline root command:', error);
+                vscode.window.showErrorMessage(`Configuration error: ${error.message}`);
+            }
+        }
+    );
+    context.subscriptions.push(commandRootDirectoryDisposable);
+
+    const generateLoadingHtml = (projectName) => {
+        return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pipeline Diagram - Loading</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #1e1e1e;
+            color: #cccccc;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+        .loading-container {
+            text-align: center;
+            max-width: 500px;
+        }
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid #3e3e42;
+            border-top: 4px solid #0078d4;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        h2 {
+            color: #ffffff;
+            margin-bottom: 10px;
+        }
+        p {
+            color: #888888;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="loading-container">
+        <div class="spinner"></div>
+        <h2>Analyzing Pipeline Dependencies</h2>
+        <p>Expanding templates and generating diagram...</p>
+        <p style="margin-top: 15px; font-size: 0.85em; opacity: 0.7;">${projectName}</p>
+    </div>
+</body>
+</html>`;
+    };
+
+    const ensureDependenciesPanel = () => {
+        if (!canUseVsCodeUi()) {
+            return null;
+        }
+        if (dependenciesPanel) {
+            return dependenciesPanel;
+        }
+
+        dependenciesPanel = vscode.window.createWebviewPanel(
+            'pipelineDependencies',
+            'Pipeline Dependencies',
+            vscode.ViewColumn.Two,
+            { enableScripts: true }
+        );
+
+        dependenciesPanel.onDidDispose(() => {
+            dependenciesPanel = activeDependenciesPanel = null;
+            dependenciesDocumentUri = undefined;
+        });
+
+        dependenciesPanel.webview.onDidReceiveMessage(async (message) => {
+            if (message.command === 'openInBrowser') {
+                try {
+                    const os = require('os');
+                    const tempFile = path.join(os.tmpdir(), `pipeline-dependencies-${Date.now()}.html`);
+                    fs.writeFileSync(tempFile, dependenciesPanelHtml);
+                    await vscode.env.openExternal(vscode.Uri.file(tempFile));
+                    vscode.window.showInformationMessage('Opened dependencies in browser');
+                } catch (err) {
+                    vscode.window.showErrorMessage(`Failed to open in browser: ${err.message}`);
+                }
+            } else if (message.command === 'openFile') {
+                try {
+                    const fileUri = vscode.Uri.file(message.file);
+                    await vscode.window.showTextDocument(fileUri);
+                } catch (err) {
+                    vscode.window.showErrorMessage(`Failed to open file: ${err.message}`);
+                }
+            }
+        });
+
+        return dependenciesPanel;
+    };
+
+    const renderDependenciesPanel = async (document, options = {}) => {
+        if (!document || !shouldRenderDocument(document)) {
+            vscode.window.showInformationMessage('Open an Azure Pipeline YAML file to view dependencies.');
+            return;
+        }
+
+        const { reveal = false, silent = false } = options;
+
+        closeErrorPanel();
+        dependenciesDocumentUri = document.uri;
+
+        if (isDependenciesRendering) {
+            pendingDependenciesDocument = document;
+            return;
+        }
+
+        isDependenciesRendering = true;
+
+        // Show panel immediately with loading state to avoid blocking extension host
+        const panel = ensureDependenciesPanel();
+        if (!panel) {
+            isDependenciesRendering = false;
+            return;
+        }
+
+        activeDependenciesPanel = dependenciesPanel = panel;
+
+        const projectName = document?.fileName || 'Pipeline';
+        const loadingHtml = generateLoadingHtml(projectName);
+        try {
+            panel.webview.html = loadingHtml;
+
+            // Give UI time to actually render the loading state before starting heavy work
+            // This is critical for responsiveness
+            await new Promise((resolve) => setTimeout(resolve, 100));
+        } catch (panelError) {
+            console.error('[Azure Pipeline Studio] Failed to set loading HTML', panelError);
+            dependenciesPanel = null;
+            activeDependenciesPanel = null;
+            isDependenciesRendering = false;
+            return;
+        }
+
+        if (reveal) {
+            try {
+                panel.reveal(vscode.ViewColumn.Two, true);
+            } catch (revealError) {
+                // Panel reveal failed, ignore
+            }
+        }
+
+        // Defer expensive computation to avoid blocking extension host
+        // Use setTimeout with delay to allow more event loop processing and UI updates
+        // setImmediate runs before I/O, setTimeout allows UI updates to process
+        // Increased delay to ensure loading state is visible before heavy work starts
+        setTimeout(async () => {
+            if (!canUseVsCodeUi()) {
+                isDependenciesRendering = false;
+                return;
+            }
+
+            const buildDependencyError = (error, fallbackMessage, tipText) => {
+                const errorMessage = error.message || fallbackMessage;
+                const enhancedMessage = `Error in Pipeline Diagram:\n\n${errorMessage}\n\n💡 Tip: ${tipText}`;
+                const enhancedError = new Error(enhancedMessage);
+                enhancedError.stack = error.stack;
+                return enhancedError;
+            };
+
+            try {
+                const sourceText = document.getText();
+                lastRenderedDiagramSourceText = sourceText;
+
+                // Warn if document is very large
+                if (sourceText.length > 100000) {
+                    console.warn(
+                        '[Azure Pipeline Studio] Large document detected:',
+                        sourceText.length,
+                        'characters - processing may take time'
+                    );
+                    if (!silent) {
+                        vscode.window.showWarningMessage(
+                            'Large pipeline detected. Diagram generation may take some time and could impact editor responsiveness.',
+                            'Continue'
+                        );
+                    }
+                }
+
+                const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
+                const settingsCompileTimeVariables = config.get('expansion.variables', {});
+                const effectiveCompileTimeVariables = applyDefaultBuildVariables(settingsCompileTimeVariables);
+                printCompileTimeVariableSources(
+                    'VS Code Dependency Diagram',
+                    settingsCompileTimeVariables,
+                    {},
+                    effectiveCompileTimeVariables
+                );
+                const skipSyntaxCheck = config.get('expansion.skipSyntaxCheck', false);
+                const resourceOverrides = buildResourceOverridesForDocument(document);
+
+                const parserOverrides = {
+                    fileName: document.fileName,
+                    azureCompatible: false,
+                    skipSyntaxCheck,
+                    ...(resourceOverrides && { resources: resourceOverrides }),
+                    ...(Object.keys(effectiveCompileTimeVariables).length && {
+                        variables: effectiveCompileTimeVariables,
+                    }),
+                };
+
+                if (!silent) {
+                    vscode.window.setStatusBarMessage('Expanding pipeline templates...', 2000);
+                }
+
+                let expandedYaml;
+                try {
+                    // Wrap parser call with Promise + setTimeout to allow event loop processing between operations
+                    // Note: The parser itself is still synchronous, but this allows UI updates before it starts
+                    expandedYaml = await new Promise((resolve, reject) => {
+                        try {
+                            // Small delay to allow event loop to process UI updates
+                            setTimeout(() => {
+                                try {
+                                    const result = parser.expandPipelineFromString(sourceText, parserOverrides);
+                                    resolve(result);
+                                } catch (err) {
+                                    reject(err);
+                                }
+                            }, 10);
+                        } catch (err) {
+                            reject(err);
+                        }
+                    });
+                } catch (error) {
+                    const enhancedError = buildDependencyError(
+                        error,
+                        'An error occurred while expanding pipeline templates',
+                        'Check your YAML syntax and template references. You can also use "Expand Pipeline" to debug template expansion issues.'
+                    );
+                    showErrorWebviewNow(enhancedError, context, 'dependency');
+                    return;
+                }
+
+                if (!silent) {
+                    vscode.window.setStatusBarMessage('Analyzing dependencies...', 2000);
+                }
+
+                let dependencies;
+                try {
+                    // Wrap analyzer call with Promise + setTimeout to allow event loop processing
+                    // Small delay to allow UI updates between heavy operations
+                    dependencies = await new Promise((resolve, reject) => {
+                        setTimeout(() => {
+                            try {
+                                const result = dependencyAnalyzer.analyzePipeline(expandedYaml);
+                                resolve(result);
+                            } catch (err) {
+                                reject(err);
+                            }
+                        }, 10);
+                    });
+                } catch (error) {
+                    const enhancedError = buildDependencyError(
+                        error,
+                        'An error occurred while analyzing pipeline dependencies',
+                        `It's often easier to identify and fix issues using "Expand Pipeline" first. This will show you the full expanded YAML with all template variables and references resolved.`
+                    );
+                    showErrorWebviewNow(enhancedError, context, 'dependency');
+                    return;
+                }
+
+                const stageCount = dependencies.stages.length || 0;
+                const jobCount = dependencies.jobs.length || 0;
+
+                // Wrap diagram generation with Promise + setTimeout to allow event loop processing
+                // Small delay to allow UI updates between heavy operations
+                const mermaidDiagram = await new Promise((resolve) => {
+                    setTimeout(() => {
+                        const diagram =
+                            dependencies.stages.length > 0 || dependencies.jobs.length > 0
+                                ? dependencyAnalyzer.generateMermaidDiagram(dependencies)
+                                : '';
+                        resolve(diagram);
+                    }, 10);
+                });
+
+                const stageCountForDisplay = stageCount || jobCount || 0;
+
+                const htmlContent = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pipeline Diagram</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #1e1e1e;
+            min-height: 100vh;
+            padding: 0;
+            margin: 0;
+        }
+
+        .container {
+            max-width: 100%;
+            margin: 0;
+            background: #252526;
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #1a1a1a 0%, #0d0d0d 100%);
+            color: white;
+            padding: 20px;
+            border-bottom: 4px solid #0078d4;
+        }
+
+        .header h1 {
+            font-size: 2em;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .header-icon {
+            font-size: 1.2em;
+        }
+
+        .header-info {
+            display: flex;
+            gap: 30px;
+            margin-top: 15px;
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+
+        .header-info-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .content {
+            padding: 20px;
+            min-height: calc(100vh - 200px);
+            background: #252526;
+        }
+
+        .diagram-container {
+            background: #1e1e1e;
+            border-radius: 0;
+            padding: 20px;
+            margin-bottom: 0;
+            overflow: hidden;
+            height: calc(100vh - 250px);
+            position: relative;
+        }
+
+        .mermaid {
+            display: flex;
+            justify-content: center;
+            background: #1e1e1e;
+            border-radius: 0;
+            min-height: 400px;
+            transition: transform 0.1s ease-out;
+        }
+
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 2px;
+        }
+
+        .stage-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .stage-card {
+            background: #1e1e1e;
+            border-radius: 4px;
+            padding: 20px;
+            border-left: 4px solid #4299e1;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+            transition: all 0.3s;
+            cursor: pointer;
+        }
+
+        .stage-card:hover {
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+            transform: translateY(-2px);
+        }
+
+        .stage-divider {
+            grid-column: 1 / -1;
+            height: 1px;
+            background: linear-gradient(to right, transparent, #3e3e42, transparent);
+            margin: 10px 0;
+        }
+
+        .stage-card h3 {
+            color: #ffffff;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .stage-number {
+            display: inline-block;
+            width: 28px;
+            height: 28px;
+            background: #4299e1;
+            color: white;
+            border-radius: 4px;
+            text-align: center;
+            line-height: 28px;
+            font-size: 0.85em;
+            margin-right: 10px;
+        }
+
+        .stage-deps {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #3e3e42;
+        }
+
+        .stage-deps-title {
+            font-size: 0.85em;
+            font-weight: 600;
+            color: #cccccc;
+            margin-bottom: 8px;
+        }
+
+        .dep-badge {
+            display: inline-block;
+            background: #3e3e42;
+            color: #e0e0e0;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 0.8em;
+            margin-right: 6px;
+            margin-bottom: 6px;
+        }
+
+        .stage-details {
+            display: none;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 2px solid #3e3e42;
+            color: #cccccc;
+        }
+
+        .stage-card.expanded .stage-details {
+            display: block;
+        }
+
+        .expand-icon {
+            transition: transform 0.3s;
+        }
+
+        .stage-card.expanded .expand-icon {
+            transform: rotate(180deg);
+        }
+
+        .search-box {
+            margin-bottom: 20px;
+            position: relative;
+        }
+
+        .search-box input {
+            width: 100%;
+            padding: 12px 40px 12px 16px;
+            border: 2px solid #3e3e42;
+            border-radius: 4px;
+            font-size: 1em;
+            background: #1e1e1e;
+            color: #e0e0e0;
+            transition: border-color 0.3s;
+        }
+
+        .search-box input:focus {
+            outline: none;
+            border-color: #D13438;
+        }
+
+        .critical-path-box {
+            background: #ffeef0;
+            border-left: 4px solid #e53e3e;
+            padding: 20px;
+            border-radius: 4px;
+            margin: 20px 0;
+        }
+
+        .critical-path-box h3 {
+            color: #c53030;
+            margin-bottom: 10px;
+        }
+
+        .critical-path-box p {
+            font-family: 'Courier New', monospace;
+            color: #742a2a;
+            line-height: 1.8;
+            margin-bottom: 15px;
+        }
+
+        .resources-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+        }
+
+        .resource-card {
+            background: #1e1e1e;
+            border-radius: 4px;
+            padding: 20px;
+            border-left: 4px solid #48bb78;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+        }
+
+        .resource-card h3 {
+            color: #ffffff;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .resource-type {
+            display: inline-block;
+            background: #48bb78;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 0.75em;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .resource-details {
+            font-size: 0.9em;
+            color: #cccccc;
+        }
+
+        .resource-details div {
+            padding: 6px 0;
+            border-bottom: 1px solid #3e3e42;
+        }
+
+        .resource-details div:last-child {
+            border-bottom: none;
+        }
+        
+        .resource-details strong {
+            color: #ffffff;
+        }
+
+        @media (max-width: 768px) {
+            .stage-list {
+                grid-template-columns: 1fr;
+            }
+            .header h1 {
+                font-size: 1.5em;
+            }
+        }
+        
+        h2 {
+            color: #ffffff;
+        }
+        
+        p {
+            color: #cccccc;
+        }
+        
+        a:hover {
+            text-decoration: underline !important;
+            opacity: 0.8;
+        }
+        
+        .btn {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+        
+        .btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+        
+        .btn-primary {
+            background: #0078d4;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #106ebe;
+        }
+        
+        .btn-secondary {
+            background: #3e3e42;
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background: #4e4e52;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <h1 style="margin: 0;">
+                    Pipeline Diagram
+                </h1>
+                <button onclick="openInBrowser()" class="btn btn-primary">🌐 Open in Browser</button>
+            </div>
+            <div class="header-info">
+                <div class="header-info-item">
+                    <button onclick="toggleDiagramSource()" id="source-toggle-btn" class="btn btn-secondary">📝 View Source</button>
+                </div>
+                <div class="header-info-item">
+                    <span>🏗️</span>
+                    <span>${stageCountForDisplay} Stage${stageCountForDisplay !== 1 ? 's' : ''}</span>
+                </div>
+                <div class="header-info-item" style="display: flex; align-items: center; gap: 8px;">
+                    <div class="legend-color" style="width: 16px; height: 16px; background: #F87171; border-radius: 2px;"></div>
+                    <span style="font-size: 0.9em; color: #F87171;">Longest path</span>
+                </div>
+            </div>
+            <div style="margin-top: 8px; font-size: 0.85em; opacity: 0.7;">
+                <span>📄 </span>
+                <a href="#" onclick="event.preventDefault(); const vscode = acquireVsCodeApi(); vscode.postMessage({ command: 'openFile', file: '${projectName}' });" style="color: #569cd6; text-decoration: none; cursor: pointer;" title="${projectName}">${projectName}</a>
+            </div>
+        </div>
+
+        <div class="content">
+            <div>
+                <div class="diagram-container" id="diagram-container" style="cursor: grab; overflow: hidden; position: relative;">
+                    <div class="mermaid" id="mermaid-diagram">
+${mermaidDiagram
+    .split('\n')
+    .map((line) => '                        ' + line)
+    .join('\n')}
+                    </div>
+                    <div id="mermaid-error" style="display: none; padding: 20px; background: #2d1f1f; border-left: 4px solid #ff6b6b; color: #ff6b6b; border-radius: 4px; margin-top: 10px;">
+                        <h3 style="margin-top: 0; color: #ff6b6b;">⚠️ Diagram Rendering Error</h3>
+                        <p style="color: #cccccc; margin-bottom: 10px;">The Mermaid diagram failed to render. This could be due to:</p>
+                        <ul style="color: #cccccc; margin-left: 20px;">
+                            <li>Invalid Mermaid syntax in the generated diagram</li>
+                            <li>Complex pipeline structure that exceeds rendering limits</li>
+                            <li>Circular dependencies or invalid stage references</li>
+                        </ul>
+                        <p style="color: #cccccc; margin-top: 10px;">💡 <strong>Tip:</strong> View the source code below or check the "Mermaid Source" tab to validate it at <a href="https://mermaid.live" style="color: #569cd6;">mermaid.live</a></p>
+                        <pre id="mermaid-error-details" style="background: #1e1e1e; padding: 10px; border-radius: 4px; overflow-x: auto; margin-top: 10px; color: #ce9178;"></pre>
+                    </div>
+                </div>
+                
+                <!-- Source Code Section (replaces diagram when visible) -->
+                <div id="diagram-source-section" style="display: none; background: #1e1e1e; border-radius: 4px; overflow: hidden; border-left: 4px solid #0078d4;">
+                    <div style="padding: 15px; background: #2d2d2d; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #3e3e42;">
+                        <h3 style="margin: 0; color: #ffffff; font-size: 1.1em;">📝 Mermaid Source Code</h3>
+                        <div style="display: flex; gap: 10px;">
+                            <button onclick="copyDiagramSource()" style="padding: 6px 12px; background: #0078d4; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500;">📋 Copy</button>
+                            <button onclick="toggleDiagramSource()" style="padding: 6px 12px; background: #3e3e42; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500;">✖ Close</button>
+                        </div>
+                    </div>
+                    <div style="padding: 0;">
+                        <span id="diagram-copy-feedback" style="display: none; position: absolute; right: 20px; margin-top: 10px; color: #4ec9b0; background: #1e1e1e; padding: 5px 10px; border-radius: 4px; font-size: 13px;">✓ Copied!</span>
+                        <pre id="diagram-source-code" style="background: #1e1e1e; padding: 20px; margin: 0; overflow-x: auto; color: #ce9178; line-height: 1.6; font-family: 'Courier New', Courier, monospace; font-size: 14px; white-space: pre-wrap; word-wrap: break-word;">${mermaidDiagram.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Open in browser function
+        window.openInBrowser = function() {
+            const vscode = acquireVsCodeApi();
+            vscode.postMessage({ command: 'openInBrowser' });
+        };
+        
+        // Pan and zoom functionality for diagram
+        (function() {
+            const container = document.getElementById('diagram-container');
+            if (!container) return;
+            
+            let scale = 1;
+            let translateX = 0;
+            let translateY = 0;
+            let isDragging = false;
+            let startX = 0;
+            let startY = 0;
+            
+            const updateTransform = function() {
+                const diagram = container.querySelector('.mermaid');
+                if (diagram) {
+                    diagram.style.transform = 'translate(' + translateX + 'px, ' + translateY + 'px) scale(' + scale + ')';
+                    diagram.style.transformOrigin = '0 0';
+                }
+            };
+            
+            // Mouse wheel zoom
+            container.addEventListener('wheel', function(e) {
+                e.preventDefault();
+                const delta = e.deltaY > 0 ? 0.9 : 1.1;
+                const newScale = scale * delta;
+                if (newScale >= 0.1 && newScale <= 5) {
+                    scale = newScale;
+                    updateTransform();
+                }
+            });
+            
+            // Mouse drag pan
+            container.addEventListener('mousedown', function(e) {
+                isDragging = true;
+                startX = e.clientX - translateX;
+                startY = e.clientY - translateY;
+                container.style.cursor = 'grabbing';
+            });
+            
+            document.addEventListener('mousemove', function(e) {
+                if (!isDragging) return;
+                translateX = e.clientX - startX;
+                translateY = e.clientY - startY;
+                updateTransform();
+            });
+            
+            document.addEventListener('mouseup', function() {
+                isDragging = false;
+                container.style.cursor = 'grab';
+            });
+        })();
+        
+        // Toggle diagram source visibility (source replaces the diagram area)
+        window.toggleDiagramSource = function() {
+            const sourceSection = document.getElementById('diagram-source-section');
+            const diagramContainer = document.getElementById('diagram-container');
+            const toggleBtn = document.getElementById('source-toggle-btn');
+            if (sourceSection && diagramContainer && toggleBtn) {
+                const isVisible = sourceSection.style.display !== 'none';
+                sourceSection.style.display = isVisible ? 'none' : 'block';
+                diagramContainer.style.display = isVisible ? '' : 'none';
+                toggleBtn.textContent = isVisible ? '📝 View Source' : '🔼 Hide Source';
+            }
+        };
+        
+        // Copy diagram source to clipboard
+        window.copyDiagramSource = function() {
+            const sourceCode = document.getElementById('diagram-source-code');
+            const feedback = document.getElementById('diagram-copy-feedback');
+            if (sourceCode) {
+                const text = sourceCode.textContent;
+                navigator.clipboard.writeText(text).then(function() {
+                    feedback.style.display = 'inline';
+                    setTimeout(function() {
+                        feedback.style.display = 'none';
+                    }, 2000);
+                }).catch(function(err) {
+                    console.error('Failed to copy:', err);
+                });
+            }
+        };
+        
+        // Initialize Mermaid with error handling
+        mermaid.initialize({ 
+            startOnLoad: false,
+            theme: 'dark',
+            flowchart: {
+                useMaxWidth: true,
+                htmlLabels: true,
+                curve: 'basis'
+            }
+        });
+        
+        // Manually render with error handling
+        try {
+            mermaid.run({
+                querySelector: '.mermaid',
+            }).catch(function(error) {
+                console.error('Mermaid rendering error:', error);
+                const diagramDiv = document.getElementById('mermaid-diagram');
+                const errorDiv = document.getElementById('mermaid-error');
+                const errorDetails = document.getElementById('mermaid-error-details');
+                if (diagramDiv && errorDiv && errorDetails) {
+                    diagramDiv.style.display = 'none';
+                    errorDiv.style.display = 'block';
+                    errorDetails.textContent = error.message || String(error);
+                }
+            });
+        } catch (error) {
+            console.error('Mermaid initialization error:', error);
+            const diagramDiv = document.getElementById('mermaid-diagram');
+            const errorDiv = document.getElementById('mermaid-error');
+            const errorDetails = document.getElementById('mermaid-error-details');
+            if (diagramDiv && errorDiv && errorDetails) {
+                diagramDiv.style.display = 'none';
+                errorDiv.style.display = 'block';
+                errorDetails.textContent = error.message || String(error);
+            }
+        }
+        
+        // Initial diagram is already rendered
+    </script>
+</body>
+</html>`;
+
+                dependenciesPanelHtml = htmlContent;
+
+                try {
+                    panel.webview.html = htmlContent;
+                } catch (panelError) {
+                    console.error('[Azure Pipeline Studio] Failed to set panel HTML', panelError);
+                    // Panel might be disposed, ignore
+                    dependenciesPanel = null;
+                    activeDependenciesPanel = null;
+                    return;
+                }
+
+                closeErrorPanel();
+
+                if (!silent) {
+                    vscode.window.setStatusBarMessage('Pipeline dependencies analyzed.', 3000);
+                }
+            } catch (error) {
+                // This catch block handles unexpected errors that weren't caught by inner try-catch blocks
+                const errorMessage = error.message || 'An unexpected error occurred while analyzing dependencies';
+                const enhancedMessage =
+                    `Error in Pipeline Diagram:\n\n${errorMessage}\n\n` +
+                    `💡 Tip: This is an unexpected error. Please check the error details below.`;
+                const enhancedError = new Error(enhancedMessage);
+                enhancedError.stack = error.stack;
+                showErrorWebviewNow(enhancedError, context, 'dependency');
+            } finally {
+                isDependenciesRendering = false;
+                if (pendingDependenciesDocument) {
+                    const queuedDocument = pendingDependenciesDocument;
+                    pendingDependenciesDocument = null;
+                    void renderDependenciesPanel(queuedDocument, { silent: true });
+                }
+            }
+        }, 150); // 150ms delay to ensure loading state renders before heavy computation
+    };
+
+    const scheduleDependenciesRefresh = (document, delayMs = 500) => {
+        if (!dependenciesPanel || !dependenciesDocumentUri) {
+            return;
+        }
+
+        if (document.uri.toString() !== dependenciesDocumentUri.toString()) {
+            return;
+        }
+
+        const configuredDelay = vscode.workspace
+            .getConfiguration('azurePipelineStudio', document.uri)
+            .get('diagram.refreshDelayMs', 500);
+        const effectiveDelay =
+            delayMs === 0 ? 0 : Number.isInteger(configuredDelay) && configuredDelay >= 0 ? configuredDelay : delayMs;
+
+        pendingDependenciesDocument = document;
+        clearTimeout(dependenciesDebounceTimer);
+        clearTimeout(activeDependenciesDebounceTimer);
+        dependenciesDebounceTimer = activeDependenciesDebounceTimer = setTimeout(() => {
+            if (!dependenciesPanel || isDependenciesRendering) {
+                return;
+            }
+            const queuedDocument = pendingDependenciesDocument;
+            pendingDependenciesDocument = null;
+            if (queuedDocument) {
+                void renderDependenciesPanel(queuedDocument, { silent: true });
+            }
+        }, effectiveDelay);
+    };
+
+    const showDependenciesCommandDisposable = vscode.commands.registerCommand(
+        'azurePipelineStudio.showDependencies',
+        () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor || !shouldRenderDocument(editor.document)) {
+                vscode.window.showInformationMessage('Open an Azure Pipeline YAML file to view dependencies.');
+                return;
+            }
+
+            // Start async work but don't await it - let command return immediately
+            void renderDependenciesPanel(editor.document, { reveal: true });
+        }
+    );
+    context.subscriptions.push(showDependenciesCommandDisposable);
+
+    context.subscriptions.push(
+        vscode.workspace.onDidCloseTextDocument((document) => {
+            if (document.uri.scheme === renderedScheme) {
+                renderedContent.delete(document.uri.toString());
+            }
+        })
+    );
+
+    async function handleConfigureResourceLocationRequest(initialAlias) {
+        const targetDocument =
+            lastRenderedDocument ||
+            (vscode.window.activeTextEditor && shouldRenderDocument(vscode.window.activeTextEditor.document)
+                ? vscode.window.activeTextEditor.document
+                : undefined);
+
+        if (!targetDocument) {
+            vscode.window.showInformationMessage(
+                'Open an Azure Pipeline YAML file before configuring resource locations.'
+            );
+            return;
+        }
+
+        const config = vscode.workspace.getConfiguration('azurePipelineStudio', targetDocument.uri);
+        const configuredResources = config.get('resourceLocations');
+        const existingEntries = Array.isArray(configuredResources)
+            ? configuredResources.filter((entry) => entry && typeof entry === 'object')
+            : [];
+
+        const getRepositoryAlias = (entry) => {
+            if (!entry || typeof entry !== 'object') {
+                return undefined;
+            }
+            const candidates = [entry.repository, entry.alias, entry.name];
+            for (const candidate of candidates) {
+                if (typeof candidate === 'string' && candidate.trim().length) {
+                    return candidate.trim();
+                }
+            }
+            return undefined;
+        };
+
+        let alias = typeof initialAlias === 'string' && initialAlias.trim().length ? initialAlias.trim() : undefined;
+        let existingEntry;
+
+        if (alias) {
+            existingEntry = existingEntries.find((entry) => getRepositoryAlias(entry) === alias);
+        } else {
+            const quickPickItems = existingEntries
+                .map((entry) => {
+                    const entryAlias = getRepositoryAlias(entry);
+                    if (!entryAlias) {
+                        return undefined;
+                    }
+                    return {
+                        label: entryAlias,
+                        description: pickFirstString(entry.location, entry.path) || '',
+                        entry,
+                    };
+                })
+                .filter(Boolean);
+
+            quickPickItems.push({
+                label: '$(plus) Add new repository mapping…',
+                description: 'Create a new entry for a repository resource.',
+                newEntry: true,
+            });
+
+            const selection = await vscode.window.showQuickPick(quickPickItems, {
+                placeHolder: 'Select a repository resource to configure',
+            });
+
+            if (!selection) {
+                return;
+            }
+
+            if (selection.newEntry) {
+                const inputAlias = await vscode.window.showInputBox({
+                    prompt: 'Repository alias or name',
+                    placeHolder: 'Name given under resources.repositories[].repository',
+                    ignoreFocusOut: true,
+                });
+
+                if (!inputAlias || !inputAlias.trim().length) {
+                    return;
+                }
+
+                alias = inputAlias.trim();
+            } else {
+                alias = selection.label;
+                existingEntry = selection.entry;
+            }
+        }
+
+        if (!alias) {
+            return;
+        }
+
+        if (!existingEntry) {
+            existingEntry = existingEntries.find((entry) => getRepositoryAlias(entry) === alias);
+        }
+
+        const currentLocation = existingEntry ? pickFirstString(existingEntry.location, existingEntry.path) : undefined;
+        const methodChoice = await vscode.window.showQuickPick(
+            [
+                {
+                    label: '$(folder) Browse for folder',
+                    description: 'Open a folder picker dialog',
+                    method: 'browse',
+                },
+                {
+                    label: '$(edit) Enter path manually',
+                    description: 'Type or paste a file path',
+                    method: 'manual',
+                },
+            ],
+            {
+                placeHolder: `Select how to specify location for repository '${alias}'`,
+                ignoreFocusOut: true,
+            }
+        );
+
+        if (!methodChoice) {
+            return;
+        }
+
+        let newLocation;
+
+        if (methodChoice.method === 'browse') {
+            const folderUri = await vscode.window.showOpenDialog({
+                canSelectFiles: false,
+                canSelectFolders: true,
+                canSelectMany: false,
+                openLabel: `Select location for '${alias}'`,
+                defaultUri: currentLocation ? vscode.Uri.file(currentLocation) : undefined,
+            });
+
+            if (!folderUri || folderUri.length === 0) {
+                vscode.window.showInformationMessage('Repository location not updated.');
+                return;
+            }
+
+            newLocation = folderUri[0].fsPath;
+        } else {
+            newLocation = await vscode.window.showInputBox({
+                prompt: `Local path for repository '${alias}'`,
+                placeHolder: '${workspaceFolder}/path/to/templates',
+                value: currentLocation || '',
+                ignoreFocusOut: true,
+            });
+
+            if (!newLocation || !newLocation.trim().length) {
+                vscode.window.showInformationMessage('Repository location not updated.');
+                return;
+            }
+        }
+
+        const sanitizedLocation = newLocation.trim();
+        const updatedEntries = [];
+        let updated = false;
+
+        existingEntries.forEach((entry) => {
+            const entryAlias = getRepositoryAlias(entry);
+            if (entryAlias === alias) {
+                const cloned = { ...entry, repository: alias, location: sanitizedLocation };
+                delete cloned.path;
+                updatedEntries.push(cloned);
+                updated = true;
+            } else {
+                updatedEntries.push({ ...entry });
+            }
+        });
+
+        if (!updated) {
+            updatedEntries.push({ repository: alias, location: sanitizedLocation });
+        }
+
+        const workspaceFolder = vscode.workspace.getWorkspaceFolder(targetDocument.uri);
+        const target = vscode.ConfigurationTarget.Workspace;
+
+        try {
+            await config.update('resourceLocations', updatedEntries, target);
+
+            vscode.window.showInformationMessage(`Repository '${alias}' location saved.`);
+
+            await renderYamlDocument(targetDocument);
+        } catch (error) {
+            console.error(`[Azure Pipeline Studio] Error saving repository location:`, error);
+            vscode.window.showErrorMessage(`Failed to save repository location: ${error.message}`);
+        }
+    }
+
+    async function handleConfigurePipelineRootRequest() {
+        const targetDocument =
+            lastRenderedDocument ||
+            (vscode.window.activeTextEditor && shouldRenderDocument(vscode.window.activeTextEditor.document)
+                ? vscode.window.activeTextEditor.document
+                : undefined);
+
+        const config = vscode.workspace.getConfiguration('azurePipelineStudio', targetDocument?.uri);
+        const currentRoot = config.get('pipelineRoot', '');
+
+        const methodChoice = await vscode.window.showQuickPick(
+            [
+                { label: '$(folder) Browse for folder', description: 'Open a folder picker dialog', method: 'browse' },
+                { label: '$(edit) Enter path manually', description: 'Type or paste a path', method: 'manual' },
+            ],
+            { placeHolder: 'Select how to specify the Pipeline Root directory', ignoreFocusOut: true }
+        );
+
+        if (!methodChoice) return;
+
+        let newRoot;
+        if (methodChoice.method === 'browse') {
+            const folderUri = await vscode.window.showOpenDialog({
+                canSelectFiles: false,
+                canSelectFolders: true,
+                canSelectMany: false,
+                openLabel: 'Select Pipeline Root directory',
+                defaultUri: currentRoot ? vscode.Uri.file(currentRoot) : undefined,
+            });
+            if (!folderUri || folderUri.length === 0) {
+                vscode.window.showInformationMessage('Pipeline root not updated.');
+                return;
+            }
+            newRoot = folderUri[0].fsPath;
+        } else {
+            newRoot = await vscode.window.showInputBox({
+                prompt: 'Local root directory for resolving pipeline templates',
+                placeHolder: '${workspaceFolder}/path/to/templates',
+                value: currentRoot,
+                ignoreFocusOut: true,
+            });
+            if (newRoot === undefined) {
+                vscode.window.showInformationMessage('Pipeline root not updated.');
+                return;
+            }
+        }
+
+        await config.update('pipelineRoot', newRoot.trim(), vscode.ConfigurationTarget.Workspace);
+        vscode.window.showInformationMessage('Pipeline root saved.');
+
+        if (targetDocument) {
+            await renderYamlDocument(targetDocument);
+        }
+    }
+
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeTextDocument(({ document }) => {
+            if (isRelevantDocument(document)) {
+                scheduleRender(document, 500);
+            }
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.workspace.onDidSaveTextDocument((document) => {
+            // Diagram panel refresh: runs independently of expansion panel
+            scheduleDependenciesRefresh(document, 0);
+            if (!isRelevantDocument(document)) return;
+            const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
+            if (config.get('refreshOnSave', true)) {
+                scheduleRender(document, 0);
+            }
+        })
+    );
+}
+
+function deactivate() {
+    extensionRuntimeGeneration++;
+    // Clear any pending timers to prevent operations after disposal
+    clearTimeout(activeDebounceTimer);
+    clearTimeout(activeErrorDebounceTimer);
+    clearTimeout(activeDependenciesDebounceTimer);
+
+    // Clear module-level state to prevent any new operations
+    activeDebounceTimer = undefined;
+    activeErrorDebounceTimer = undefined;
+    activeDependenciesDebounceTimer = undefined;
+
+    // Dispose of dependencies panel if still open
+    if (activeDependenciesPanel) {
+        try {
+            activeDependenciesPanel.dispose();
+        } catch (e) {
+            // Panel may already be disposed, ignore
+        }
+        activeDependenciesPanel = null;
+    }
+}
+
+function formatTemplateExpansionError(displayPath, expandError) {
+    const msg = typeof expandError?.message === 'string' ? expandError.message : String(expandError);
+    const potentialIssuesMatch = msg.match(/Template\s+'([^']+)'\s+potential issues:([\s\S]*)/);
+    if (potentialIssuesMatch) {
+        const tmpl = potentialIssuesMatch[1];
+        const tail = (potentialIssuesMatch[2] || '').trimEnd();
+        return `[${displayPath}] Template(${tmpl}) expansion failed. Potential issues:${tail ? `${tail}` : ''}`;
+    }
+
+    const lines = msg.split('\n');
+    const firstLine = lines[0];
+    const restLines = lines
+        .slice(1)
+        .map((line) => '  ' + line)
+        .join('\n');
+
+    return restLines
+        ? `[${displayPath}] Template expansion failed\n  ${firstLine}\n${restLines}`
+        : `[${displayPath}] Template expansion failed\n  ${firstLine}`;
+}
+
+module.exports = {
+    activate,
+    deactivate,
+    AzurePipelineParser,
+    formatYaml,
+    formatFilesRecursively,
+    DependencyAnalyzer,
+};
+
+function buildRepositoryOverridesFromCliEntries(entries, cwd) {
+    if (!Array.isArray(entries) || entries.length === 0) {
+        return undefined;
+    }
+
+    const repositories = {};
+    entries.forEach((entry) => {
+        if (!entry || typeof entry !== 'object') {
+            return;
+        }
+
+        const alias = entry.alias;
+        const rawPath = entry.path;
+        if (
+            typeof alias !== 'string' ||
+            !alias.trim().length ||
+            typeof rawPath !== 'string' ||
+            !rawPath.trim().length
+        ) {
+            return;
+        }
+
+        const resolved = resolveConfiguredPath(rawPath, cwd, undefined);
+        if (!resolved) {
+            console.warn(`Skipping repository mapping '${alias}': could not resolve path '${rawPath}'.`);
+            return;
+        }
+
+        repositories[alias] = {
+            repository: alias,
+            location: resolved,
+        };
+    });
+
+    return Object.keys(repositories).length ? repositories : undefined;
+}
+
+function tryAssignIntegerOption(target, key, value, min, max) {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
+        console.warn(`Ignoring --format ${key}: expected integer between ${min} and ${max}.`);
+        return;
+    }
+    target[key] = parsed;
+}
+
+function buildFormatOptionsFromCli(entries) {
+    if (!Array.isArray(entries) || entries.length === 0) {
+        return undefined;
+    }
+
+    const options = {};
+
+    entries.forEach((entry) => {
+        if (typeof entry !== 'string') {
+            return;
+        }
+
+        const separator = entry.indexOf('=');
+        if (separator <= 0 || separator === entry.length - 1) {
+            console.warn(`Ignoring invalid --format entry '${entry}'. Expected key=value.`);
+            return;
+        }
+
+        const key = entry.slice(0, separator).trim();
+        const value = entry.slice(separator + 1).trim();
+        if (!key.length) {
+            console.warn(`Ignoring --format entry with empty key: '${entry}'.`);
+            return;
+        }
+
+        const booleanOptions = ['noArrayIndent', 'forceQuotes', 'sortKeys', 'stepSpacing'];
+        const integerOptions = {
+            indent: [1, 8],
+            lineWidth: [0, Number.MAX_SAFE_INTEGER],
+            firstBlockBlankLines: [0, 4],
+            blankLinesBetweenSections: [0, 4],
+        };
+
+        if (booleanOptions.includes(key)) {
+            if (value === 'true' || value === 'false') {
+                options[key] = value === 'true';
+            } else {
+                console.warn(`Ignoring --format ${key}: expected boolean 'true' or 'false'.`);
+            }
+        } else if (integerOptions[key]) {
+            tryAssignIntegerOption(options, key, value, ...integerOptions[key]);
+        } else if (key === 'newline' || key === 'newlineFormat') {
+            options.newlineFormat = value
+                .replace(/\\r\\n/g, '\r\n')
+                .replace(/\\n/g, '\n')
+                .replace(/\\r/g, '\r');
+        } else {
+            console.warn(`Ignoring unsupported --format option '${key}'.`);
+        }
+    });
+
+    return Object.keys(options).length ? options : undefined;
+}
+
+function formatFilesRecursively(targets, extensions, formatOptions) {
+    const normalizedExtensions = new Set(
+        Array.isArray(extensions) ? extensions.map((ext) => normalizeExtension(ext)).filter(Boolean) : []
+    );
+
+    if (!normalizedExtensions.size) {
+        normalizedExtensions.add('.yml');
+        normalizedExtensions.add('.yaml');
+    }
+
+    const results = {
+        totalFiles: 0,
+        formattedFiles: [],
+        warnings: [],
+        errors: [],
+    };
+
+    if (!Array.isArray(targets) || !targets.length) {
+        return results;
+    }
+
+    const visited = new Set();
+
+    const handleFile = (filePath) => {
+        results.totalFiles += 1;
+        try {
+            const source = fs.readFileSync(filePath, 'utf8');
+            const fileFormatOptions = { ...formatOptions, fileName: filePath, suppressConsoleOutput: true };
+            const formatResult = formatYaml(source, fileFormatOptions);
+
+            if (formatResult.error) {
+                results.errors.push({ filePath, message: formatResult.error });
+                return;
+            }
+
+            // Always collect warnings (e.g., template hints) even if file wasn't formatted
+            if (formatResult.warning) {
+                results.warnings.push({ filePath, message: formatResult.warning });
+            }
+
+            if (formatResult.text !== source) {
+                fs.writeFileSync(filePath, formatResult.text, 'utf8');
+                results.formattedFiles.push(filePath);
+            }
+        } catch (error) {
+            results.errors.push({ filePath, message: error.message });
+        }
+    };
+
+    const walk = (entryPath) => {
+        if (!entryPath) return;
+
+        const resolved = path.resolve(process.cwd(), entryPath);
+        if (visited.has(resolved)) return;
+        visited.add(resolved);
+
+        let stats;
+        try {
+            stats = fs.lstatSync(resolved);
+        } catch (error) {
+            results.errors.push({ filePath: resolved, message: `Cannot access: ${error.message}` });
+            return;
+        }
+
+        if (stats.isSymbolicLink()) return;
+
+        if (stats.isDirectory()) {
+            let children;
+            try {
+                children = fs.readdirSync(resolved);
+            } catch (error) {
+                results.errors.push({ filePath: resolved, message: `Cannot read directory: ${error.message}` });
+                return;
+            }
+            // Continue processing other children even if one fails
+            children.forEach((child) => {
+                try {
+                    walk(path.join(resolved, child));
+                } catch (error) {
+                    results.errors.push({
+                        filePath: path.join(resolved, child),
+                        message: `Unexpected error: ${error.message}`,
+                    });
+                }
+            });
+            return;
+        }
+
+        if (stats.isFile()) {
+            const ext = normalizeExtension(path.extname(resolved));
+            if (ext && normalizedExtensions.has(ext)) {
+                handleFile(resolved);
+            }
+        }
+    };
+
+    targets.forEach((target) => {
+        try {
+            walk(target);
+        } catch (error) {
+            results.errors.push({
+                filePath: target,
+                message: `Failed to process target: ${error.message}`,
+            });
+        }
+    });
+
+    return results;
+}
+
+if (require.main === module) {
+    runCli(process.argv.slice(2));
+}
+
+function runCli(args) {
+    // Only run CLI logic when not in VS Code extension mode
+    if (vscode !== undefined) {
+        return;
+    }
+
+    const usage =
+        'Usage: node extension.js <file1> <file2> ...\n' +
+        'Options:\n' +
+        '  -h, --help                   Show this help message\n' +
+        '  -o, --output <file>          Write output to file (default: in-place, only with single file)\n' +
+        '  -r, --repo <alias=path>      Map repository alias to local path\n' +
+        '  -v, --variables <key=value>  Set compile-time variables (e.g., Build.Reason=Manual)\n' +
+        '  -f, --format-option <key=value>  Set format option (e.g., indent=4)\n' +
+        '  -R, --format-recursive <path>    Format files recursively in directory (when used, all paths are treated as recursive targets)\n' +
+        '  -e, --extension <ext>        File extensions to format (default: .yml, .yaml)\n' +
+        '  -x, --expand-templates       Expand Azure Pipeline template expressions (${{}},$[],$())\n' +
+        '  -a, --azure-compatible       Use Azure-compatible expansion mode (adds blank lines, etc.)\n' +
+        '  -s, --skip-syntax-check      Skip syntax checking during expansion\n' +
+        '  -d, --debug                  Print files being formatted\n' +
+        '  -t, --timing                 Print timing breakdown for each expansion phase';
+
+    const failWithUsage = (message) => {
+        if (message) {
+            console.error(message);
+        }
+        console.error(usage);
+        process.exitCode = 1;
+    };
+
+    const formatRecursiveIssueMessage = (level, filePathValue, message) => {
+        const displayPath = path.relative(process.cwd(), filePathValue) || filePathValue;
+        const locationMatch = message.match(/at line (\d+), column (\d+):/);
+        if (locationMatch) {
+            const line = locationMatch[1];
+            const column = locationMatch[2];
+            const messageWithoutLocation = message.replace(/ at line \d+, column \d+:/, '');
+            return `[${level}] ${displayPath}:${line}:${column}: ${messageWithoutLocation}`;
+        }
+        return `[${level}] ${displayPath}: ${message}`;
+    };
+
+    const argv = minimist(args, {
+        string: ['output', 'repo', 'format-option', 'format-recursive', 'extension', 'variables', 'mock-catalog'],
+        boolean: ['help', 'expand-templates', 'azure-compatible', 'skip-syntax-check', 'debug', 'simulate', 'timing'],
+        alias: {
+            h: 'help',
+            o: 'output',
+            r: 'repo',
+            f: 'format-option',
+            R: 'format-recursive',
+            e: 'extension',
+            v: 'variables',
+            x: 'expand-templates',
+            a: 'azure-compatible',
+            s: 'skip-syntax-check',
+            d: 'debug',
+            t: 'timing',
+        },
+        default: {
+            extension: [],
+            'expand-templates': false,
+            'azure-compatible': false,
+            'skip-syntax-check': false,
+            debug: false,
+            simulate: false,
+            timing: false,
+        },
+    });
+
+    if (argv.help) {
+        console.log(usage);
+        process.exit(0);
+    }
+
+    const knownArgvKeys = new Set([
+        '_',
+        'help',
+        'h',
+        'output',
+        'o',
+        'repo',
+        'r',
+        'variables',
+        'v',
+        'format-option',
+        'f',
+        'format-recursive',
+        'R',
+        'extension',
+        'e',
+        'mock-catalog',
+        'expand-templates',
+        'x',
+        'azure-compatible',
+        'a',
+        'skip-syntax-check',
+        's',
+        'debug',
+        'd',
+        'simulate',
+        'timing',
+        't',
+    ]);
+    const unknownKeys = Object.keys(argv).filter((k) => !knownArgvKeys.has(k));
+    if (unknownKeys.length) {
+        const formatted = unknownKeys.map((k) => (k.length === 1 ? `-${k}` : `--${k}`)).join(', ');
+        failWithUsage(`Error: Unsupported option(s): ${formatted}`);
+        return;
+    }
+
+    const toArray = (val) => [].concat(val || []);
+
+    const parseKeyValue = (entries, label) => {
+        const map = {};
+        const errors = [];
+        for (const entry of entries) {
+            const [key, ...rest] = entry.split('=');
+            const value = rest.join('=').trim();
+            if (!key || !key.trim() || !value) {
+                errors.push(`Invalid ${label} "${entry}". Expected format "key=value".`);
+                continue;
+            }
+            map[key.trim()] = value;
+        }
+        return { map, errors };
+    };
+
+    const filesToFormat = argv._;
+    const formatOption = toArray(argv['format-option']);
+    const extension = toArray(argv.extension);
+    const formatRecursiveRaw = argv['format-recursive'];
+    const formatRecursiveValues = toArray(formatRecursiveRaw).filter((v) => typeof v === 'string' && v.trim().length);
+    const formatRecursiveFlag =
+        args.includes('-R') || args.includes('--format-recursive') || formatRecursiveRaw === true;
+
+    const { map: variablesMap, errors: variableErrors } = parseKeyValue(toArray(argv.variables), 'variable');
+    const { map: repoMap, errors: repoErrors } = parseKeyValue(toArray(argv.repo), 'repository mapping');
+    const repositoryEntries = Object.entries(repoMap).map(([alias, path]) => ({ alias, path }));
+
+    const formatOptionErrors = formatOption
+        .filter((entry) => !entry.includes('='))
+        .map((entry) => `Invalid format option "${entry}". Expected format "key=value".`);
+
+    const allErrors = [...repoErrors, ...variableErrors, ...formatOptionErrors];
+    if (allErrors.length) {
+        allErrors.forEach((message) => console.error(message));
+        failWithUsage();
+        return;
+    }
+
+    const recursiveTargets =
+        formatRecursiveFlag || formatRecursiveValues.length ? [...formatRecursiveValues, ...filesToFormat] : [];
+
+    if (formatRecursiveFlag && recursiveTargets.length === 0) {
+        failWithUsage('Error: --format-recursive requires at least one path.');
+        return;
+    }
+
+    if (recursiveTargets.length) {
+        const formatOverrides = buildFormatOptionsFromCli(formatOption) || {};
+        const extensionFilters = extension.length ? extension : ['.yml', '.yaml'];
+        const recursiveResult = formatFilesRecursively(recursiveTargets, extensionFilters, formatOverrides);
+        recursiveResult.formattedFiles.forEach((filePath) => {
+            const displayPath = path.relative(process.cwd(), filePath) || filePath;
+            console.log(`Formatted: ${displayPath}`);
+        });
+
+        console.log(
+            `Processed ${recursiveResult.totalFiles} file(s); formatted ${recursiveResult.formattedFiles.length}.`
+        );
+
+        recursiveResult.warnings.forEach((entry) => {
+            console.warn(formatRecursiveIssueMessage('warn', entry.filePath, entry.message));
+        });
+
+        recursiveResult.errors.forEach((entry) => {
+            console.error(formatRecursiveIssueMessage('error', entry.filePath, entry.message));
+        });
+
+        if (recursiveResult.errors.length) {
+            process.exitCode = 1;
+        }
+        return;
+    }
+
+    const repositories = buildRepositoryOverridesFromCliEntries(repositoryEntries, process.cwd());
+    const cliVariables = Object.keys(variablesMap).length > 0 ? variablesMap : undefined;
+    const effectiveCliVariables = applyDefaultBuildVariables(cliVariables || {});
+
+    if ((argv['expand-templates'] || argv.simulate) && argv.debug) {
+        printCompileTimeVariableSources('CLI', {}, cliVariables || {}, effectiveCliVariables);
+    }
+
+    if (argv.simulate) {
+        if (filesToFormat.length === 0) {
+            failWithUsage('Error: --simulate requires a pipeline file argument.');
+            return;
+        }
+
+        const simulateFile = path.resolve(process.cwd(), filesToFormat[0]);
+        const simulateSource = fs.readFileSync(simulateFile, 'utf8');
+        const simulateParser = new AzurePipelineParser({ skipSyntax: argv['skip-syntax-check'] || false });
+        const simulateParserOptions = {
+            fileName: simulateFile,
+            baseDir: path.dirname(simulateFile),
+            templateStack: [simulateFile],
+            azureCompatible: false,
+        };
+        if (repositories) {
+            const resourceLocations = {};
+            for (const [alias, config] of Object.entries(repositories)) {
+                resourceLocations[alias] = config.location || config.path;
+            }
+            simulateParserOptions.resourceLocations = resourceLocations;
+        }
+        if (cliVariables) {
+            simulateParserOptions.variables = cliVariables;
+        }
+
+        let mockCatalog = {};
+        const mockCatalogPath = argv['mock-catalog'];
+        if (mockCatalogPath) {
+            const resolvedCatalog = path.resolve(process.cwd(), mockCatalogPath);
+            try {
+                mockCatalog = JSON.parse(fs.readFileSync(resolvedCatalog, 'utf8'));
+            } catch (err) {
+                console.error(`Error loading mock catalog "${mockCatalogPath}": ${err.message}`);
+                process.exitCode = 1;
+                return;
+            }
+        }
+
+        try {
+            const { document } = simulateParser.expandPipeline(simulateSource, simulateParserOptions);
+            const simulator = new PipelineSimulator({ mockCatalog });
+            const results = simulator.simulate(document, { variables: variablesMap });
+            printSimulationResults(results);
+            if (results.totalFailed > 0) {
+                process.exitCode = 1;
+            }
+        } catch (err) {
+            console.error(`Simulation failed: ${err.message}`);
+            process.exitCode = 1;
+        }
+        return;
+    }
+
+    if (filesToFormat.length === 0) {
+        failWithUsage();
+        return;
+    }
+
+    if (argv.output && filesToFormat.length > 1) {
+        failWithUsage('Error: --output option is only supported when formatting a single file.');
+        return;
+    }
+
+    const formatOverrides = buildFormatOptionsFromCli(formatOption) || {};
+
+    // Create parser instance if template expansion is needed
+    const cliParser = argv['expand-templates'] ? new AzurePipelineParser() : null;
+
+    let hasErrors = false;
+
+    for (const filePath of filesToFormat) {
+        const absolutePath = path.resolve(process.cwd(), filePath);
+
+        if (argv.debug) {
+            console.log(`[DEBUG] Formatting: ${absolutePath}`);
+        }
+
+        try {
+            const sourceText = fs.readFileSync(absolutePath, 'utf8');
+
+            // Expand templates if requested
+            let yamlToFormat = sourceText;
+            if (argv['expand-templates'] && cliParser) {
+                const parserOptions = {
+                    fileName: absolutePath,
+                    azureCompatible: argv['azure-compatible'] || false,
+                    skipSyntaxCheck: argv['skip-syntax-check'] || false,
+                    timing: argv.timing || false,
+                };
+                if (repositories) {
+                    // Convert repository mappings to resourceLocations format
+                    const resourceLocations = {};
+                    for (const [alias, config] of Object.entries(repositories)) {
+                        resourceLocations[alias] = config.location || config.path;
+                    }
+                    parserOptions.resourceLocations = resourceLocations;
+                    if (argv.debug) {
+                        console.log('[DEBUG] Resource locations:', JSON.stringify(resourceLocations, null, 2));
+                    }
+                }
+                if (Object.keys(effectiveCliVariables).length > 0) {
+                    parserOptions.variables = effectiveCliVariables;
+                }
+                try {
+                    expandedYaml = cliParser.expandPipelineFromString(sourceText, parserOptions);
+                    yamlToFormat = expandedYaml;
+                } catch (expandError) {
+                    console.error(formatTemplateExpansionError(filePath, expandError));
+                    if (argv.debug) {
+                        console.error('[DEBUG] Full error:', expandError);
+                    }
+                    hasErrors = true;
+                    continue;
+                }
+            }
+
+            const fileOptions = { ...(formatOverrides || {}), fileName: absolutePath };
+            // Don't set expandTemplates in formatter - we already expanded above
+            delete fileOptions.expandTemplates;
+            // Mark that expansion happened so Microsoft compatibility knows to apply transformations
+            if (argv['expand-templates']) {
+                fileOptions.wasExpanded = true;
+                fileOptions.azureCompatible = argv['azure-compatible'] || false;
+            }
+
+            const formatted = formatYaml(yamlToFormat, fileOptions);
+            if (formatted.error) {
+                const errorLines = formatted.error.split('\n');
+                const indentedError = errorLines.map((line, idx) => (idx === 0 ? line : '  ' + line)).join('\n');
+                console.error(`[${filePath}] ${indentedError}`);
+                hasErrors = true;
+                continue;
+            }
+            if (formatted.warning) {
+                const warningLines = formatted.warning.split('\n');
+                const indentedWarning = warningLines.map((line, idx) => (idx === 0 ? line : '  ' + line)).join('\n');
+                console.warn(`[${filePath}] ${indentedWarning}`);
+            }
+            let outputText = formatted.text;
+
+            if (argv['expand-templates'] && argv['azure-compatible']) {
+                // Preserve intentional blank spacing inside heredoc blocks after formatting
+                outputText = cliParser.addHeredocListSpacing(outputText);
+            }
+
+            if (argv.output) {
+                const absoluteOutput = path.resolve(process.cwd(), argv.output);
+                fs.writeFileSync(absoluteOutput, outputText, 'utf8');
+                if (sourceText !== outputText) {
+                    const action = argv['expand-templates'] ? 'Expanded' : 'Formatted';
+                    console.log(`${action} pipeline written to ${absoluteOutput}`);
+                }
+            } else if (argv['expand-templates']) {
+                // In expand mode, never modify files in-place - output to console
+                console.log(outputText);
+            } else {
+                if (sourceText !== outputText) {
+                    fs.writeFileSync(absolutePath, outputText, 'utf8');
+                    console.log(`Formatted ${filePath} (in-place)`);
+                }
+            }
+        } catch (error) {
+            console.error(`[${filePath}] ${error.message}`);
+            hasErrors = true;
+        }
+    }
+
+    if (hasErrors) {
+        process.exitCode = 1;
+    }
+}

@@ -531,14 +531,27 @@ function activate(context) {
         const tipLinesNormalized = tipLines.map((line) =>
             line.startsWith('-') || line.startsWith('•') ? line : `- ${line}`
         );
-        const tipsHtml = tipLinesNormalized.length
-            ? `
+
+        const suggestPipelineRoot =
+            errorType === 'expansion' &&
+            lastRenderedDocument &&
+            !/^\s*-?\s*template\s*:.*@\w+/m.test(
+                typeof lastRenderedDocument.getText === 'function' ? lastRenderedDocument.getText() : ''
+            );
+        const pipelineRootTipLine = suggestPipelineRoot
+            ? `- <a class="file-link" href="#" onclick="configurePipelineRoot(); return false;">Configure Pipeline Root</a> if your templates use absolute paths (e.g. /stages/step.yaml) and no repository resources are defined.`
+            : '';
+
+        const tipsHtml =
+            tipLinesNormalized.length || pipelineRootTipLine
+                ? `
                     <h2>Tips</h2>
                     <div class="error-details">
-                        <code>${formatErrorMessage(tipLinesNormalized.join('\n'))}</code>
+                        ${pipelineRootTipLine ? `<code>${pipelineRootTipLine}</code>` : ''}
+                        ${tipLinesNormalized.length ? `<code>${formatErrorMessage(tipLinesNormalized.join('\n'))}</code>` : ''}
                     </div>
             `
-            : '';
+                : '';
 
         const stackLines = errorStackText
             .split('\n')
@@ -681,6 +694,9 @@ function activate(context) {
                             lineNumber: lineNumber
                         });
                     }
+                    function configurePipelineRoot() {
+                        vscode.postMessage({ command: 'configurePipelineRoot' });
+                    }
                 </script>
             </body>
             </html>
@@ -696,6 +712,8 @@ function activate(context) {
                     message.filePath,
                     message.lineNumber
                 );
+            } else if (message.command === 'configurePipelineRoot') {
+                vscode.commands.executeCommand('azurePipelineStudio.configureRootDirectory');
             }
         });
     };
@@ -867,6 +885,7 @@ function activate(context) {
             const configuredSkipSyntaxCheck = config.get('expansion.skipSyntaxCheck', false);
             const skipSyntaxCheck = options.silent ? configuredSkipSyntaxCheck : false;
             const resourceOverrides = buildResourceOverridesForDocument(document);
+            const rootDirectoryOverride = buildRootDirectoryOverrideForDocument(document);
             const azureCompatible = options.azureCompatible ?? false;
 
             const resourceLocations =
@@ -883,6 +902,7 @@ function activate(context) {
                 azureCompatible,
                 skipSyntaxCheck,
                 ...(resourceOverrides && { resources: resourceOverrides }),
+                ...(rootDirectoryOverride && { rootRepoBaseDir: rootDirectoryOverride }),
                 ...(resourceLocations && { resourceLocations }),
                 ...(Object.keys(effectiveCompileTimeVariables).length && { variables: effectiveCompileTimeVariables }),
             };
@@ -996,6 +1016,27 @@ function activate(context) {
         return Object.keys(repositories).length ? { repositories } : undefined;
     }
 
+    function buildRootDirectoryOverrideForDocument(document) {
+        if (!vscode || !document) return undefined;
+
+        const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
+        const rawRootDirectory = config.get('pipelineRoot');
+        if (typeof rawRootDirectory !== 'string' || !rawRootDirectory.trim().length) return undefined;
+
+        const text = document.getText();
+
+        // If any template reference uses @repoAlias syntax, repository resources
+        // take precedence — don't apply the root directory override.
+        if (/^\s*-?\s*template\s*:.*@\w+/m.test(text)) return undefined;
+
+        const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+        return resolveConfiguredPath(
+            rawRootDirectory,
+            workspaceFolder?.uri.fsPath,
+            document.fileName ? path.dirname(document.fileName) : undefined
+        );
+    }
+
     const shouldRenderDocument = (document) => {
         if (!document || !document.fileName) {
             return false;
@@ -1061,6 +1102,19 @@ function activate(context) {
         }
     );
     context.subscriptions.push(configureCommandDisposable);
+
+    const commandRootDirectoryDisposable = vscode.commands.registerCommand(
+        'azurePipelineStudio.configureRootDirectory',
+        async () => {
+            try {
+                await handleConfigurePipelineRootRequest();
+            } catch (error) {
+                console.error('[Azure Pipeline Studio] Error in configure pipeline root command:', error);
+                vscode.window.showErrorMessage(`Configuration error: ${error.message}`);
+            }
+        }
+    );
+    context.subscriptions.push(commandRootDirectoryDisposable);
 
     const generateLoadingHtml = (projectName) => {
         return `<!DOCTYPE html>
@@ -2157,6 +2211,61 @@ ${mermaidDiagram
         } catch (error) {
             console.error(`[Azure Pipeline Studio] Error saving repository location:`, error);
             vscode.window.showErrorMessage(`Failed to save repository location: ${error.message}`);
+        }
+    }
+
+    async function handleConfigurePipelineRootRequest() {
+        const targetDocument =
+            lastRenderedDocument ||
+            (vscode.window.activeTextEditor && shouldRenderDocument(vscode.window.activeTextEditor.document)
+                ? vscode.window.activeTextEditor.document
+                : undefined);
+
+        const config = vscode.workspace.getConfiguration('azurePipelineStudio', targetDocument?.uri);
+        const currentRoot = config.get('pipelineRoot', '');
+
+        const methodChoice = await vscode.window.showQuickPick(
+            [
+                { label: '$(folder) Browse for folder', description: 'Open a folder picker dialog', method: 'browse' },
+                { label: '$(edit) Enter path manually', description: 'Type or paste a path', method: 'manual' },
+            ],
+            { placeHolder: 'Select how to specify the Pipeline Root directory', ignoreFocusOut: true }
+        );
+
+        if (!methodChoice) return;
+
+        let newRoot;
+        if (methodChoice.method === 'browse') {
+            const folderUri = await vscode.window.showOpenDialog({
+                canSelectFiles: false,
+                canSelectFolders: true,
+                canSelectMany: false,
+                openLabel: 'Select Pipeline Root directory',
+                defaultUri: currentRoot ? vscode.Uri.file(currentRoot) : undefined,
+            });
+            if (!folderUri || folderUri.length === 0) {
+                vscode.window.showInformationMessage('Pipeline root not updated.');
+                return;
+            }
+            newRoot = folderUri[0].fsPath;
+        } else {
+            newRoot = await vscode.window.showInputBox({
+                prompt: 'Local root directory for resolving pipeline templates',
+                placeHolder: '${workspaceFolder}/path/to/templates',
+                value: currentRoot,
+                ignoreFocusOut: true,
+            });
+            if (newRoot === undefined) {
+                vscode.window.showInformationMessage('Pipeline root not updated.');
+                return;
+            }
+        }
+
+        await config.update('pipelineRoot', newRoot.trim(), vscode.ConfigurationTarget.Workspace);
+        vscode.window.showInformationMessage('Pipeline root saved.');
+
+        if (targetDocument) {
+            await renderYamlDocument(targetDocument);
         }
     }
 
