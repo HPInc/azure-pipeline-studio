@@ -2895,6 +2895,7 @@ class AzurePipelineParser {
             baseDir: parent.baseDir,
             repoBaseDir: parent.repoBaseDir,
             rootRepoBaseDir: parent.rootRepoBaseDir,
+            currentRepoAlias: parent.currentRepoAlias,
             resourceLocations: parent.resourceLocations || {},
             scriptsWithExpressions: parent.scriptsWithExpressions, // Preserve scripts tracking
             scriptsWithLastLineExpressions: parent.scriptsWithLastLineExpressions, // Preserve last line tracking
@@ -3148,7 +3149,12 @@ class AzurePipelineParser {
 
             templateBaseDir = path.dirname(resolvedPath);
         } else {
-            const repoBaseDir = context.rootRepoBaseDir || context.repoBaseDir || undefined;
+            // When inside a @repo-aliased template, absolute paths must resolve within that repo's
+            // base dir — not the calling pipeline's rootRepoBaseDir override. rootRepoBaseDir only
+            // applies at the top-level pipeline where no @alias context is active.
+            const repoBaseDir = context.currentRepoAlias
+                ? context.repoBaseDir
+                : context.rootRepoBaseDir || context.repoBaseDir || undefined;
             // Absolute paths (starting with /) are repo-root-relative. Relative paths (including ../)
             // resolve from the calling template's directory. Either way, if we're inside a repo-sourced
             // template, the path inherits that repo alias — matching Azure Pipelines' behaviour.
