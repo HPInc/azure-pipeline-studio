@@ -5,6 +5,7 @@
     "onLanguage:yml",
     "onCommand:azurePipelineStudio.showRenderedYaml",
     "onCommand:azurePipelineStudio.showRenderedYamlAzureCompatible",
+    "onCommand:azurePipelineStudio.configureRootDirectory",
     "onCommand:azurePipelineStudio.configureResourceLocations",
     "onCommand:azurePipelineStudio.formatOriginalYaml",
     "onCommand:azurePipelineStudio.showDependencies"
@@ -29,6 +30,10 @@
       {
         "command": "azurePipelineStudio.configureResourceLocations",
         "title": "Configure Resource Locations"
+      },
+      {
+        "command": "azurePipelineStudio.configureRootDirectory",
+        "title": "Configure Pipeline Root"
       },
       {
         "command": "azurePipelineStudio.formatOriginalYaml",
@@ -118,6 +123,11 @@
           "description": "Add blank lines after each step in pipeline jobs for better readability.",
           "type": "boolean"
         },
+        "azurePipelineStudio.pipelineRoot": {
+          "default": "",
+          "description": "Optional local root directory used to resolve template includes when the top-level pipeline does not define repository resources.",
+          "type": "string"
+        },
         "azurePipelineStudio.refreshOnSave": {
           "default": true,
           "description": "Automatically refresh the rendered YAML view when the source file is saved.",
@@ -189,6 +199,10 @@
         {
           "command": "azurePipelineStudio.configureResourceLocations",
           "group": "3_config@1"
+        },
+        {
+          "command": "azurePipelineStudio.configureRootDirectory",
+          "group": "3_config@2"
         }
       ],
       "editor/context": [
@@ -246,5 +260,5 @@
     "test:module": "node tests/test-azure-expressions-module.js"
   },
   "type": "commonjs",
-  "version": "1.3.0"
+  "version": "1.3.1"
 }

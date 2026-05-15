@@ -531,14 +531,27 @@ function activate(context) {
         const tipLinesNormalized = tipLines.map((line) =>
             line.startsWith('-') || line.startsWith('•') ? line : `- ${line}`
         );
-        const tipsHtml = tipLinesNormalized.length
-            ? `
+
+        const suggestPipelineRoot =
+            errorType === 'expansion' &&
+            lastRenderedDocument &&
+            !/^\s*-?\s*template\s*:.*@\w+/m.test(
+                typeof lastRenderedDocument.getText === 'function' ? lastRenderedDocument.getText() : ''
+            );
+        const pipelineRootTipLine = suggestPipelineRoot
+            ? `- <a class="file-link" href="#" onclick="configurePipelineRoot(); return false;">Configure Pipeline Root</a> if your templates use absolute paths (e.g. /stages/step.yaml) and no repository resources are defined.`
+            : '';
+
+        const tipsHtml =
+            tipLinesNormalized.length || pipelineRootTipLine
+                ? `
                     <h2>Tips</h2>
                     <div class="error-details">
-                        <code>${formatErrorMessage(tipLinesNormalized.join('\n'))}</code>
+                        ${pipelineRootTipLine ? `<code>${pipelineRootTipLine}</code>` : ''}
+                        ${tipLinesNormalized.length ? `<code>${formatErrorMessage(tipLinesNormalized.join('\n'))}</code>` : ''}
                     </div>
             `
-            : '';
+                : '';
 
         const stackLines = errorStackText
             .split('\n')
@@ -681,6 +694,9 @@ function activate(context) {
                             lineNumber: lineNumber
                         });
                     }
+                    function configurePipelineRoot() {
+                        vscode.postMessage({ command: 'configurePipelineRoot' });
+                    }
                 </script>
             </body>
             </html>
@@ -696,6 +712,8 @@ function activate(context) {
                     message.filePath,
                     message.lineNumber
                 );
+            } else if (message.command === 'configurePipelineRoot') {
+                vscode.commands.executeCommand('azurePipelineStudio.configureRootDirectory');
             }
         });
     };
@@ -867,6 +885,7 @@ function activate(context) {
             const configuredSkipSyntaxCheck = config.get('expansion.skipSyntaxCheck', false);
             const skipSyntaxCheck = options.silent ? configuredSkipSyntaxCheck : false;
             const resourceOverrides = buildResourceOverridesForDocument(document);
+            const rootDirectoryOverride = buildRootDirectoryOverrideForDocument(document);
             const azureCompatible = options.azureCompatible ?? false;
 
             const resourceLocations =
@@ -883,6 +902,7 @@ function activate(context) {
                 azureCompatible,
                 skipSyntaxCheck,
                 ...(resourceOverrides && { resources: resourceOverrides }),
+                ...(rootDirectoryOverride && { rootRepoBaseDir: rootDirectoryOverride }),
                 ...(resourceLocations && { resourceLocations }),
                 ...(Object.keys(effectiveCompileTimeVariables).length && { variables: effectiveCompileTimeVariables }),
             };
@@ -996,6 +1016,27 @@ function activate(context) {
         return Object.keys(repositories).length ? { repositories } : undefined;
     }
 
+    function buildRootDirectoryOverrideForDocument(document) {
+        if (!vscode || !document) return undefined;
+
+        const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
+        const rawRootDirectory = config.get('pipelineRoot');
+        if (typeof rawRootDirectory !== 'string' || !rawRootDirectory.trim().length) return undefined;
+
+        const text = document.getText();
+
+        // If any template reference uses @repoAlias syntax, repository resources
+        // take precedence — don't apply the root directory override.
+        if (/^\s*-?\s*template\s*:.*@\w+/m.test(text)) return undefined;
+
+        const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+        return resolveConfiguredPath(
+            rawRootDirectory,
+            workspaceFolder?.uri.fsPath,
+            document.fileName ? path.dirname(document.fileName) : undefined
+        );
+    }
+
     const shouldRenderDocument = (document) => {
         if (!document || !document.fileName) {
             return false;
@@ -1061,6 +1102,19 @@ function activate(context) {
         }
     );
     context.subscriptions.push(configureCommandDisposable);
+
+    const commandRootDirectoryDisposable = vscode.commands.registerCommand(
+        'azurePipelineStudio.configureRootDirectory',
+        async () => {
+            try {
+                await handleConfigurePipelineRootRequest();
+            } catch (error) {
+                console.error('[Azure Pipeline Studio] Error in configure pipeline root command:', error);
+                vscode.window.showErrorMessage(`Configuration error: ${error.message}`);
+            }
+        }
+    );
+    context.subscriptions.push(commandRootDirectoryDisposable);
 
     const generateLoadingHtml = (projectName) => {
         return `<!DOCTYPE html>
@@ -2160,6 +2214,61 @@ ${mermaidDiagram
         }
     }
 
+    async function handleConfigurePipelineRootRequest() {
+        const targetDocument =
+            lastRenderedDocument ||
+            (vscode.window.activeTextEditor && shouldRenderDocument(vscode.window.activeTextEditor.document)
+                ? vscode.window.activeTextEditor.document
+                : undefined);
+
+        const config = vscode.workspace.getConfiguration('azurePipelineStudio', targetDocument?.uri);
+        const currentRoot = config.get('pipelineRoot', '');
+
+        const methodChoice = await vscode.window.showQuickPick(
+            [
+                { label: '$(folder) Browse for folder', description: 'Open a folder picker dialog', method: 'browse' },
+                { label: '$(edit) Enter path manually', description: 'Type or paste a path', method: 'manual' },
+            ],
+            { placeHolder: 'Select how to specify the Pipeline Root directory', ignoreFocusOut: true }
+        );
+
+        if (!methodChoice) return;
+
+        let newRoot;
+        if (methodChoice.method === 'browse') {
+            const folderUri = await vscode.window.showOpenDialog({
+                canSelectFiles: false,
+                canSelectFolders: true,
+                canSelectMany: false,
+                openLabel: 'Select Pipeline Root directory',
+                defaultUri: currentRoot ? vscode.Uri.file(currentRoot) : undefined,
+            });
+            if (!folderUri || folderUri.length === 0) {
+                vscode.window.showInformationMessage('Pipeline root not updated.');
+                return;
+            }
+            newRoot = folderUri[0].fsPath;
+        } else {
+            newRoot = await vscode.window.showInputBox({
+                prompt: 'Local root directory for resolving pipeline templates',
+                placeHolder: '${workspaceFolder}/path/to/templates',
+                value: currentRoot,
+                ignoreFocusOut: true,
+            });
+            if (newRoot === undefined) {
+                vscode.window.showInformationMessage('Pipeline root not updated.');
+                return;
+            }
+        }
+
+        await config.update('pipelineRoot', newRoot.trim(), vscode.ConfigurationTarget.Workspace);
+        vscode.window.showInformationMessage('Pipeline root saved.');
+
+        if (targetDocument) {
+            await renderYamlDocument(targetDocument);
+        }
+    }
+
     context.subscriptions.push(
         vscode.workspace.onDidChangeTextDocument(({ document }) => {
             if (isRelevantDocument(document)) {
@@ -2461,6 +2570,8 @@ function runCli(args) {
         '  -o, --output <file>          Write output to file (default: in-place, only with single file)\n' +
         '  -r, --repo <alias=path>      Map repository alias to local path\n' +
         '  -v, --variables <key=value>  Set compile-time variables (e.g., Build.Reason=Manual)\n' +
+        '  -l, --library-variable <group.variable=value>  Set ADO library variable values for simulation\n' +
+        '  -L, --library-variables-file <file>            Load ADO library variable groups from YAML file\n' +
         '  -f, --format-option <key=value>  Set format option (e.g., indent=4)\n' +
         '  -R, --format-recursive <path>    Format files recursively in directory (when used, all paths are treated as recursive targets)\n' +
         '  -e, --extension <ext>        File extensions to format (default: .yml, .yaml)\n' +
@@ -2491,7 +2602,17 @@ function runCli(args) {
     };
 
     const argv = minimist(args, {
-        string: ['output', 'repo', 'format-option', 'format-recursive', 'extension', 'variables', 'mock-catalog'],
+        string: [
+            'output',
+            'repo',
+            'format-option',
+            'format-recursive',
+            'extension',
+            'variables',
+            'mock-catalog',
+            'library-variable',
+            'library-variables-file',
+        ],
         boolean: ['help', 'expand-templates', 'azure-compatible', 'skip-syntax-check', 'debug', 'simulate', 'timing'],
         alias: {
             h: 'help',
@@ -2501,6 +2622,8 @@ function runCli(args) {
             R: 'format-recursive',
             e: 'extension',
             v: 'variables',
+            l: 'library-variable',
+            L: 'library-variables-file',
             x: 'expand-templates',
             a: 'azure-compatible',
             s: 'skip-syntax-check',
@@ -2540,6 +2663,10 @@ function runCli(args) {
         'extension',
         'e',
         'mock-catalog',
+        'library-variable',
+        'l',
+        'library-variables-file',
+        'L',
         'expand-templates',
         'x',
         'azure-compatible',
@@ -2588,11 +2715,65 @@ function runCli(args) {
     const { map: repoMap, errors: repoErrors } = parseKeyValue(toArray(argv.repo), 'repository mapping');
     const repositoryEntries = Object.entries(repoMap).map(([alias, path]) => ({ alias, path }));
 
+    const libraryVariablesMap = {};
+    const libraryVariableErrors = [];
+    const mergeLibraryVariables = (sourceMap) => {
+        if (!sourceMap || typeof sourceMap !== 'object' || Array.isArray(sourceMap)) return;
+        for (const [groupName, groupVariables] of Object.entries(sourceMap)) {
+            if (typeof groupName !== 'string' || !groupName.trim()) continue;
+            if (!groupVariables || typeof groupVariables !== 'object' || Array.isArray(groupVariables)) continue;
+            const groupKey = groupName.trim();
+            libraryVariablesMap[groupKey] = libraryVariablesMap[groupKey] || {};
+            for (const [variableName, variableValue] of Object.entries(groupVariables)) {
+                if (typeof variableName !== 'string' || !variableName.trim()) continue;
+                libraryVariablesMap[groupKey][variableName.trim()] =
+                    variableValue === undefined || variableValue === null ? '' : String(variableValue);
+            }
+        }
+    };
+    const libraryVariablesFile = pickFirstString(argv['library-variables-file']);
+    if (libraryVariablesFile) {
+        const resolvedLibraryFile = path.resolve(process.cwd(), libraryVariablesFile);
+        try {
+            const parsed = yaml.parse(fs.readFileSync(resolvedLibraryFile, 'utf8'));
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                libraryVariableErrors.push(
+                    `Invalid library variables file "${libraryVariablesFile}". Expected a YAML object with group names as keys.`
+                );
+            } else {
+                mergeLibraryVariables(parsed);
+            }
+        } catch (err) {
+            libraryVariableErrors.push(`Invalid library variables file "${libraryVariablesFile}": ${err.message}`);
+        }
+    }
+    for (const entry of toArray(argv['library-variable'])) {
+        const [groupAndVariable, ...valueParts] = entry.split('=');
+        const value = valueParts.join('=').trim();
+        if (!groupAndVariable || !groupAndVariable.trim() || value === undefined) {
+            libraryVariableErrors.push(`Invalid library variable "${entry}". Expected format "group.variable=value".`);
+            continue;
+        }
+        const separatorIndex = groupAndVariable.indexOf('.');
+        if (separatorIndex <= 0 || separatorIndex === groupAndVariable.length - 1) {
+            libraryVariableErrors.push(`Invalid library variable "${entry}". Expected format "group.variable=value".`);
+            continue;
+        }
+        const groupName = groupAndVariable.slice(0, separatorIndex).trim();
+        const variableName = groupAndVariable.slice(separatorIndex + 1).trim();
+        if (!groupName || !variableName) {
+            libraryVariableErrors.push(`Invalid library variable "${entry}". Expected format "group.variable=value".`);
+            continue;
+        }
+        libraryVariablesMap[groupName] = libraryVariablesMap[groupName] || {};
+        libraryVariablesMap[groupName][variableName] = value;
+    }
+
     const formatOptionErrors = formatOption
         .filter((entry) => !entry.includes('='))
         .map((entry) => `Invalid format option "${entry}". Expected format "key=value".`);
 
-    const allErrors = [...repoErrors, ...variableErrors, ...formatOptionErrors];
+    const allErrors = [...repoErrors, ...variableErrors, ...formatOptionErrors, ...libraryVariableErrors];
     if (allErrors.length) {
         allErrors.forEach((message) => console.error(message));
         failWithUsage();
@@ -2684,7 +2865,11 @@ function runCli(args) {
         try {
             const { document } = simulateParser.expandPipeline(simulateSource, simulateParserOptions);
             const simulator = new PipelineSimulator({ mockCatalog });
-            const results = simulator.simulate(document, { variables: variablesMap });
+            const results = simulator.simulate(document, {
+                variables: variablesMap,
+                libraryVariables: libraryVariablesMap,
+                workingDirectory: path.dirname(simulateFile),
+            });
             printSimulationResults(results);
             if (results.totalFailed > 0) {
                 process.exitCode = 1;

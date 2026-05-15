@@ -59,7 +59,7 @@ const test1Pass = runTestCase(
             pattern: '**/test.dll',
             emptyValue: '',
             value: 'test-value',
-            poolName: 'codeway-aws-linux',
+            poolName: 'linux-aws-default',
             arch: 'x64',
             version: '1.2.3',
             message1: 'Hello',

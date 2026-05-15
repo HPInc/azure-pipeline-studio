@@ -12,12 +12,12 @@ When expanding a variables array, the parser processes variables sequentially an
 variables:
 - name: pool
   ${{ if eq(parameters.os, 'linux') }}:
-    value: 'codeway-aws-linux2023'
+    value: 'linux-aws-2023'
   ${{ else }}:
     value: 'other-pool'
 
 - name: ephemeralAgent
-  ${{ if eq(variables.pool, 'codeway-aws-linux2023') }}:
+  ${{ if eq(variables.pool, 'linux-aws-2023') }}:
     value: true
   ${{ else }}:
     value: false
@@ -32,12 +32,12 @@ When expanding with `parameters.os=linux`:
 ```yaml
 variables:
 - name: pool
-  value: codeway-aws-linux2023
+  value: linux-aws-2023
 - name: ephemeralAgent
   value: true
 ```
 
-The `ephemeralAgent` correctly evaluates to `true` because `variables.pool` equals `'codeway-aws-linux2023'`.
+The `ephemeralAgent` correctly evaluates to `true` because `variables.pool` equals `'linux-aws-2023'`.
 
 ## Implementation Details
 

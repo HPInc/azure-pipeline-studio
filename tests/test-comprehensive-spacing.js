@@ -63,8 +63,8 @@ runTest(
 
 runTest(
     'One blank line before name section',
-    'resources:\n  repositories:\n  - repository: templates\n    type: githubenterprise\n    name: codeway/templates\n    endpoint: ghe\nname: $(Date:yyyyMMdd)$(Rev:.r)\ntrigger:\n  branches:\n    include:\n    - main',
-    'resources:\n  repositories:\n  - repository: templates\n    type: githubenterprise\n    name: codeway/templates\n    endpoint: ghe\n\nname: $(Date:yyyyMMdd)$(Rev:.r)\n\ntrigger:\n  branches:\n    include:\n    - main'
+    'resources:\n  repositories:\n  - repository: templates\n    type: githubenterprise\n    name: org/templates\n    endpoint: ghe\nname: $(Date:yyyyMMdd)$(Rev:.r)\ntrigger:\n  branches:\n    include:\n    - main',
+    'resources:\n  repositories:\n  - repository: templates\n    type: githubenterprise\n    name: org/templates\n    endpoint: ghe\n\nname: $(Date:yyyyMMdd)$(Rev:.r)\n\ntrigger:\n  branches:\n    include:\n    - main'
 );
 
 runTest(
@@ -259,8 +259,8 @@ console.log('\n📍 Comment Alignment Tests');
 
 runTest(
     'Comments between tasks preserve spacing',
-    'steps:\n- task: UseDotNet@2\n  displayName: Install .NET SDK\n  inputs:\n    packageType: sdk\n    version: 8.0.x\n\n# Stop hphost service\n- task: PowerShell@2\n  inputs:\n    targetType: inline\n    script: Stop-Service -Name "hphost" -Force\n    pwsh: false\n  displayName: Stop hphost service',
-    'steps:\n- task: UseDotNet@2\n  displayName: Install .NET SDK\n  inputs:\n    packageType: sdk\n    version: 8.0.x\n\n# Stop hphost service\n- task: PowerShell@2\n  inputs:\n    targetType: inline\n    script: Stop-Service -Name "hphost" -Force\n    pwsh: false\n  displayName: Stop hphost service'
+    'steps:\n- task: UseDotNet@2\n  displayName: Install .NET SDK\n  inputs:\n    packageType: sdk\n    version: 8.0.x\n\n# Stop apphost service\n- task: PowerShell@2\n  inputs:\n    targetType: inline\n    script: Stop-Service -Name "apphost" -Force\n    pwsh: false\n  displayName: Stop apphost service',
+    'steps:\n- task: UseDotNet@2\n  displayName: Install .NET SDK\n  inputs:\n    packageType: sdk\n    version: 8.0.x\n\n# Stop apphost service\n- task: PowerShell@2\n  inputs:\n    targetType: inline\n    script: Stop-Service -Name "apphost" -Force\n    pwsh: false\n  displayName: Stop apphost service'
 );
 
 runTest(
@@ -283,8 +283,8 @@ runTest(
 
 runTest(
     'Comment before task with blank then another comment preserves spacing',
-    'steps:\n- task: PowerShell@2\n  inputs:\n    targetType: inline\n    script: Stop-Service -Name "hphost" -Force\n    pwsh: false\n  displayName: Stop hphost service\n\n# Start hphost service\n- task: PowerShell@2\n  inputs:\n    targetType: inline\n    script: Start-Service -Name "hphost"\n    pwsh: false\n  displayName: Start hphost service',
-    'steps:\n- task: PowerShell@2\n  inputs:\n    targetType: inline\n    script: Stop-Service -Name "hphost" -Force\n    pwsh: false\n  displayName: Stop hphost service\n\n# Start hphost service\n- task: PowerShell@2\n  inputs:\n    targetType: inline\n    script: Start-Service -Name "hphost"\n    pwsh: false\n  displayName: Start hphost service'
+    'steps:\n- task: PowerShell@2\n  inputs:\n    targetType: inline\n    script: Stop-Service -Name "apphost" -Force\n    pwsh: false\n  displayName: Stop apphost service\n\n# Start apphost service\n- task: PowerShell@2\n  inputs:\n    targetType: inline\n    script: Start-Service -Name "apphost"\n    pwsh: false\n  displayName: Start apphost service',
+    'steps:\n- task: PowerShell@2\n  inputs:\n    targetType: inline\n    script: Stop-Service -Name "apphost" -Force\n    pwsh: false\n  displayName: Stop apphost service\n\n# Start apphost service\n- task: PowerShell@2\n  inputs:\n    targetType: inline\n    script: Start-Service -Name "apphost"\n    pwsh: false\n  displayName: Start apphost service'
 );
 
 // ============================================================
