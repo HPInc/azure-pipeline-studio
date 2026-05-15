@@ -24,9 +24,9 @@
       ],
       "program": "${workspaceFolder}/extension.js",
       "args": [
-        "/root/codeway.yaml",
+        "/root/pipeline.yaml",
         "-r", "templates=/root/workspace/templates/",
-        "-v", "Build.Reason=Manual",  "-v", "Build.SourceBranch=refs/heads/p1", "-v", "Build.SourceBranchName=p1", "-v", "System.TeamFoundationCollectionUri=https://dev.azure.com/hp", "-v", "System.TeamProject=OneClient",
+        "-v", "Build.Reason=Manual",  "-v", "Build.SourceBranch=refs/heads/p1", "-v", "Build.SourceBranchName=p1", "-v", "System.TeamFoundationCollectionUri=https://dev.azure.com/example", "-v", "System.TeamProject=ExampleProject",
         //"${workspaceFolder}/tests/inputs/include-step-template.yaml",
         "-x", "-f", "-a"
       ]

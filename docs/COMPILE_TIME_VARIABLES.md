@@ -34,7 +34,7 @@ node extension.js pipeline.yaml -x \
   -o expanded.yaml
 
 # With repository mapping
-node extension.js codeway.yaml -x \
+node extension.js pipeline.yaml -x \
   -r templates=/path/to/templates \
   -v "Build.Reason=Schedule" \
   -v "Build.SourceBranch=refs/heads/develop" \
