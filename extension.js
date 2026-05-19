@@ -2717,6 +2717,7 @@ function runCli(args) {
 
     const libraryVariablesMap = {};
     const libraryVariableErrors = [];
+    let debugLibVars = process.env.DEBUG_LIB_VARS === 'true';
     const mergeLibraryVariables = (sourceMap) => {
         if (!sourceMap || typeof sourceMap !== 'object' || Array.isArray(sourceMap)) return;
         for (const [groupName, groupVariables] of Object.entries(sourceMap)) {
@@ -2823,6 +2824,23 @@ function runCli(args) {
         printCompileTimeVariableSources('CLI', {}, cliVariables || {}, effectiveCliVariables);
     }
 
+    const parseSimulationCheckoutConfig = (gitOptionRaw) => {
+        if (gitOptionRaw !== undefined) {
+            const raw = String(gitOptionRaw).trim();
+
+            const isRemoteUrl = /^(https?:\/\/|ssh:\/\/|git@)/i.test(raw);
+            if (isRemoteUrl) {
+                return { checkoutSource: 'git', checkoutRepository: raw };
+            }
+
+            return { checkoutSource: 'local', checkoutRepository: path.resolve(process.cwd(), raw) };
+        }
+
+        return { checkoutSource: 'local', checkoutRepository: '' };
+    };
+
+    const checkoutConfig = parseSimulationCheckoutConfig(argv.git);
+
     if (argv.simulate) {
         if (filesToFormat.length === 0) {
             failWithUsage('Error: --simulate requires a pipeline file argument.');
@@ -2832,6 +2850,26 @@ function runCli(args) {
         const simulateFile = path.resolve(process.cwd(), filesToFormat[0]);
         const simulateSource = fs.readFileSync(simulateFile, 'utf8');
         const simulateParser = new AzurePipelineParser({ skipSyntax: argv['skip-syntax-check'] || false });
+        const simulationRoot = path.resolve(process.cwd(), path.join(path.dirname(simulateFile), 'simulation'));
+        fs.rmSync(simulationRoot, { recursive: true, force: true });
+        const simulationVariables = {
+            'Build.Repository.LocalPath': path.dirname(simulateFile),
+            'Build.SourcesDirectory': path.dirname(simulateFile),
+            'Build.ArtifactStagingDirectory': path.join(simulationRoot, 'artifacts'),
+            'Build.StagingDirectory': path.join(simulationRoot, 'staging'),
+            'Build.BinariesDirectory': path.join(simulationRoot, 'binaries'),
+            'Pipeline.Workspace': path.join(simulationRoot, 'workspace'),
+            'Agent.WorkFolder': path.join(simulationRoot, 'agent', 'work'),
+            'Agent.BuildDirectory': path.join(simulationRoot, 'agent', 'build'),
+            'Agent.TempDirectory': path.join(simulationRoot, 'agent', 'temp'),
+            'Agent.ToolsDirectory': path.join(simulationRoot, 'agent', 'tools'),
+            'Agent.HomeDirectory': path.join(simulationRoot, 'agent', 'home'),
+            'Simulator.OutputRoot': simulationRoot,
+            'Simulator.CheckoutSource': checkoutConfig.checkoutSource,
+            'Simulator.CheckoutRepository': checkoutConfig.checkoutRepository,
+            'Simulator.RepositoryRoot': checkoutConfig.checkoutRepository || path.dirname(simulateFile),
+        };
+
         const simulateParserOptions = {
             fileName: simulateFile,
             baseDir: path.dirname(simulateFile),
@@ -2846,7 +2884,7 @@ function runCli(args) {
             simulateParserOptions.resourceLocations = resourceLocations;
         }
         if (cliVariables) {
-            simulateParserOptions.variables = cliVariables;
+            simulateParserOptions.variables = effectiveCliVariables;
         }
 
         let mockCatalog = {};
@@ -2864,13 +2902,45 @@ function runCli(args) {
 
         try {
             const { document } = simulateParser.expandPipeline(simulateSource, simulateParserOptions);
-            const simulator = new PipelineSimulator({ mockCatalog });
+            const simulator = new PipelineSimulator({ mockCatalog, outputRoot: simulationRoot });
+            if (debugLibVars) {
+                console.log('[DEBUG] Library Variables Map:', JSON.stringify(libraryVariablesMap, null, 2));
+            }
             const results = simulator.simulate(document, {
-                variables: variablesMap,
+                defaultVariables: simulationVariables,
+                variables: { ...simulationVariables, ...variablesMap },
                 libraryVariables: libraryVariablesMap,
                 workingDirectory: path.dirname(simulateFile),
+                checkoutSource: checkoutConfig.checkoutSource,
+                checkoutRepository: checkoutConfig.checkoutRepository,
             });
             printSimulationResults(results);
+            console.log(`[sim] output root: ${simulationRoot}`);
+            if (results.publishedArtifacts.length > 0) {
+                console.log(`[sim] pipeline-artifacts:  ${path.join(simulationRoot, 'pipeline-artifacts')}`);
+                const packagesArtifact = results.publishedArtifacts.find((a) => a.artifactName === 'Packages');
+                if (packagesArtifact) {
+                    console.log(`[sim] Packages:      ${packagesArtifact.snapshotPath}`);
+                }
+            }
+            if (results.feedPublishes && results.feedPublishes.length > 0) {
+                const nugetPublishes = results.feedPublishes.filter((entry) => entry.type === 'nuget');
+                if (nugetPublishes.length > 0) {
+                    console.log(`[sim] nuget packages:      ${path.join(simulationRoot, 'feed-publishes', 'nuget')}`);
+                    for (const publish of nugetPublishes) {
+                        console.log(`[sim]   ${publish.feedPath}`);
+                    }
+                }
+                const universalPublishes = results.feedPublishes.filter((entry) => entry.type === 'universal');
+                if (universalPublishes.length > 0) {
+                    console.log(
+                        `[sim] universal packages:  ${path.join(simulationRoot, 'feed-publishes', 'universal')}`
+                    );
+                    for (const publish of universalPublishes) {
+                        console.log(`[sim]   ${publish.feedPath}`);
+                    }
+                }
+            }
             if (results.totalFailed > 0) {
                 process.exitCode = 1;
             }

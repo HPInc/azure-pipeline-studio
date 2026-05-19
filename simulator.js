@@ -441,6 +441,33 @@ class PipelineSimulator {
                 ? this._substituteVariables(rawWorkDir, variables) || process.cwd()
                 : process.cwd();
 
+            const simulatedNugetPack = this._simulateTemplateNuGetPackStep(
+                displayName,
+                substituted,
+                variables,
+                workDir
+            );
+            if (simulatedNugetPack) {
+                stepResult.stdout = simulatedNugetPack.stdout;
+                stepResult.stderr = '';
+                stepResult.exitCode = 0;
+                stepResult.result = 'Succeeded';
+                stepResult.variables = { ...(simulatedNugetPack.variables || {}) };
+                stepResult.outputVariables = {};
+                return stepResult;
+            }
+
+            const simulatedNugetPush = this._simulateTemplateNuGetPushStep(displayName, variables, workDir);
+            if (simulatedNugetPush) {
+                stepResult.stdout = simulatedNugetPush.stdout;
+                stepResult.stderr = '';
+                stepResult.exitCode = 0;
+                stepResult.result = 'Succeeded';
+                stepResult.variables = { ...(simulatedNugetPush.variables || {}) };
+                stepResult.outputVariables = {};
+                return stepResult;
+            }
+
             const stepEnv = this._resolveStepEnv(stepDoc.env, variables);
             const run = this._executeScript(shell, substituted, variables, workDir, stepEnv);
             const outputText = `${run.stdout || ''}\n${run.stderr || ''}`;
@@ -920,6 +947,17 @@ class PipelineSimulator {
             .replace(/\s*\]$/, '')
             .trim();
 
+        // $[ coalesce(arg1, arg2, ...) ] → return first non-empty resolved argument.
+        const coalesceMatch = /^coalesce\((.+)\)$/i.exec(inner);
+        if (coalesceMatch) {
+            const args = this._splitExpressionArgs(coalesceMatch[1]);
+            for (const arg of args) {
+                const resolved = this._resolveExpressionArg(arg.trim(), variables);
+                if (resolved !== undefined && resolved !== '') return resolved;
+            }
+            return '';
+        }
+
         // $[ variables.x ] → look up 'x' directly in the variables map.
         const varsPrefixMatch = /^variables\.(.+)$/i.exec(inner);
         if (varsPrefixMatch) {
@@ -934,6 +972,64 @@ class PipelineSimulator {
         }
 
         return ''; // Unresolved runtime expression → empty string
+    }
+
+    /**
+     * Split a comma-separated expression argument list, respecting brackets and quotes.
+     * e.g. "stageDependencies.A.B.outputs['x.y'], '0.0.0'" → two args
+     */
+    _splitExpressionArgs(str) {
+        const args = [];
+        let depth = 0;
+        let current = '';
+        let inQuote = false;
+        let quoteChar = '';
+        for (const ch of str) {
+            if (inQuote) {
+                current += ch;
+                if (ch === quoteChar) inQuote = false;
+            } else if (ch === "'" || ch === '"') {
+                inQuote = true;
+                quoteChar = ch;
+                current += ch;
+            } else if (ch === '(' || ch === '[') {
+                depth++;
+                current += ch;
+            } else if (ch === ')' || ch === ']') {
+                depth--;
+                current += ch;
+            } else if (ch === ',' && depth === 0) {
+                args.push(current.trim());
+                current = '';
+            } else {
+                current += ch;
+            }
+        }
+        if (current.trim()) args.push(current.trim());
+        return args;
+    }
+
+    /**
+     * Resolve a single expression argument (used by coalesce and similar functions).
+     * Handles string literals ('value'), variables.x references, and direct variable lookups.
+     */
+    _resolveExpressionArg(arg, variables) {
+        // String literal: 'value' or "value"
+        const literalMatch = /^['"](.*)['"]$/.exec(arg);
+        if (literalMatch) return literalMatch[1];
+
+        // variables.x reference
+        const varsPrefixMatch = /^variables\.(.+)$/i.exec(arg);
+        if (varsPrefixMatch) {
+            return variables[varsPrefixMatch[1].trim()] ?? '';
+        }
+
+        // Direct lookup: stageDependencies.S.J.outputs['key'], etc.
+        if (Object.prototype.hasOwnProperty.call(variables, arg)) {
+            return variables[arg];
+        }
+
+        return '';
     }
 
     /**
@@ -1884,7 +1980,8 @@ exit 0
         }
         // Auto-publish packages to feed-publishes if not already published by Release stage
         // This ensures packages are available for publishing even if Release stage didn't run
-        if (this._feedPublishes.length === 0 && hasPackages) {
+        const hasNugetFeedPublish = this._feedPublishes.some((p) => p.type === 'nuget');
+        if (!hasNugetFeedPublish && hasPackages) {
             const packageFiles = fs
                 .readdirSync(packagesDir)
                 .filter((name) => /\.(snupkg|nupkg)$/i.test(name))
@@ -2029,6 +2126,144 @@ exit 0
             JSON.stringify(this._feedPublishes, null, 2),
             'utf8'
         );
+    }
+
+    _simulateTemplateNuGetPushStep(displayName, variables, workDir) {
+        const match = /^Publish NuGet Packages\((.+)\)$/.exec(String(displayName || '').trim());
+        if (!match) {
+            return null;
+        }
+
+        const feedIdentifier = match[1].trim() || 'local-nuget-feed';
+        const resolvedWorkDir = workDir ? path.resolve(workDir) : process.cwd();
+        fs.mkdirSync(resolvedWorkDir, { recursive: true });
+
+        let packageFiles = this._collectPackageFiles(['*.nupkg', '*.snupkg'], resolvedWorkDir, ['.nupkg', '.snupkg']);
+        if (packageFiles.length === 0) {
+            const buildNumber = String(variables['Build.BuildNumber'] || '0.0.0');
+            const fallbackPackageName = `dummy.${buildNumber}.nupkg`;
+            const fallbackPackagePath = path.join(resolvedWorkDir, fallbackPackageName);
+            fs.writeFileSync(fallbackPackagePath, '[sim] dummy package generated for NuGet publish step\n', 'utf8');
+            packageFiles = [fallbackPackagePath];
+        }
+
+        const feedRoot = path.join(
+            this._getFeedPublishRoot(variables, resolvedWorkDir),
+            'nuget',
+            this._sanitizePathSegment(feedIdentifier)
+        );
+        fs.mkdirSync(feedRoot, { recursive: true });
+
+        const published = [];
+        for (const pkgFile of packageFiles) {
+            const destinationPath = path.join(feedRoot, path.basename(pkgFile));
+            if (fs.existsSync(pkgFile)) {
+                fs.copyFileSync(pkgFile, destinationPath);
+            } else {
+                fs.writeFileSync(destinationPath, `[sim] stub NuGet package: ${path.basename(pkgFile)}\n`, 'utf8');
+            }
+            published.push(path.basename(pkgFile));
+        }
+
+        const feedEndpoint = `https://pkgs.dev.azure.com/local/${feedIdentifier}/nuget/v3/index.json`;
+        this._feedPublishes.push({
+            type: 'nuget',
+            feedType: 'internal',
+            feedIdentifier,
+            packages: published,
+            feedPath: feedRoot,
+            source: 'template-bash-publish',
+            createdAt: new Date().toISOString(),
+        });
+        this._writeFeedPublishesIndex(this._getFeedPublishRoot(variables, resolvedWorkDir));
+
+        return {
+            stdout: [
+                `Created NuGet.config for ${feedEndpoint}`,
+                '[var] NUGET_PUSH_LOG_CHANNEL=notifications',
+                `[sim] nuget-push: ${published.length} package(s) -> ${feedRoot}`,
+            ].join('\n'),
+            variables: {
+                NUGET_PUSH_LOG_CHANNEL: 'notifications',
+            },
+        };
+    }
+
+    _simulateTemplateNuGetPackStep(displayName, scriptContent, variables, workDir) {
+        if (String(displayName || '').trim() !== 'Create Nuget Packages') {
+            return null;
+        }
+
+        const resolvedWorkDir = workDir ? path.resolve(workDir) : process.cwd();
+        const packageDirMatch = /pkg_dir="([^"]+)"/.exec(scriptContent);
+        const packageDirRaw = packageDirMatch ? packageDirMatch[1] : 'Packages';
+        const packageDir = this._resolvePath(packageDirRaw, variables, resolvedWorkDir);
+        fs.mkdirSync(packageDir, { recursive: true });
+
+        const nuspecListMatch = /nuspec_files=\(([^)]*)\)/.exec(scriptContent);
+        const nuspecFiles = nuspecListMatch
+            ? nuspecListMatch[1]
+                  .split(/\s+/)
+                  .map((entry) => entry.trim())
+                  .filter(Boolean)
+            : ['package.nuspec'];
+
+        const versionMatch = /version="([^"]+)"/.exec(scriptContent);
+        const resolvedVersion =
+            (versionMatch && versionMatch[1]) ||
+            String(variables.version || variables.VERSION || variables['Build.BuildNumber'] || '0.0.0');
+        const enableSymbols = /enable_symbols="true"/i.test(scriptContent);
+
+        const packageContentRoots = [path.join(resolvedWorkDir, 'All'), resolvedWorkDir];
+        const packageContentFiles = [];
+        for (const root of packageContentRoots) {
+            if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
+                continue;
+            }
+            for (const filePath of this._collectPackageFiles(['**/*'], root, ['.dll', '.pdb', '.json', '.cfg'])) {
+                packageContentFiles.push(path.relative(root, filePath).replace(/\\/g, '/'));
+            }
+            if (packageContentFiles.length > 0) {
+                break;
+            }
+        }
+
+        const createdPackages = [];
+        for (const nuspecFile of nuspecFiles) {
+            const packageId = path.basename(nuspecFile, path.extname(nuspecFile)) || 'package';
+            const nupkgName = `${packageId}.${resolvedVersion}.nupkg`;
+            const nupkgPath = path.join(packageDir, nupkgName);
+            const packageManifest = {
+                packageId,
+                version: resolvedVersion,
+                nuspec: nuspecFile,
+                files: packageContentFiles.length > 0 ? packageContentFiles : ['artifact-placeholder.txt'],
+                generatedBy: 'azure-pipeline-studio-simulator',
+            };
+            fs.writeFileSync(nupkgPath, `${JSON.stringify(packageManifest, null, 2)}\n`, 'utf8');
+            createdPackages.push(nupkgName);
+
+            if (enableSymbols) {
+                const snupkgName = `${packageId}.${resolvedVersion}.snupkg`;
+                const snupkgPath = path.join(packageDir, snupkgName);
+                fs.writeFileSync(
+                    snupkgPath,
+                    `${JSON.stringify({ ...packageManifest, symbolPackage: true }, null, 2)}\n`,
+                    'utf8'
+                );
+                createdPackages.push(snupkgName);
+            }
+        }
+
+        return {
+            stdout: [
+                `[sim] nuget-pack(template): ${createdPackages.length} package file(s) -> ${packageDir}`,
+                ...createdPackages.map((name) => `[sim] created ${name}`),
+            ].join('\n'),
+            variables: {
+                NUGET_PACK_ERROR: 'false',
+            },
+        };
     }
 
     /**
