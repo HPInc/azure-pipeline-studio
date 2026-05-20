@@ -32,6 +32,7 @@ const AZURE_DEFAULTS = Object.freeze({
     'Build.StagingDirectory': '/tmp/aps-sim-staging',
     'Build.BinariesDirectory': '/tmp/aps-sim-binaries',
     'Build.SourcesDirectory': process.cwd(),
+    'System.DefaultWorkingDirectory': process.cwd(),
     'Build.DefinitionName': 'local-pipeline',
     'Build.DefinitionId': '0',
     'Build.BuildId': '0',
@@ -159,11 +160,22 @@ class PipelineSimulator {
         // Extract Release stage NuGet feed identifier for use in fallback publishing
         this._releaseStageNugetFeed = this._extractReleaseStageNugetFeed(stages);
 
+        // Build a case-insensitive set of stage names to run, if the caller restricted them.
+        const stageFilter =
+            Array.isArray(options.stages) && options.stages.length
+                ? new Set(options.stages.map((s) => String(s).toLowerCase()))
+                : null;
+
         // stageDeps accumulates stageDependencies.* keys from completed stages
         // so that downstream stages can resolve $[ stageDependencies.S.J.outputs['...'] ].
         const stageDeps = {};
 
         for (const stageDoc of stages) {
+            // Skip stages that are not in the caller-supplied filter (if any).
+            const stageName = stageDoc.stage || 'Stage';
+            if (stageFilter && !stageFilter.has(stageName.toLowerCase())) {
+                continue;
+            }
             // Merge stageDeps into the base variables so each stage sees prior outputs.
             // User-supplied -v overrides (already in initialVariables) take precedence.
             const stageVars = { ...initialVariables, ...stageDeps };
@@ -171,12 +183,12 @@ class PipelineSimulator {
             results.stages.push(stageResult);
 
             // Publish this stage's outputs for subsequent stages.
-            const stageName = stageResult.stage;
+            const stageResultName = stageResult.stage;
             for (const jobResult of stageResult.jobs) {
                 const jobName = jobResult.job;
-                stageDeps[`stageDependencies.${stageName}.${jobName}.result`] = jobResult.result || 'Succeeded';
+                stageDeps[`stageDependencies.${stageResultName}.${jobName}.result`] = jobResult.result || 'Succeeded';
                 for (const [key, value] of Object.entries(jobResult.outputVariables)) {
-                    stageDeps[`stageDependencies.${stageName}.${jobName}.outputs['${key}']`] = value;
+                    stageDeps[`stageDependencies.${stageResultName}.${jobName}.outputs['${key}']`] = value;
                 }
             }
 
@@ -243,9 +255,12 @@ class PipelineSimulator {
 
         const jobs = Array.isArray(stageDoc.jobs) ? stageDoc.jobs : [];
         // Merge stage-level variables on top of the pipeline-level ones.
+        // Re-apply userOverrides last so that YAML counter() expressions cannot
+        // overwrite explicit user-supplied values (e.g. --build-counter / -v flags).
         const stageVariables = {
             ...variables,
             ...this._extractVariablesFromDoc(stageDoc, variables, options.libraryVariables || {}),
+            ...(options.userOverrides || {}),
         };
 
         for (const jobDoc of jobs) {
@@ -312,10 +327,13 @@ class PipelineSimulator {
             ...jobWorkspaceVariables,
         };
         // Merge job-level variables on top of the inherited ones.
+        // Re-apply userOverrides last so that YAML counter() expressions cannot
+        // overwrite explicit user-supplied values (e.g. --build-counter / -v flags).
         const jobVariables = {
             ...variables,
             ...jobWorkspaceVariables,
             ...this._extractVariablesFromDoc(jobDoc, jobVariableContext, options.libraryVariables || {}),
+            ...(options.userOverrides || {}),
         };
         const stepOptions = {
             ...options,
@@ -383,6 +401,7 @@ class PipelineSimulator {
 
         return {
             'Build.SourcesDirectory': sourcesDirectory,
+            'System.DefaultWorkingDirectory': sourcesDirectory,
             'Build.Repository.LocalPath': sourcesDirectory,
             'Agent.TempDirectory': tempDirectory,
             'Simulator.JobSourcesRoot': sourcesDirectory,
@@ -1122,18 +1141,26 @@ class PipelineSimulator {
                 // try to run Agent.TempDirectory as a command ("command not found"). With it,
                 // variables exported earlier in the same script via ##vso[task.setvariable]
                 // are accessible to subsequent lines.
+                // Build a case-insensitive lookup map for variables so that ADO references
+                // like $(version) correctly resolve even when the stored key is VERSION.
+                const variablesLower = Object.create(null);
+                for (const k of Object.keys(variables)) {
+                    variablesLower[k.toLowerCase()] = k;
+                }
                 scriptContent = scriptContent.replace(/\$\(([A-Za-z_][A-Za-z0-9_.]*)\)/g, (match, varName) => {
                     const trimmed = varName.trim();
+                    const shellName = trimmed.toUpperCase().replace(/[^A-Z0-9_]/g, '_');
+                    // Exact match (preserves existing behaviour).
                     if (Object.prototype.hasOwnProperty.call(variables, trimmed)) {
-                        const shellName = trimmed.toUpperCase().replace(/[^A-Z0-9_]/g, '_');
                         return '${' + shellName + '}';
                     }
+                    // Case-insensitive match: $(version) → ${VERSION} when VERSION is a variable.
+                    if (Object.prototype.hasOwnProperty.call(variablesLower, trimmed.toLowerCase())) {
+                        return '${' + shellName + '}';
+                    }
+                    // ADO naming convention: names with uppercase or dots are pipeline variables.
                     if (/[A-Z.]/.test(trimmed)) {
-                        const shellName = trimmed.toUpperCase().replace(/[^A-Z0-9_]/g, '_');
                         return '${' + shellName + '}';
-                    }
-                    if (/^[A-Z_][A-Z0-9_]*$/.test(trimmed)) {
-                        return '${' + trimmed + '}';
                     }
                     return match;
                 });
@@ -1201,11 +1228,33 @@ class PipelineSimulator {
                     if (run.error && run.error.code === 'ENOENT') {
                         run = tryRun('sh');
                         if (run.error && run.error.code === 'ENOENT') {
-                            return {
-                                stdout: '[mock] bash/sh not available locally; step simulated.',
-                                stderr: '',
-                                exitCode: 0,
-                            };
+                            // On Windows, try Git Bash in common installation locations.
+                            const gitBashCandidates = [
+                                'C:\\Program Files\\Git\\bin\\bash.exe',
+                                'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
+                                process.env.ProgramFiles
+                                    ? path.join(process.env.ProgramFiles, 'Git', 'bin', 'bash.exe')
+                                    : null,
+                                process.env['ProgramFiles(x86)']
+                                    ? path.join(process.env['ProgramFiles(x86)'], 'Git', 'bin', 'bash.exe')
+                                    : null,
+                                process.env.LOCALAPPDATA
+                                    ? path.join(process.env.LOCALAPPDATA, 'Programs', 'Git', 'bin', 'bash.exe')
+                                    : null,
+                            ].filter(Boolean);
+
+                            for (const gitBash of gitBashCandidates) {
+                                run = tryRun(gitBash);
+                                if (!run.error || run.error.code !== 'ENOENT') break;
+                            }
+
+                            if (run.error && run.error.code === 'ENOENT') {
+                                return {
+                                    stdout: '[mock] bash/sh not available locally; step simulated.',
+                                    stderr: '',
+                                    exitCode: 0,
+                                };
+                            }
                         }
                     }
                 } else if (shell === 'pwsh') {

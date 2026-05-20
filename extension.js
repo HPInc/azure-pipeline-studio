@@ -2579,7 +2579,9 @@ function runCli(args) {
         '  -a, --azure-compatible       Use Azure-compatible expansion mode (adds blank lines, etc.)\n' +
         '  -s, --skip-syntax-check      Skip syntax checking during expansion\n' +
         '  -d, --debug                  Print files being formatted\n' +
-        '  -t, --timing                 Print timing breakdown for each expansion phase';
+        '  -t, --timing                 Print timing breakdown for each expansion phase\n' +
+        '  -c, --build-counter <n>      Set the build counter value used in version expressions (default: 1)\n' +
+        '  -S, --stage <name>           Run only the named stage(s); repeat or comma-separate (e.g. -S Build,Test)';
 
     const failWithUsage = (message) => {
         if (message) {
@@ -2612,6 +2614,8 @@ function runCli(args) {
             'mock-catalog',
             'library-variable',
             'library-variables-file',
+            'build-counter',
+            'stage',
         ],
         boolean: ['help', 'expand-templates', 'azure-compatible', 'skip-syntax-check', 'debug', 'simulate', 'timing'],
         alias: {
@@ -2629,6 +2633,8 @@ function runCli(args) {
             s: 'skip-syntax-check',
             d: 'debug',
             t: 'timing',
+            c: 'build-counter',
+            S: 'stage',
         },
         default: {
             extension: [],
@@ -2678,6 +2684,10 @@ function runCli(args) {
         'simulate',
         'timing',
         't',
+        'build-counter',
+        'c',
+        'stage',
+        'S',
     ]);
     const unknownKeys = Object.keys(argv).filter((k) => !knownArgvKeys.has(k));
     if (unknownKeys.length) {
@@ -2852,6 +2862,8 @@ function runCli(args) {
         const simulateParser = new AzurePipelineParser({ skipSyntax: argv['skip-syntax-check'] || false });
         const simulationRoot = path.resolve(process.cwd(), path.join(path.dirname(simulateFile), 'simulation'));
         fs.rmSync(simulationRoot, { recursive: true, force: true });
+        const buildCounterRaw = argv['build-counter'];
+        const buildCounterValue = buildCounterRaw !== undefined ? String(parseInt(buildCounterRaw, 10) || 1) : '1';
         const simulationVariables = {
             'Build.Repository.LocalPath': path.dirname(simulateFile),
             'Build.SourcesDirectory': path.dirname(simulateFile),
@@ -2868,6 +2880,7 @@ function runCli(args) {
             'Simulator.CheckoutSource': checkoutConfig.checkoutSource,
             'Simulator.CheckoutRepository': checkoutConfig.checkoutRepository,
             'Simulator.RepositoryRoot': checkoutConfig.checkoutRepository || path.dirname(simulateFile),
+            buildCounter: buildCounterValue,
         };
 
         const simulateParserOptions = {
@@ -2906,6 +2919,13 @@ function runCli(args) {
             if (debugLibVars) {
                 console.log('[DEBUG] Library Variables Map:', JSON.stringify(libraryVariablesMap, null, 2));
             }
+            // userOverrides contains only the explicitly user-supplied values (-c and -v flags).
+            // These are re-applied after each stage/job variable extraction to prevent
+            // YAML-declared counter() expressions from overwriting them.
+            const userOverrides = { ...variablesMap };
+            if (buildCounterRaw !== undefined) {
+                userOverrides.buildCounter = buildCounterValue;
+            }
             const results = simulator.simulate(document, {
                 defaultVariables: simulationVariables,
                 variables: { ...simulationVariables, ...variablesMap },
@@ -2913,6 +2933,11 @@ function runCli(args) {
                 workingDirectory: path.dirname(simulateFile),
                 checkoutSource: checkoutConfig.checkoutSource,
                 checkoutRepository: checkoutConfig.checkoutRepository,
+                stages: toArray(argv.stage)
+                    .flatMap((s) => s.split(','))
+                    .map((s) => s.trim())
+                    .filter(Boolean),
+                userOverrides,
             });
             printSimulationResults(results);
             console.log(`[sim] output root: ${simulationRoot}`);
