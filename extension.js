@@ -299,6 +299,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <div class="options-row">
     <div class="field-group"><label class="field-label" for="buildCounter">Build Counter</label>
       <input class="field-input" type="number" id="buildCounter" value="1" min="1" step="1"></div>
+    <div class="field-group"><input type="checkbox" id="debugMode" style="cursor:pointer;accent-color:#0078d4;width:14px;height:14px"><label class="field-label" for="debugMode" style="cursor:pointer">Enable Debug (System.Debug)</label></div>
   </div>
   <div class="section-title">Variables <span style="font-weight:400;font-size:.9em">(key=value overrides)</span></div>
   <table class="vars-table"><tbody id="varRows"></tbody></table>
@@ -330,6 +331,7 @@ function runSimulation(){
   const buildCounter=document.getElementById('buildCounter').value;
   const variables={};
   document.querySelectorAll('#varRows tr').forEach(row=>{const k=row.querySelector('.var-key');const v=row.querySelector('.var-val');if(k&&v&&k.value.trim()&&v.value.trim())variables[k.value.trim()]=v.value.trim();});
+  if(document.getElementById('debugMode').checked)variables['System.Debug']='true';
   document.getElementById('runBtn').disabled=true;
   document.getElementById('statusMsg').textContent='';
   document.getElementById('resultsPanel').innerHTML='<div class="sim-loading"><div class="sim-spinner"></div><span>Running simulation\u2026</span></div>';
