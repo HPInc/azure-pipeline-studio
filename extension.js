@@ -286,6 +286,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .res-job-hd:hover{color:#ccc}
 .res-tog{font-size:.7em;color:#555;margin-left:6px;flex-shrink:0}
 .res-body{overflow:hidden}
+.res-browser-btn{background:#0e639c;color:#fff;border:none;padding:4px 10px;border-radius:3px;cursor:pointer;font-size:.78em}.res-browser-btn:hover{background:#1177bb}
 </style></head>
 <body>
 <div class="header"><h1>&#9889; Pipeline Simulation Run</h1><div class="filename">${esc(baseName)}</div></div>
@@ -334,11 +335,12 @@ function runSimulation(){
 function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function toggleStagesSection(){var s=document.getElementById('stagesSection');var btn=document.getElementById('stagesToggle');if(!s)return;var c=s.classList.toggle('collapsed');btn.innerHTML=c?'&#9660; Stages':'&#9650; Collapse';}
 function toggleRes(hd){var body=hd.nextElementSibling;if(!body)return;var c=body.classList.toggle('collapsed');var t=hd.querySelector('.res-tog');if(t)t.textContent=c?'\u25b6':'\u25bc';}
+function openResultsInBrowser(){var el=document.getElementById('resultsPanel');if(!el||!el.querySelector('.res-wrap'))return;var css=document.querySelector('style')?document.querySelector('style').textContent:'';var clone=el.cloneNode(true);var btn=clone.querySelector('.res-browser-btn');if(btn)btn.remove();var ts="document.addEventListener('click',function(e){var hd=e.target.closest('.res-collapsible');if(!hd)return;var body=hd.nextElementSibling;if(!body)return;var c=body.classList.toggle('collapsed');var t=hd.querySelector('.res-tog');if(t)t.textContent=c?'\u25b6':'\u25bc';});";vscode.postMessage({command:'openResultsInBrowser',html:'<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Simulation Results</title><style>body{background:#1e1e1e;color:#ddd;font-family:sans-serif;padding:20px;margin:0}'+css+'</style></head><body>'+clone.innerHTML+'<scr'+'ipt>'+ts+'<\/scr'+'ipt></body></html>'});}
 function renderResults(r){
   const panel=document.getElementById('resultsPanel');
   const ICON={Succeeded:'\u2714',Failed:'\u2716',Skipped:'\u29d8'};
   const COL={Succeeded:'#4ec94e',Failed:'#f47174',Skipped:'#c8a84b'};
-  let html='<div class="res-wrap">';
+  let html='<div class="res-wrap"><div style="text-align:right;margin-bottom:8px"><button class="res-browser-btn">&#127760; Open in Browser</button></div>';
   for(const stage of r.stages){
     const sn=escHtml(stage.displayName||stage.stage);
     html+='<div class="res-stage"><div class="res-stage-hd res-collapsible">'+sn+'<span class="res-tog">\u25b6</span></div><div class="res-body collapsed">';
@@ -375,6 +377,7 @@ function renderResults(r){
   panel.scrollIntoView({behavior:'smooth',block:'start'});
 }
 document.getElementById('resultsPanel').addEventListener('click',function(e){
+  if(e.target.closest('.res-browser-btn')){openResultsInBrowser();return;}
   var hd=e.target.closest('.res-collapsible');if(!hd)return;
   var body=hd.nextElementSibling;if(!body)return;
   var c=body.classList.toggle('collapsed');
@@ -2414,6 +2417,17 @@ ${mermaidDiagram
             activeSimulationPanel = simulationPanel;
 
             simulationPanel.webview.onDidReceiveMessage(async (message) => {
+                if (message.command === 'openResultsInBrowser') {
+                    try {
+                        const os = require('os');
+                        const tempFile = path.join(os.tmpdir(), `pipeline-sim-results-${Date.now()}.html`);
+                        fs.writeFileSync(tempFile, message.html);
+                        await vscode.env.openExternal(vscode.Uri.file(tempFile));
+                    } catch (err) {
+                        vscode.window.showErrorMessage(`Failed to open results in browser: ${err.message}`);
+                    }
+                    return;
+                }
                 if (message.command !== 'runSimulation') return;
 
                 const docToSimulate = lastExpandedDoc;
