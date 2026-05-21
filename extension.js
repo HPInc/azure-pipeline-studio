@@ -22,6 +22,7 @@ let activeDebounceTimer;
 let activeErrorDebounceTimer;
 let activeDependenciesDebounceTimer;
 let activeDependenciesPanel;
+let activeSimulationPanel;
 let extensionRuntimeGeneration = 0;
 
 const DEFAULT_COMPILE_TIME_VARIABLES = Object.freeze({
@@ -61,6 +62,239 @@ function printCompileTimeVariableSources(contextLabel, settingsVariables, comman
     console.error(`[APS] Compile-time variable sources (${contextLabel}):\n${formattedReport}`);
 }
 
+function _escHtml(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function _extractSimulationTree(document) {
+    const mapSteps = (steps) =>
+        (Array.isArray(steps) ? steps : []).map((step, i) => {
+            const type = step.task
+                ? 'task'
+                : step.bash
+                  ? 'bash'
+                  : step.script
+                    ? 'script'
+                    : step.pwsh
+                      ? 'pwsh'
+                      : step.powershell
+                        ? 'powershell'
+                        : step.checkout
+                          ? 'checkout'
+                          : step.publish
+                            ? 'publish'
+                            : step.download
+                              ? 'download'
+                              : 'step';
+            const label =
+                step.displayName ||
+                step.name ||
+                (step.task
+                    ? String(step.task).split('@')[0]
+                    : step.bash
+                      ? 'Bash'
+                      : step.script
+                        ? 'Script'
+                        : step.pwsh || step.powershell
+                          ? 'PowerShell'
+                          : step.checkout
+                            ? `Checkout: ${step.checkout}`
+                            : step.publish
+                              ? 'Publish artifact'
+                              : step.download
+                                ? 'Download artifact'
+                                : `Step ${i + 1}`);
+            return { label, type };
+        });
+
+    const mapJobs = (jobs) =>
+        (Array.isArray(jobs) ? jobs : []).map((j) => ({
+            name: j.job || j.deployment || 'Job',
+            displayName: j.displayName || j.job || j.deployment || 'Job',
+            isDeployment: !!j.deployment,
+            steps: mapSteps(j.steps),
+        }));
+
+    const stages = Array.isArray(document.stages) ? document.stages : [];
+    if (stages.length === 0 && Array.isArray(document.jobs)) {
+        return [{ name: '__default__', displayName: '(Pipeline)', jobs: mapJobs(document.jobs) }];
+    }
+    return stages.map((s) => ({
+        name: s.stage || 'Stage',
+        displayName: s.displayName || s.stage || 'Stage',
+        jobs: mapJobs(s.jobs),
+    }));
+}
+
+function _generateSimulationViewHtml(stageTree, fileName) {
+    const esc = _escHtml;
+    const STEP_ICONS = {
+        task: '⚙',
+        bash: '🐚',
+        script: '📝',
+        pwsh: '⬡',
+        powershell: '⬡',
+        checkout: '↓',
+        publish: '↑',
+        download: '↓',
+        step: '▸',
+    };
+    const STEP_COLORS = {
+        task: '#4299e1',
+        bash: '#68d391',
+        script: '#f6ad55',
+        pwsh: '#63b3ed',
+        powershell: '#63b3ed',
+        checkout: '#b794f4',
+        publish: '#fc8181',
+        download: '#76e4f7',
+        step: '#a0aec0',
+    };
+
+    const stagesHtml = stageTree
+        .map((stage, si) => {
+            const jobsHtml =
+                stage.jobs
+                    .map((job, ji) => {
+                        const stepsHtml = job.steps
+                            .map(
+                                (step) =>
+                                    `<div class="step-row"><span class="step-icon" style="color:${
+                                        STEP_COLORS[step.type] || '#a0aec0'
+                                    }">${STEP_ICONS[step.type] || '▸'}</span>` +
+                                    `<span class="step-type">${esc(step.type)}</span>` +
+                                    `<span class="step-label">${esc(step.label)}</span></div>`
+                            )
+                            .join('');
+                        return (
+                            `<div class="job-item">` +
+                            `<div class="job-header" onclick="toggleCollapse('steps-${si}-${ji}','tj-${si}-${ji}')">` +
+                            `<span class="toggle" id="tj-${si}-${ji}">&#9658;</span>` +
+                            `<span class="job-badge${job.isDeployment ? ' deploy' : ''}">${job.isDeployment ? 'DEPLOY' : 'JOB'}</span>` +
+                            `<span class="job-name">${esc(job.displayName)}</span>` +
+                            `<span class="count-badge">${job.steps.length} step${job.steps.length !== 1 ? 's' : ''}</span></div>` +
+                            `<div class="steps-list collapsed" id="steps-${si}-${ji}">${stepsHtml || '<div class="empty-msg">No steps</div>'}</div>` +
+                            `</div>`
+                        );
+                    })
+                    .join('') || '<div class="empty-msg">No jobs</div>';
+            return (
+                `<div class="stage-item">` +
+                `<div class="stage-header">` +
+                `<input type="checkbox" class="stage-cb" id="scb-${si}" data-name="${esc(stage.name)}" checked>` +
+                `<span class="toggle" id="ts-${si}" onclick="toggleCollapse('jobs-${si}','ts-${si}')">&#9658;</span>` +
+                `<label class="stage-name" for="scb-${si}">${esc(stage.displayName)}</label>` +
+                `<span class="count-badge">${stage.jobs.length} job${stage.jobs.length !== 1 ? 's' : ''}</span>` +
+                `</div>` +
+                `<div class="jobs-list collapsed" id="jobs-${si}">${jobsHtml}</div>` +
+                `</div>`
+            );
+        })
+        .join('');
+
+    const baseName = fileName.split(/[\\/]/).pop();
+
+    /* eslint-disable prettier/prettier */
+    return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Pipeline Simulation</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#1e1e1e;color:#cccccc;min-height:100vh}
+.header{background:linear-gradient(135deg,#1a1a1a,#0d0d0d);padding:16px 20px;border-bottom:3px solid #0078d4}
+.header h1{color:#fff;font-size:1.2em;display:flex;align-items:center;gap:10px}
+.header .filename{color:#888;font-size:.78em;margin-top:4px;font-family:monospace;word-break:break-all}
+.body{padding:16px 20px}
+.section-title{color:#888;font-size:.72em;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin:16px 0 8px}
+.options-row{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:4px}
+.field-group{display:flex;align-items:center;gap:8px}
+.field-label{font-size:.85em;color:#ccc}
+.field-input{background:#2d2d30;border:1px solid #3e3e42;color:#e0e0e0;padding:4px 8px;border-radius:3px;font-size:.85em;width:90px}
+.field-input:focus{outline:none;border-color:#0078d4}
+.vars-table{width:100%;border-collapse:collapse;margin-top:4px;font-size:.82em}
+.vars-table td{padding:2px 3px}
+.var-key,.var-val{background:#2d2d30;border:1px solid #3e3e42;color:#e0e0e0;padding:4px 8px;border-radius:3px;width:100%}
+.var-key:focus,.var-val:focus{outline:none;border-color:#0078d4}
+.add-var-btn{background:none;border:1px dashed #444;color:#666;padding:4px 10px;border-radius:3px;cursor:pointer;font-size:.78em;margin-top:6px}
+.add-var-btn:hover{border-color:#0078d4;color:#ccc}
+.remove-var-btn{background:none;border:none;color:#555;cursor:pointer;font-size:.9em;padding:0 4px;line-height:1}
+.remove-var-btn:hover{color:#fc8181}
+.toolbar{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}
+.toolbar-btn{background:#2d2d30;border:1px solid #3e3e42;color:#aaa;padding:4px 10px;border-radius:3px;cursor:pointer;font-size:.76em}
+.toolbar-btn:hover{border-color:#555;color:#ddd}
+.stage-item{background:#252526;border:1px solid #3e3e42;border-radius:3px;margin-bottom:5px;overflow:hidden}
+.stage-header{display:flex;align-items:center;gap:8px;padding:8px 12px;background:#2d2d30}
+.stage-cb{cursor:pointer;accent-color:#0078d4;width:14px;height:14px;flex-shrink:0}
+.toggle{display:inline-block;font-size:.65em;color:#555;transition:transform .15s;cursor:pointer;width:14px;flex-shrink:0;text-align:center}
+.toggle.open{transform:rotate(90deg);color:#aaa}
+.stage-name{font-size:.88em;font-weight:600;color:#ddd;cursor:pointer;flex:1}
+.stage-name:hover{color:#fff}
+.count-badge{font-size:.7em;color:#555;background:#1e1e1e;padding:1px 6px;border-radius:10px;border:1px solid #3e3e42;white-space:nowrap}
+.jobs-list,.steps-list{padding:0}
+.collapsed{display:none}
+.job-item{border-top:1px solid #2d2d30}
+.job-header{display:flex;align-items:center;gap:8px;padding:6px 12px 6px 28px;cursor:pointer}
+.job-header:hover{background:#2a2a2a}
+.job-badge{font-size:.62em;font-weight:700;padding:1px 5px;border-radius:2px;background:#0078d4;color:#fff;flex-shrink:0}
+.job-badge.deploy{background:#6b46c1}
+.job-name{font-size:.84em;color:#ccc;flex:1}
+.steps-list{padding:2px 0 2px 48px;background:#1e1e1e}
+.step-row{display:flex;align-items:baseline;gap:6px;padding:2px 8px}
+.step-icon{font-size:.85em;flex-shrink:0;width:16px;text-align:center}
+.step-type{font-size:.66em;color:#555;font-family:monospace;flex-shrink:0;min-width:52px}
+.step-label{font-size:.8em;color:#999}
+.empty-msg{font-size:.78em;color:#444;padding:6px 12px;font-style:italic}
+.actions{display:flex;align-items:center;gap:10px;margin-top:18px;padding-top:14px;border-top:1px solid #3e3e42}
+.run-btn{background:#0078d4;border:none;color:#fff;padding:8px 20px;border-radius:3px;cursor:pointer;font-size:.88em;font-weight:600}
+.run-btn:hover{background:#005a9e}
+.run-btn:disabled{background:#444;color:#777;cursor:not-allowed}
+.status-msg{font-size:.8em;color:#888}
+</style></head>
+<body>
+<div class="header"><h1>&#9889; Pipeline Simulation</h1><div class="filename">${esc(baseName)}</div></div>
+<div class="body">
+  <div class="section-title">Build Options</div>
+  <div class="options-row">
+    <div class="field-group"><label class="field-label" for="buildCounter">Build Counter</label>
+      <input class="field-input" type="number" id="buildCounter" value="1" min="1" step="1"></div>
+  </div>
+  <div class="section-title">Variables <span style="font-weight:400;font-size:.9em">(key=value overrides)</span></div>
+  <table class="vars-table"><tbody id="varRows"></tbody></table>
+  <button class="add-var-btn" onclick="addVar()">+ Add variable</button>
+  <div class="section-title" style="margin-top:16px">Stages</div>
+  <div class="toolbar">
+    <button class="toolbar-btn" onclick="selectAll(true)">Select All</button>
+    <button class="toolbar-btn" onclick="selectAll(false)">Select None</button>
+    <button class="toolbar-btn" onclick="expandAll(true)">Expand All</button>
+    <button class="toolbar-btn" onclick="expandAll(false)">Collapse All</button>
+  </div>
+  <div id="stageList">${stagesHtml || '<div class="empty-msg">No stages found in expanded pipeline.</div>'}</div>
+  <div class="actions">
+    <button class="run-btn" id="runBtn" onclick="runSimulation()">&#9654; Run Simulation</button>
+    <span class="status-msg" id="statusMsg"></span>
+  </div>
+</div>
+<script>
+const vscode=acquireVsCodeApi();let varCount=0;
+function toggleCollapse(id,tid){const el=document.getElementById(id);const t=document.getElementById(tid);if(!el)return;const c=el.classList.toggle('collapsed');if(t)t.classList.toggle('open',!c);}
+function selectAll(v){document.querySelectorAll('.stage-cb').forEach(cb=>cb.checked=v);}
+function expandAll(v){document.querySelectorAll('.jobs-list,.steps-list').forEach(el=>el.classList.toggle('collapsed',!v));document.querySelectorAll('.toggle').forEach(t=>t.classList.toggle('open',v));}
+function addVar(){const id=varCount++;const tr=document.createElement('tr');tr.id='vr'+id;tr.innerHTML='<td style="width:42%"><input class="var-key" placeholder="key"></td><td style="width:4%;text-align:center;color:#555;font-size:.8em">=</td><td style="width:49%"><input class="var-val" placeholder="value"></td><td><button class="remove-var-btn" onclick="document.getElementById(\'vr'+id+'\').remove()">&times;</button></td>';document.getElementById('varRows').appendChild(tr);}
+function runSimulation(){
+  const stages=Array.from(document.querySelectorAll('.stage-cb:checked')).map(cb=>cb.dataset.name).filter(Boolean);
+  const buildCounter=document.getElementById('buildCounter').value;
+  const variables={};
+  document.querySelectorAll('#varRows tr').forEach(row=>{const k=row.querySelector('.var-key');const v=row.querySelector('.var-val');if(k&&v&&k.value.trim()&&v.value.trim())variables[k.value.trim()]=v.value.trim();});
+  document.getElementById('runBtn').disabled=true;
+  document.getElementById('statusMsg').textContent='Starting...';
+  vscode.postMessage({command:'runSimulation',stages,buildCounter,variables});
+}
+window.addEventListener('message',e=>{if(e.data.command==='simulationStarted'){document.getElementById('runBtn').disabled=false;document.getElementById('statusMsg').textContent='Running in terminal\u2026';setTimeout(()=>{document.getElementById('statusMsg').textContent='';},4000);}});
+<\/script>
+</body></html>`;
+    /* eslint-enable prettier/prettier */
+}
+
 function activate(context) {
     if (!vscode) {
         console.warn('VS Code API unavailable; activate() skipped (CLI execution detected).');
@@ -87,6 +321,7 @@ function activate(context) {
     let dependenciesDebounceTimer;
     let isDependenciesRendering = false;
     let pendingDependenciesDocument = null;
+    let simulationPanel = null;
     const canUseVsCodeUi = () => !!vscode && runtimeGeneration === extensionRuntimeGeneration;
 
     context.subscriptions.push(renderedEmitter);
@@ -2022,6 +2257,113 @@ ${mermaidDiagram
         }
     );
     context.subscriptions.push(showDependenciesCommandDisposable);
+
+    const openSimulationView = async (document) => {
+        if (!canUseVsCodeUi()) return;
+        closeErrorPanel();
+
+        const sourceText = document.getText();
+        const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
+        const settingsCompileTimeVariables = config.get('expansion.variables', {});
+        const effectiveCompileTimeVariables = applyDefaultBuildVariables(settingsCompileTimeVariables);
+        const skipSyntaxCheck = config.get('expansion.skipSyntaxCheck', false);
+        const resourceOverrides = buildResourceOverridesForDocument(document);
+        const rootDirectoryOverride = buildRootDirectoryOverrideForDocument(document);
+        const resourceLocations = resourceOverrides?.repositories
+            ? Object.fromEntries(
+                  Object.entries(resourceOverrides.repositories)
+                      .map(([alias, entry]) => [alias, entry?.location])
+                      .filter(([, loc]) => typeof loc === 'string' && loc.trim().length)
+              )
+            : undefined;
+
+        const parserOptions = {
+            fileName: document.fileName,
+            azureCompatible: false,
+            skipSyntaxCheck,
+            ...(resourceOverrides && { resources: resourceOverrides }),
+            ...(rootDirectoryOverride && { rootRepoBaseDir: rootDirectoryOverride }),
+            ...(resourceLocations && { resourceLocations }),
+            ...(Object.keys(effectiveCompileTimeVariables).length && { variables: effectiveCompileTimeVariables }),
+        };
+
+        let stageTree = [];
+        try {
+            const simParser = new AzurePipelineParser({ skipSyntax: skipSyntaxCheck });
+            const { document: expandedDoc } = simParser.expandPipeline(sourceText, parserOptions);
+            stageTree = _extractSimulationTree(expandedDoc);
+        } catch (err) {
+            const enhancedError = new Error(formatTemplateExpansionError(document.fileName, err));
+            enhancedError.stack = err.stack;
+            showErrorWebviewNow(enhancedError, context, 'expansion');
+            return;
+        }
+
+        if (simulationPanel) {
+            simulationPanel.reveal(vscode.ViewColumn.Two, true);
+        } else {
+            simulationPanel = vscode.window.createWebviewPanel(
+                'pipelineSimulation',
+                'Pipeline Simulation',
+                vscode.ViewColumn.Two,
+                { enableScripts: true }
+            );
+            simulationPanel.onDidDispose(() => {
+                simulationPanel = null;
+                activeSimulationPanel = null;
+            });
+            activeSimulationPanel = simulationPanel;
+        }
+
+        simulationPanel.webview.html = _generateSimulationViewHtml(stageTree, document.fileName);
+
+        simulationPanel.webview.onDidReceiveMessage(async (message) => {
+            if (message.command !== 'runSimulation') return;
+            const extBundlePath = path.join(path.dirname(__filename), 'extension-bundle.js');
+            const extCliPath = fs.existsSync(extBundlePath) ? extBundlePath : __filename;
+            const filePath = document.fileName;
+            const quotedArgs = [JSON.stringify(extCliPath), JSON.stringify(filePath), '--simulate'];
+            if (Array.isArray(message.stages) && message.stages.length) {
+                quotedArgs.push('-S', JSON.stringify(message.stages.join(',')));
+            }
+            const counter = parseInt(message.buildCounter, 10);
+            if (!isNaN(counter) && counter !== 1) {
+                quotedArgs.push('-c', String(counter));
+            }
+            if (message.variables && typeof message.variables === 'object') {
+                for (const [k, v] of Object.entries(message.variables)) {
+                    if (k.trim() && v.trim()) {
+                        quotedArgs.push('-v', JSON.stringify(`${k.trim()}=${v.trim()}`));
+                    }
+                }
+            }
+            const cmd = `node ${quotedArgs.join(' ')}`;
+            let terminal = vscode.window.terminals.find((t) => t.name === 'Pipeline Simulation');
+            if (!terminal || terminal.exitStatus !== undefined) {
+                terminal = vscode.window.createTerminal({ name: 'Pipeline Simulation' });
+            }
+            terminal.show(false);
+            terminal.sendText(cmd);
+            try {
+                simulationPanel?.webview.postMessage({ command: 'simulationStarted' });
+            } catch (_) {
+                // panel may have been disposed
+            }
+        });
+    };
+
+    const showSimulationViewDisposable = vscode.commands.registerCommand(
+        'azurePipelineStudio.showSimulationView',
+        async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor || !shouldRenderDocument(editor.document)) {
+                vscode.window.showInformationMessage('Open an Azure Pipeline YAML file to launch the simulation view.');
+                return;
+            }
+            await openSimulationView(editor.document);
+        }
+    );
+    context.subscriptions.push(showSimulationViewDisposable);
 
     context.subscriptions.push(
         vscode.workspace.onDidCloseTextDocument((document) => {

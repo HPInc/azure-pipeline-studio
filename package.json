@@ -8,7 +8,8 @@
     "onCommand:azurePipelineStudio.configureRootDirectory",
     "onCommand:azurePipelineStudio.configureResourceLocations",
     "onCommand:azurePipelineStudio.formatOriginalYaml",
-    "onCommand:azurePipelineStudio.showDependencies"
+    "onCommand:azurePipelineStudio.showDependencies",
+    "onCommand:azurePipelineStudio.showSimulationView"
   ],
   "bin": {
     "azure-pipeline-formatter": "./extension-bundle.js"
@@ -42,6 +43,10 @@
       {
         "command": "azurePipelineStudio.showDependencies",
         "title": "Pipeline Diagram"
+      },
+      {
+        "command": "azurePipelineStudio.showSimulationView",
+        "title": "Simulate Pipeline..."
       }
     ],
     "configuration": {
@@ -195,6 +200,10 @@
         {
           "command": "azurePipelineStudio.showDependencies",
           "group": "2_render@3"
+        },
+        {
+          "command": "azurePipelineStudio.showSimulationView",
+          "group": "2_render@4"
         },
         {
           "command": "azurePipelineStudio.configureResourceLocations",
