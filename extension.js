@@ -287,8 +287,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .res-tog{font-size:.7em;color:#555;margin-left:6px;flex-shrink:0}
 .res-body{overflow:hidden}
 .res-browser-btn{background:#0e639c;color:#fff;border:none;padding:4px 10px;border-radius:3px;cursor:pointer;font-size:.78em}.res-browser-btn:hover{background:#1177bb}
+#pageLoader{position:fixed;inset:0;background:#1e1e1e;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:9999}
+#pageLoader .pl-spinner{width:28px;height:28px;border:3px solid #3e3e42;border-top-color:#569cd6;border-radius:50%;animation:aps-spin .8s linear infinite}
+#pageLoader .pl-text{font-size:.85em;color:#666}
 </style></head>
 <body>
+<div id="pageLoader"><div class="pl-spinner"></div><div class="pl-text">Loading…</div></div>
 <div class="header"><h1>&#9889; Pipeline Simulation Run</h1><div class="filename">${esc(baseName)}</div></div>
 <div class="body">
   <div class="section-title">Build Options</div>
@@ -383,6 +387,7 @@ document.getElementById('resultsPanel').addEventListener('click',function(e){
   var c=body.classList.toggle('collapsed');
   var t=hd.querySelector('.res-tog');if(t)t.textContent=c?'\u25b6':'\u25bc';
 });
+requestAnimationFrame(function(){requestAnimationFrame(function(){var l=document.getElementById('pageLoader');if(l)l.remove();});});
 window.addEventListener('message',e=>{
   const d=e.data;
   if(d.command==='simulationStarted'){document.getElementById('runBtn').disabled=false;}
