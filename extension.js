@@ -270,10 +270,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .res-step-name{color:#ccc}
 .res-out{margin:2px 0 2px 20px;font-family:monospace;font-size:.77em;color:#888;white-space:pre-wrap;word-break:break-all;max-height:120px;overflow-y:auto;background:#1a1a1a;padding:3px 6px;border-radius:2px}
 .res-vars{margin:2px 0 2px 20px}
-.res-var{font-size:.74em;color:#666;font-family:monospace}
+.res-var{font-size:.74em;color:#777;font-family:monospace}
 .res-out-var{color:#7eb8d4}
 .res-vk{color:#444;margin-right:3px}
 .res-summary{margin-top:12px;padding:8px 10px;background:#252526;border:1px solid #3e3e42;border-radius:3px;font-size:.84em;font-weight:600}
+@keyframes aps-spin{to{transform:rotate(360deg)}}
+.sim-loading{display:flex;align-items:center;gap:10px;padding:24px 0;color:#888;font-size:.9em}
+.sim-spinner{width:20px;height:20px;border:2px solid #3e3e42;border-top-color:#569cd6;border-radius:50%;animation:aps-spin .8s linear infinite;flex-shrink:0}
 .sec-title-row{display:flex;align-items:center;gap:8px}
 .sec-collapse-btn{margin-left:auto;background:none;border:1px solid #3e3e42;color:#555;padding:1px 8px;border-radius:3px;cursor:pointer;font-size:.72em}
 .sec-collapse-btn:hover{border-color:#555;color:#ccc}
@@ -323,8 +326,8 @@ function runSimulation(){
   const variables={};
   document.querySelectorAll('#varRows tr').forEach(row=>{const k=row.querySelector('.var-key');const v=row.querySelector('.var-val');if(k&&v&&k.value.trim()&&v.value.trim())variables[k.value.trim()]=v.value.trim();});
   document.getElementById('runBtn').disabled=true;
-  document.getElementById('statusMsg').textContent='Running\u2026';
-  document.getElementById('resultsPanel').innerHTML='';
+  document.getElementById('statusMsg').textContent='';
+  document.getElementById('resultsPanel').innerHTML='<div class="sim-loading"><div class="sim-spinner"></div><span>Running simulation\u2026</span></div>';
   var ss=document.getElementById('stagesSection');var st=document.getElementById('stagesToggle');if(ss){ss.classList.add('collapsed');st.innerHTML='&#9660; Stages';}
   vscode.postMessage({command:'runSimulation',stages,buildCounter,variables});
 }
@@ -338,10 +341,10 @@ function renderResults(r){
   let html='<div class="res-wrap">';
   for(const stage of r.stages){
     const sn=escHtml(stage.displayName||stage.stage);
-    html+='<div class="res-stage"><div class="res-stage-hd" onclick="toggleRes(this)">'+sn+'<span class="res-tog">\u25bc</span></div><div class="res-body">';
+    html+='<div class="res-stage"><div class="res-stage-hd res-collapsible">'+sn+'<span class="res-tog">\u25bc</span></div><div class="res-body">';
     for(const job of stage.jobs){
       const jn=escHtml(job.displayName||job.job);
-      html+='<div class="res-job"><div class="res-job-hd" onclick="toggleRes(this)">\u25b6 '+jn+'<span class="res-tog">\u25bc</span></div><div class="res-body">';
+      html+='<div class="res-job"><div class="res-job-hd res-collapsible">\u25b6 '+jn+'<span class="res-tog">\u25bc</span></div><div class="res-body">';
       for(const step of job.steps){
         const res=step.result||'Skipped';
         const icon=ICON[res]||'?';
@@ -371,11 +374,17 @@ function renderResults(r){
   panel.innerHTML=html;
   panel.scrollIntoView({behavior:'smooth',block:'start'});
 }
+document.getElementById('resultsPanel').addEventListener('click',function(e){
+  var hd=e.target.closest('.res-collapsible');if(!hd)return;
+  var body=hd.nextElementSibling;if(!body)return;
+  var c=body.classList.toggle('collapsed');
+  var t=hd.querySelector('.res-tog');if(t)t.textContent=c?'\u25b6':'\u25bc';
+});
 window.addEventListener('message',e=>{
   const d=e.data;
   if(d.command==='simulationStarted'){document.getElementById('runBtn').disabled=false;}
-  else if(d.command==='simulationResults'){document.getElementById('statusMsg').textContent='';renderResults(d.results);}
-  else if(d.command==='simulationError'){document.getElementById('statusMsg').textContent='Error: '+d.error;document.getElementById('runBtn').disabled=false;}
+  else if(d.command==='simulationResults'){renderResults(d.results);}
+  else if(d.command==='simulationError'){document.getElementById('resultsPanel').innerHTML='';document.getElementById('statusMsg').textContent='\u26a0 '+d.error;document.getElementById('runBtn').disabled=false;}
 });
 <\/script>
 </body></html>`;
