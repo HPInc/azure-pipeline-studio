@@ -299,6 +299,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <div class="section-title">Variables <span style="font-weight:400;font-size:.9em">(key=value overrides)</span></div>
   <table class="vars-table"><tbody id="varRows"></tbody></table>
   <button class="add-var-btn" onclick="addVar()">+ Add variable</button>
+  <div class="actions">
+    <button class="run-btn" id="runBtn" onclick="runSimulation()">&#9654; Run Simulation</button>
+    <span class="status-msg" id="statusMsg"></span>
+  </div>
   <div class="section-title sec-title-row" style="margin-top:16px">Stages<button class="sec-collapse-btn" id="stagesToggle" onclick="toggleStagesSection()">&#9650; Collapse</button></div>
   <div id="stagesSection">
   <div class="toolbar">
@@ -308,10 +312,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <button class="toolbar-btn" onclick="expandAll(false)">Collapse All</button>
   </div>
   <div id="stageList">${stagesHtml || '<div class="empty-msg">No stages found in expanded pipeline.</div>'}</div>
-  </div>
-  <div class="actions">
-    <button class="run-btn" id="runBtn" onclick="runSimulation()">&#9654; Run Simulation</button>
-    <span class="status-msg" id="statusMsg"></span>
   </div>
   <div id="resultsPanel"></div>
 </div>
