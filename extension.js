@@ -209,7 +209,7 @@ function _generateSimulationViewHtml(stageTree, fileName) {
     return `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Pipeline Simulation</title>
-<style>
+<style id="mainStyle">
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#1e1e1e;color:#cccccc;min-height:100vh}
 .header{background:linear-gradient(135deg,#1a1a1a,#0d0d0d);padding:16px 20px;border-bottom:3px solid #0078d4}
@@ -295,7 +295,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <div id="pageLoader"><div class="pl-spinner"></div><div class="pl-text">Loading…</div></div>
 <div class="header"><h1>&#9889; Pipeline Simulation Run</h1><div class="filename">${esc(baseName)}</div></div>
 <div class="body">
-  <div class="section-title">Build Options</div>
+  <div class="section-title">Pipeline Variables</div>
   <div class="options-row">
     <div class="field-group"><label class="field-label" for="buildCounter">Build Counter</label>
       <input class="field-input" type="number" id="buildCounter" value="1" min="1" step="1"></div>
@@ -307,7 +307,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <button class="run-btn" id="runBtn" onclick="runSimulation()">&#9654; Run Simulation</button>
     <span class="status-msg" id="statusMsg"></span>
   </div>
-  <div class="section-title sec-title-row" style="margin-top:16px">Stages<button class="sec-collapse-btn" id="stagesToggle" onclick="toggleStagesSection()">&#9650; Collapse</button></div>
+  <div class="section-title sec-title-row" style="margin-top:16px">Stages to Run<button class="sec-collapse-btn" id="stagesToggle" onclick="toggleStagesSection()">&#9650; Collapse</button></div>
   <div id="stagesSection">
   <div class="toolbar">
     <button class="toolbar-btn" onclick="selectAll(true)">Select All</button>
@@ -333,13 +333,13 @@ function runSimulation(){
   document.getElementById('runBtn').disabled=true;
   document.getElementById('statusMsg').textContent='';
   document.getElementById('resultsPanel').innerHTML='<div class="sim-loading"><div class="sim-spinner"></div><span>Running simulation\u2026</span></div>';
-  var ss=document.getElementById('stagesSection');var st=document.getElementById('stagesToggle');if(ss){ss.classList.add('collapsed');st.innerHTML='&#9660; Stages';}
+  var ss=document.getElementById('stagesSection');var st=document.getElementById('stagesToggle');if(ss){ss.classList.add('collapsed');st.innerHTML='&#9660; Stages to Run';}
   vscode.postMessage({command:'runSimulation',stages,buildCounter,variables});
 }
 function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
-function toggleStagesSection(){var s=document.getElementById('stagesSection');var btn=document.getElementById('stagesToggle');if(!s)return;var c=s.classList.toggle('collapsed');btn.innerHTML=c?'&#9660; Stages':'&#9650; Collapse';}
+function toggleStagesSection(){var s=document.getElementById('stagesSection');var btn=document.getElementById('stagesToggle');if(!s)return;var c=s.classList.toggle('collapsed');btn.innerHTML=c?'&#9660; Stages to Run':'&#9650; Collapse';}
 function toggleRes(hd){var body=hd.nextElementSibling;if(!body)return;var c=body.classList.toggle('collapsed');var t=hd.querySelector('.res-tog');if(t)t.textContent=c?'\u25b6':'\u25bc';}
-function openResultsInBrowser(){var el=document.getElementById('resultsPanel');if(!el||!el.querySelector('.res-wrap'))return;var css=document.querySelector('style')?document.querySelector('style').textContent:'';var clone=el.cloneNode(true);var btn=clone.querySelector('.res-browser-btn');if(btn)btn.remove();var ts="document.addEventListener('click',function(e){var hd=e.target.closest('.res-collapsible');if(!hd)return;var body=hd.nextElementSibling;if(!body)return;var c=body.classList.toggle('collapsed');var t=hd.querySelector('.res-tog');if(t)t.textContent=c?'\u25b6':'\u25bc';});";vscode.postMessage({command:'openResultsInBrowser',html:'<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Simulation Results</title><style>body{background:#1e1e1e;color:#ddd;font-family:sans-serif;padding:20px;margin:0}'+css+'</style></head><body>'+clone.innerHTML+'<scr'+'ipt>'+ts+'<\/scr'+'ipt></body></html>'});}
+function openResultsInBrowser(){var el=document.getElementById('resultsPanel');if(!el||!el.querySelector('.res-wrap'))return;var styleEl=document.getElementById('mainStyle');var css=styleEl?styleEl.textContent:'';var clone=el.cloneNode(true);var btn=clone.querySelector('.res-browser-btn');if(btn)btn.remove();var ts="document.addEventListener('click',function(e){var hd=e.target.closest('.res-collapsible');if(!hd)return;var bd=hd.nextElementSibling;if(!bd)return;var c=bd.classList.toggle('collapsed');var t=hd.querySelector('.res-tog');if(t)t.textContent=c?'\u25b6':'\u25bc';});";vscode.postMessage({command:'openResultsInBrowser',html:'<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Simulation Results</title><style>'+css+'</style></head><body><div class="body">'+clone.innerHTML+'</div><scr'+'ipt>'+ts+'<\/scr'+'ipt></body></html>'});}
 function renderResults(r){
   const panel=document.getElementById('resultsPanel');
   const ICON={Succeeded:'\u2714',Failed:'\u2716',Skipped:'\u29d8'};
