@@ -23,6 +23,7 @@ let activeErrorDebounceTimer;
 let activeDependenciesDebounceTimer;
 let activeDependenciesPanel;
 let activeSimulationPanel;
+let lastExpandedDoc = null;
 let extensionRuntimeGeneration = 0;
 
 const DEFAULT_COMPILE_TIME_VARIABLES = Object.freeze({
@@ -249,6 +250,20 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .run-btn:hover{background:#005a9e}
 .run-btn:disabled{background:#444;color:#777;cursor:not-allowed}
 .status-msg{font-size:.8em;color:#888}
+.res-wrap{margin-top:18px;border-top:1px solid #3e3e42;padding-top:14px}
+.res-stage{margin-bottom:10px}
+.res-stage-hd{font-size:.9em;font-weight:700;color:#ddd;padding:6px 0 4px;border-bottom:1px solid #3e3e42;text-transform:uppercase;letter-spacing:.04em}
+.res-job{margin:4px 0 4px 12px}
+.res-job-hd{font-size:.82em;font-weight:600;color:#aaa;padding:4px 0 2px}
+.res-step{margin:3px 0 3px 20px;font-size:.8em}
+.res-icon{margin-right:5px;font-size:.9em}
+.res-step-name{color:#ccc}
+.res-out{margin:2px 0 2px 20px;font-family:monospace;font-size:.77em;color:#888;white-space:pre-wrap;word-break:break-all;max-height:120px;overflow-y:auto;background:#1a1a1a;padding:3px 6px;border-radius:2px}
+.res-vars{margin:2px 0 2px 20px}
+.res-var{font-size:.74em;color:#666;font-family:monospace}
+.res-out-var{color:#7eb8d4}
+.res-vk{color:#444;margin-right:3px}
+.res-summary{margin-top:12px;padding:8px 10px;background:#252526;border:1px solid #3e3e42;border-radius:3px;font-size:.84em;font-weight:600}
 </style></head>
 <body>
 <div class="header"><h1>&#9889; Pipeline Simulation Run</h1><div class="filename">${esc(baseName)}</div></div>
@@ -273,6 +288,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <button class="run-btn" id="runBtn" onclick="runSimulation()">&#9654; Run Simulation</button>
     <span class="status-msg" id="statusMsg"></span>
   </div>
+  <div id="resultsPanel"></div>
 </div>
 <script>
 const vscode=acquireVsCodeApi();let varCount=0;
@@ -286,10 +302,57 @@ function runSimulation(){
   const variables={};
   document.querySelectorAll('#varRows tr').forEach(row=>{const k=row.querySelector('.var-key');const v=row.querySelector('.var-val');if(k&&v&&k.value.trim()&&v.value.trim())variables[k.value.trim()]=v.value.trim();});
   document.getElementById('runBtn').disabled=true;
-  document.getElementById('statusMsg').textContent='Starting...';
+  document.getElementById('statusMsg').textContent='Running\u2026';
+  document.getElementById('resultsPanel').innerHTML='';
   vscode.postMessage({command:'runSimulation',stages,buildCounter,variables});
 }
-window.addEventListener('message',e=>{if(e.data.command==='simulationStarted'){document.getElementById('runBtn').disabled=false;document.getElementById('statusMsg').textContent='Running in terminal\u2026';setTimeout(()=>{document.getElementById('statusMsg').textContent='';},4000);}});
+function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function renderResults(r){
+  const panel=document.getElementById('resultsPanel');
+  const ICON={Succeeded:'\u2714',Failed:'\u2716',Skipped:'\u29d8'};
+  const COL={Succeeded:'#4ec94e',Failed:'#f47174',Skipped:'#c8a84b'};
+  let html='<div class="res-wrap">';
+  for(const stage of r.stages){
+    const sn=escHtml(stage.displayName||stage.stage);
+    html+='<div class="res-stage"><div class="res-stage-hd">'+sn+'</div>';
+    for(const job of stage.jobs){
+      const jn=escHtml(job.displayName||job.job);
+      html+='<div class="res-job"><div class="res-job-hd">\u25b6 '+jn+'</div>';
+      for(const step of job.steps){
+        const res=step.result||'Skipped';
+        const icon=ICON[res]||'?';
+        const col=COL[res]||'#888';
+        html+='<div class="res-step"><span class="res-icon" style="color:'+col+'">'+icon+'</span><span class="res-step-name">'+escHtml(step.displayName||'')+'</span>';
+        if(step.stdout&&step.stdout.trim()){
+          const lines=step.stdout.split('\\n').filter(l=>l.trim()&&!l.startsWith('##vso[')).map(l=>'<div>'+escHtml(l)+'</div>').join('');
+          html+='<div class="res-out">'+lines+'</div>';
+        }
+        const ov=Object.entries(step.outputVariables||{});
+        const lv=Object.entries(step.variables||{}).filter(([k])=>!step.outputVariables||!(k in step.outputVariables));
+        if(ov.length||lv.length){
+          html+='<div class="res-vars">';
+          for(const[k,v]of lv)html+='<div class="res-var"><span class="res-vk">[var]</span> '+escHtml(k)+'='+escHtml(v)+'</div>';
+          for(const[k,v]of ov)html+='<div class="res-var res-out-var"><span class="res-vk">[out]</span> '+escHtml(k)+'='+escHtml(v)+'</div>';
+          html+='</div>';
+        }
+        html+='</div>';
+      }
+      html+='</div>';
+    }
+    html+='</div>';
+  }
+  const total=r.totalPassed+r.totalFailed+r.totalSkipped;
+  html+='<div class="res-summary"><span style="color:#4ec94e">\u2714 '+r.totalPassed+' passed</span>  <span style="color:#f47174">\u2716 '+r.totalFailed+' failed</span>  <span style="color:#c8a84b">\u29d8 '+r.totalSkipped+' skipped</span>  <span style="color:#888">'+total+' total</span></div>';
+  html+='</div>';
+  panel.innerHTML=html;
+  panel.scrollIntoView({behavior:'smooth',block:'start'});
+}
+window.addEventListener('message',e=>{
+  const d=e.data;
+  if(d.command==='simulationStarted'){document.getElementById('runBtn').disabled=false;}
+  else if(d.command==='simulationResults'){document.getElementById('statusMsg').textContent='';renderResults(d.results);}
+  else if(d.command==='simulationError'){document.getElementById('statusMsg').textContent='Error: '+d.error;document.getElementById('runBtn').disabled=false;}
+});
 <\/script>
 </body></html>`;
     /* eslint-enable prettier/prettier */
@@ -2288,9 +2351,12 @@ ${mermaidDiagram
         };
 
         let stageTree = [];
+        let expandedDoc = null;
         try {
             const simParser = new AzurePipelineParser({ skipSyntax: skipSyntaxCheck });
-            const { document: expandedDoc } = simParser.expandPipeline(sourceText, parserOptions);
+            const { document: parsedDoc } = simParser.expandPipeline(sourceText, parserOptions);
+            expandedDoc = parsedDoc;
+            lastExpandedDoc = parsedDoc;
             stageTree = _extractSimulationTree(expandedDoc);
         } catch (err) {
             const enhancedError = new Error(formatTemplateExpansionError(document.fileName, err));
@@ -2316,36 +2382,41 @@ ${mermaidDiagram
 
             simulationPanel.webview.onDidReceiveMessage(async (message) => {
                 if (message.command !== 'runSimulation') return;
-                const extBundlePath = path.join(path.dirname(__filename), 'extension-bundle.js');
-                const extCliPath = fs.existsSync(extBundlePath) ? extBundlePath : __filename;
-                const filePath = document.fileName;
-                const quotedArgs = [JSON.stringify(extCliPath), JSON.stringify(filePath), '--simulate'];
-                if (Array.isArray(message.stages) && message.stages.length) {
-                    quotedArgs.push('-S', JSON.stringify(message.stages.join(',')));
+
+                const docToSimulate = lastExpandedDoc;
+                if (!docToSimulate) {
+                    simulationPanel?.webview.postMessage({
+                        command: 'simulationError',
+                        error: 'No expanded pipeline document available. Re-open the simulation view.',
+                    });
+                    return;
                 }
+
+                const stages = Array.isArray(message.stages) && message.stages.length ? message.stages : undefined;
                 const counter = parseInt(message.buildCounter, 10);
-                if (!isNaN(counter) && counter !== 1) {
-                    quotedArgs.push('-c', String(counter));
+                const userOverrides = {};
+                if (!isNaN(counter)) {
+                    userOverrides['Build.BuildNumber'] = String(counter);
+                    userOverrides['Build.BuildId'] = String(counter);
                 }
                 if (message.variables && typeof message.variables === 'object') {
                     for (const [k, v] of Object.entries(message.variables)) {
-                        if (k.trim() && v.trim()) {
-                            quotedArgs.push('-v', JSON.stringify(`${k.trim()}=${v.trim()}`));
-                        }
+                        if (k.trim() && v.trim()) userOverrides[k.trim()] = v.trim();
                     }
                 }
-                const cmd = `node ${quotedArgs.join(' ')}`;
-                let terminal = vscode.window.terminals.find((t) => t.name === 'Pipeline Simulation');
-                if (!terminal || terminal.exitStatus !== undefined) {
-                    terminal = vscode.window.createTerminal({ name: 'Pipeline Simulation' });
-                }
-                terminal.show(false);
-                terminal.sendText(cmd);
+
+                simulationPanel?.webview.postMessage({ command: 'simulationStarted' });
+
+                const simulator = new PipelineSimulator({ workingDirectory: path.dirname(document.fileName) });
+                const simOptions = { userOverrides, ...(stages && { stages }) };
+                let results;
                 try {
-                    simulationPanel?.webview.postMessage({ command: 'simulationStarted' });
-                } catch (_) {
-                    // panel may have been disposed
+                    results = simulator.simulate(docToSimulate, simOptions);
+                } catch (err) {
+                    simulationPanel?.webview.postMessage({ command: 'simulationError', error: err.message });
+                    return;
                 }
+                simulationPanel?.webview.postMessage({ command: 'simulationResults', results });
             });
         }
 
