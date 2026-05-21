@@ -63,6 +63,16 @@ function printCompileTimeVariableSources(contextLabel, settingsVariables, comman
     console.error(`[APS] Compile-time variable sources (${contextLabel}):\n${formattedReport}`);
 }
 
+/** Convert a Windows UNC WSL path (\\wsl.localhost\distro\foo) to the Linux path (/foo).
+ * Returns the path unchanged when it is already a Linux/Windows non-UNC path.
+ */
+function _toSimulatorPath(p) {
+    if (!p || typeof p !== 'string') return p || '';
+    const m = p.match(/^\\\\wsl\.localhost\\[^\\]+(.*)/i);
+    if (m) return m[1].replace(/\\/g, '/');
+    return p;
+}
+
 function _escHtml(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
@@ -2407,8 +2417,37 @@ ${mermaidDiagram
 
                 simulationPanel?.webview.postMessage({ command: 'simulationStarted' });
 
-                const simulator = new PipelineSimulator({ workingDirectory: path.dirname(document.fileName) });
-                const simOptions = { userOverrides, ...(stages && { stages }) };
+                // Mirror the CLI setup: derive proper Linux paths from the document location
+                // so the simulator never falls back to process.cwd() (VS Code's install dir).
+                const simWorkDir = _toSimulatorPath(path.dirname(document.fileName));
+                const simOutRoot = simWorkDir.replace(/[/\\]$/, '') + '/.aps-simulation';
+                const simulationVariables = {
+                    'Build.Repository.LocalPath': simWorkDir,
+                    'Build.SourcesDirectory': simWorkDir,
+                    'System.DefaultWorkingDirectory': simWorkDir,
+                    'Build.ArtifactStagingDirectory': simOutRoot + '/artifacts',
+                    'Build.StagingDirectory': simOutRoot + '/staging',
+                    'Build.BinariesDirectory': simOutRoot + '/binaries',
+                    'Pipeline.Workspace': simOutRoot + '/workspace',
+                    'Agent.WorkFolder': simOutRoot + '/agent/work',
+                    'Agent.BuildDirectory': simOutRoot + '/agent/build',
+                    'Agent.TempDirectory': simOutRoot + '/agent/temp',
+                    'Agent.ToolsDirectory': simOutRoot + '/agent/tools',
+                    'Agent.HomeDirectory': simOutRoot + '/agent/home',
+                    'Simulator.OutputRoot': simOutRoot,
+                    buildCounter: isNaN(counter) ? '1' : String(counter),
+                };
+                if (!isNaN(counter)) userOverrides.buildCounter = String(counter);
+
+                const simOptions = {
+                    defaultVariables: simulationVariables,
+                    variables: { ...simulationVariables, ...userOverrides },
+                    workingDirectory: simWorkDir,
+                    userOverrides,
+                    ...(stages && { stages }),
+                };
+
+                const simulator = new PipelineSimulator({ outputRoot: simOutRoot });
                 let results;
                 try {
                     results = simulator.simulate(docToSimulate, simOptions);
