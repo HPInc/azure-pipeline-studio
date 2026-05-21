@@ -24,6 +24,7 @@ let activeDependenciesDebounceTimer;
 let activeDependenciesPanel;
 let activeSimulationPanel;
 let lastExpandedDoc = null;
+let simOutputChannel = null;
 let extensionRuntimeGeneration = 0;
 
 const DEFAULT_COMPILE_TIME_VARIABLES = Object.freeze({
@@ -349,6 +350,10 @@ function runInTerminal(){
   const variables={};
   document.querySelectorAll('#varRows tr').forEach(row=>{const k=row.querySelector('.var-key');const v=row.querySelector('.var-val');if(k&&v&&k.value.trim()&&v.value.trim())variables[k.value.trim()]=v.value.trim();});
   if(document.getElementById('debugMode').checked)variables['System.Debug']='true';
+  document.getElementById('runBtn').disabled=true;
+  document.getElementById('termBtn').disabled=true;
+  document.getElementById('statusMsg').textContent='';
+  document.getElementById('resultsPanel').innerHTML='<div class="sim-loading"><div class="sim-spinner"></div><span>Running in terminal\u2026</span></div>';
   var ss=document.getElementById('stagesSection');var st=document.getElementById('stagesToggle');if(ss){ss.classList.add('collapsed');st.innerHTML='&#9660; Stages to Run';}
   vscode.postMessage({command:'runInTerminal',stages,buildCounter,variables});
 }
@@ -407,7 +412,7 @@ requestAnimationFrame(function(){requestAnimationFrame(function(){var l=document
 window.addEventListener('message',e=>{
   const d=e.data;
   if(d.command==='simulationStarted'){document.getElementById('runBtn').disabled=false;document.getElementById('termBtn').disabled=false;}
-  else if(d.command==='simulationResults'){renderResults(d.results);}
+  else if(d.command==='simulationResults'){document.getElementById('runBtn').disabled=false;document.getElementById('termBtn').disabled=false;renderResults(d.results);}
   else if(d.command==='simulationError'){document.getElementById('resultsPanel').innerHTML='';document.getElementById('statusMsg').textContent='\u26a0 '+d.error;document.getElementById('runBtn').disabled=false;document.getElementById('termBtn').disabled=false;}
 });
 <\/script>
@@ -2439,28 +2444,50 @@ ${mermaidDiagram
 
             simulationPanel.webview.onDidReceiveMessage(async (message) => {
                 if (message.command === 'runInTerminal') {
+                    const os = require('os');
+                    const { spawn } = require('child_process');
                     const pipelineFile = _toSimulatorPath(document.fileName);
                     const bundlePath = _toSimulatorPath(path.join(__dirname, 'extension-bundle.js'));
+                    const jsonResultsFile = path.join(os.tmpdir(), `aps-sim-${Date.now()}.json`);
                     const counter = parseInt(message.buildCounter, 10);
-                    let cmd = `node "${bundlePath}" --simulate "${pipelineFile}"`;
-                    if (!isNaN(counter)) cmd += ` --build-counter ${counter}`;
+                    const spawnArgs = ['--simulate', pipelineFile];
+                    if (!isNaN(counter)) spawnArgs.push('--build-counter', String(counter));
                     if (Array.isArray(message.stages) && message.stages.length) {
-                        for (const s of message.stages) cmd += ` --stage "${s}"`;
+                        for (const s of message.stages) spawnArgs.push('--stage', s);
                     }
                     if (message.variables && typeof message.variables === 'object') {
                         for (const [k, v] of Object.entries(message.variables)) {
-                            if (k.trim()) cmd += ` -v "${k.trim()}=${String(v).trim()}"`;
+                            if (k.trim()) spawnArgs.push('-v', `${k.trim()}=${String(v).trim()}`);
                         }
                     }
-                    let simTerminal = vscode.window.terminals.find((t) => t.name === 'Pipeline Simulation');
-                    if (!simTerminal) {
-                        simTerminal = vscode.window.createTerminal({
-                            name: 'Pipeline Simulation',
-                            shellPath: '/bin/bash',
-                        });
+                    spawnArgs.push('--output-json', jsonResultsFile);
+                    if (!simOutputChannel) {
+                        simOutputChannel = vscode.window.createOutputChannel('Pipeline Simulation');
                     }
-                    simTerminal.show();
-                    simTerminal.sendText(`bash -c ${JSON.stringify(cmd)}`);
+                    simOutputChannel.clear();
+                    simOutputChannel.show(true);
+                    const child = spawn('node', [bundlePath, ...spawnArgs], {
+                        shell: '/bin/bash',
+                        cwd: path.dirname(pipelineFile),
+                    });
+                    child.stdout.on('data', (data) => simOutputChannel.append(data.toString()));
+                    child.stderr.on('data', (data) => simOutputChannel.append(data.toString()));
+                    child.on('close', () => {
+                        try {
+                            if (fs.existsSync(jsonResultsFile)) {
+                                const results = JSON.parse(fs.readFileSync(jsonResultsFile, 'utf8'));
+                                fs.unlinkSync(jsonResultsFile);
+                                simulationPanel?.webview.postMessage({ command: 'simulationResults', results });
+                            } else {
+                                simulationPanel?.webview.postMessage({
+                                    command: 'simulationError',
+                                    error: 'Simulation failed — see Output > Pipeline Simulation for details.',
+                                });
+                            }
+                        } catch (err) {
+                            simulationPanel?.webview.postMessage({ command: 'simulationError', error: err.message });
+                        }
+                    });
                     return;
                 }
                 if (message.command === 'openResultsInBrowser') {
@@ -3151,6 +3178,7 @@ function runCli(args) {
             'library-variables-file',
             'build-counter',
             'stage',
+            'output-json',
         ],
         boolean: ['help', 'expand-templates', 'azure-compatible', 'skip-syntax-check', 'debug', 'simulate', 'timing'],
         alias: {
@@ -3475,6 +3503,9 @@ function runCli(args) {
                 userOverrides,
             });
             printSimulationResults(results);
+            if (argv['output-json']) {
+                fs.writeFileSync(argv['output-json'], JSON.stringify(results));
+            }
             console.log(`[sim] output root: ${simulationRoot}`);
             if (results.publishedArtifacts.length > 0) {
                 console.log(`[sim] pipeline-artifacts:  ${path.join(simulationRoot, 'pipeline-artifacts')}`);
