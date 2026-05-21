@@ -287,6 +287,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .res-tog{font-size:.7em;color:#555;margin-left:6px;flex-shrink:0}
 .res-body{overflow:hidden}
 .res-browser-btn{background:#0e639c;color:#fff;border:none;padding:4px 10px;border-radius:3px;cursor:pointer;font-size:.78em}.res-browser-btn:hover{background:#1177bb}
+.term-btn{background:none;border:1px solid #3e3e42;color:#ccc;padding:8px 16px;border-radius:3px;cursor:pointer;font-size:.88em;font-weight:600}
+.term-btn:hover{border-color:#0078d4;color:#fff}
+.term-btn:disabled{border-color:#333;color:#555;cursor:not-allowed}
 #pageLoader{position:fixed;inset:0;background:#1e1e1e;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:9999}
 #pageLoader .pl-spinner{width:28px;height:28px;border:3px solid #3e3e42;border-top-color:#569cd6;border-radius:50%;animation:aps-spin .8s linear infinite}
 #pageLoader .pl-text{font-size:.85em;color:#666}
@@ -306,6 +309,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <button class="add-var-btn" onclick="addVar()">+ Add variable</button>
   <div class="actions">
     <button class="run-btn" id="runBtn" onclick="runSimulation()">&#9654; Run Simulation</button>
+    <button class="term-btn" id="termBtn" onclick="runInTerminal()">&#10095;_ Run in Terminal</button>
     <span class="status-msg" id="statusMsg"></span>
   </div>
   <div class="section-title sec-title-row" style="margin-top:16px">Stages to Run<button class="sec-collapse-btn" id="stagesToggle" onclick="toggleStagesSection()">&#9650; Collapse</button></div>
@@ -333,10 +337,20 @@ function runSimulation(){
   document.querySelectorAll('#varRows tr').forEach(row=>{const k=row.querySelector('.var-key');const v=row.querySelector('.var-val');if(k&&v&&k.value.trim()&&v.value.trim())variables[k.value.trim()]=v.value.trim();});
   if(document.getElementById('debugMode').checked)variables['System.Debug']='true';
   document.getElementById('runBtn').disabled=true;
+  document.getElementById('termBtn').disabled=true;
   document.getElementById('statusMsg').textContent='';
   document.getElementById('resultsPanel').innerHTML='<div class="sim-loading"><div class="sim-spinner"></div><span>Running simulation\u2026</span></div>';
   var ss=document.getElementById('stagesSection');var st=document.getElementById('stagesToggle');if(ss){ss.classList.add('collapsed');st.innerHTML='&#9660; Stages to Run';}
   vscode.postMessage({command:'runSimulation',stages,buildCounter,variables});
+}
+function runInTerminal(){
+  const stages=Array.from(document.querySelectorAll('.stage-cb:checked')).map(cb=>cb.dataset.name).filter(Boolean);
+  const buildCounter=document.getElementById('buildCounter').value;
+  const variables={};
+  document.querySelectorAll('#varRows tr').forEach(row=>{const k=row.querySelector('.var-key');const v=row.querySelector('.var-val');if(k&&v&&k.value.trim()&&v.value.trim())variables[k.value.trim()]=v.value.trim();});
+  if(document.getElementById('debugMode').checked)variables['System.Debug']='true';
+  var ss=document.getElementById('stagesSection');var st=document.getElementById('stagesToggle');if(ss){ss.classList.add('collapsed');st.innerHTML='&#9660; Stages to Run';}
+  vscode.postMessage({command:'runInTerminal',stages,buildCounter,variables});
 }
 function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function toggleStagesSection(){var s=document.getElementById('stagesSection');var btn=document.getElementById('stagesToggle');if(!s)return;var c=s.classList.toggle('collapsed');btn.innerHTML=c?'&#9660; Stages to Run':'&#9650; Collapse';}
@@ -392,9 +406,9 @@ document.getElementById('resultsPanel').addEventListener('click',function(e){
 requestAnimationFrame(function(){requestAnimationFrame(function(){var l=document.getElementById('pageLoader');if(l)l.remove();});});
 window.addEventListener('message',e=>{
   const d=e.data;
-  if(d.command==='simulationStarted'){document.getElementById('runBtn').disabled=false;}
+  if(d.command==='simulationStarted'){document.getElementById('runBtn').disabled=false;document.getElementById('termBtn').disabled=false;}
   else if(d.command==='simulationResults'){renderResults(d.results);}
-  else if(d.command==='simulationError'){document.getElementById('resultsPanel').innerHTML='';document.getElementById('statusMsg').textContent='\u26a0 '+d.error;document.getElementById('runBtn').disabled=false;}
+  else if(d.command==='simulationError'){document.getElementById('resultsPanel').innerHTML='';document.getElementById('statusMsg').textContent='\u26a0 '+d.error;document.getElementById('runBtn').disabled=false;document.getElementById('termBtn').disabled=false;}
 });
 <\/script>
 </body></html>`;
@@ -2424,6 +2438,28 @@ ${mermaidDiagram
             activeSimulationPanel = simulationPanel;
 
             simulationPanel.webview.onDidReceiveMessage(async (message) => {
+                if (message.command === 'runInTerminal') {
+                    const pipelineFile = _toSimulatorPath(document.fileName);
+                    const bundlePath = _toSimulatorPath(path.join(__dirname, 'extension-bundle.js'));
+                    const counter = parseInt(message.buildCounter, 10);
+                    let cmd = `node "${bundlePath}" --simulate "${pipelineFile}"`;
+                    if (!isNaN(counter)) cmd += ` --build-counter ${counter}`;
+                    if (Array.isArray(message.stages) && message.stages.length) {
+                        for (const s of message.stages) cmd += ` --stage "${s}"`;
+                    }
+                    if (message.variables && typeof message.variables === 'object') {
+                        for (const [k, v] of Object.entries(message.variables)) {
+                            if (k.trim()) cmd += ` -v "${k.trim()}=${String(v).trim()}"`;
+                        }
+                    }
+                    let simTerminal = vscode.window.terminals.find((t) => t.name === 'Pipeline Simulation');
+                    if (!simTerminal) {
+                        simTerminal = vscode.window.createTerminal({ name: 'Pipeline Simulation' });
+                    }
+                    simTerminal.show();
+                    simTerminal.sendText(cmd);
+                    return;
+                }
                 if (message.command === 'openResultsInBrowser') {
                     try {
                         const os = require('os');
