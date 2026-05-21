@@ -274,6 +274,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .res-out-var{color:#7eb8d4}
 .res-vk{color:#444;margin-right:3px}
 .res-summary{margin-top:12px;padding:8px 10px;background:#252526;border:1px solid #3e3e42;border-radius:3px;font-size:.84em;font-weight:600}
+.sec-title-row{display:flex;align-items:center;gap:8px}
+.sec-collapse-btn{margin-left:auto;background:none;border:1px solid #3e3e42;color:#555;padding:1px 8px;border-radius:3px;cursor:pointer;font-size:.72em}
+.sec-collapse-btn:hover{border-color:#555;color:#ccc}
+.res-stage-hd{cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between}
+.res-stage-hd:hover{color:#fff}
+.res-job-hd{cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between}
+.res-job-hd:hover{color:#ccc}
+.res-tog{font-size:.7em;color:#555;margin-left:6px;flex-shrink:0}
+.res-body{overflow:hidden}
 </style></head>
 <body>
 <div class="header"><h1>&#9889; Pipeline Simulation Run</h1><div class="filename">${esc(baseName)}</div></div>
@@ -286,7 +295,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <div class="section-title">Variables <span style="font-weight:400;font-size:.9em">(key=value overrides)</span></div>
   <table class="vars-table"><tbody id="varRows"></tbody></table>
   <button class="add-var-btn" onclick="addVar()">+ Add variable</button>
-  <div class="section-title" style="margin-top:16px">Stages</div>
+  <div class="section-title sec-title-row" style="margin-top:16px">Stages<button class="sec-collapse-btn" id="stagesToggle" onclick="toggleStagesSection()">&#9650; Collapse</button></div>
+  <div id="stagesSection">
   <div class="toolbar">
     <button class="toolbar-btn" onclick="selectAll(true)">Select All</button>
     <button class="toolbar-btn" onclick="selectAll(false)">Select None</button>
@@ -294,6 +304,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <button class="toolbar-btn" onclick="expandAll(false)">Collapse All</button>
   </div>
   <div id="stageList">${stagesHtml || '<div class="empty-msg">No stages found in expanded pipeline.</div>'}</div>
+  </div>
   <div class="actions">
     <button class="run-btn" id="runBtn" onclick="runSimulation()">&#9654; Run Simulation</button>
     <span class="status-msg" id="statusMsg"></span>
@@ -314,9 +325,12 @@ function runSimulation(){
   document.getElementById('runBtn').disabled=true;
   document.getElementById('statusMsg').textContent='Running\u2026';
   document.getElementById('resultsPanel').innerHTML='';
+  var ss=document.getElementById('stagesSection');var st=document.getElementById('stagesToggle');if(ss){ss.classList.add('collapsed');st.innerHTML='&#9660; Stages';}
   vscode.postMessage({command:'runSimulation',stages,buildCounter,variables});
 }
 function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function toggleStagesSection(){var s=document.getElementById('stagesSection');var btn=document.getElementById('stagesToggle');if(!s)return;var c=s.classList.toggle('collapsed');btn.innerHTML=c?'&#9660; Stages':'&#9650; Collapse';}
+function toggleRes(hd){var body=hd.nextElementSibling;if(!body)return;var c=body.classList.toggle('collapsed');var t=hd.querySelector('.res-tog');if(t)t.textContent=c?'\u25b6':'\u25bc';}
 function renderResults(r){
   const panel=document.getElementById('resultsPanel');
   const ICON={Succeeded:'\u2714',Failed:'\u2716',Skipped:'\u29d8'};
@@ -324,10 +338,10 @@ function renderResults(r){
   let html='<div class="res-wrap">';
   for(const stage of r.stages){
     const sn=escHtml(stage.displayName||stage.stage);
-    html+='<div class="res-stage"><div class="res-stage-hd">'+sn+'</div>';
+    html+='<div class="res-stage"><div class="res-stage-hd" onclick="toggleRes(this)">'+sn+'<span class="res-tog">\u25bc</span></div><div class="res-body">';
     for(const job of stage.jobs){
       const jn=escHtml(job.displayName||job.job);
-      html+='<div class="res-job"><div class="res-job-hd">\u25b6 '+jn+'</div>';
+      html+='<div class="res-job"><div class="res-job-hd" onclick="toggleRes(this)">\u25b6 '+jn+'<span class="res-tog">\u25bc</span></div><div class="res-body">';
       for(const step of job.steps){
         const res=step.result||'Skipped';
         const icon=ICON[res]||'?';
@@ -347,9 +361,9 @@ function renderResults(r){
         }
         html+='</div>';
       }
-      html+='</div>';
+      html+='</div></div>';
     }
-    html+='</div>';
+    html+='</div></div>';
   }
   const total=r.totalPassed+r.totalFailed+r.totalSkipped;
   html+='<div class="res-summary"><span style="color:#4ec94e">\u2714 '+r.totalPassed+' passed</span>  <span style="color:#f47174">\u2716 '+r.totalFailed+' failed</span>  <span style="color:#c8a84b">\u29d8 '+r.totalSkipped+' skipped</span>  <span style="color:#888">'+total+' total</span></div>';
