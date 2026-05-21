@@ -341,10 +341,10 @@ function renderResults(r){
   let html='<div class="res-wrap">';
   for(const stage of r.stages){
     const sn=escHtml(stage.displayName||stage.stage);
-    html+='<div class="res-stage"><div class="res-stage-hd res-collapsible">'+sn+'<span class="res-tog">\u25bc</span></div><div class="res-body">';
+    html+='<div class="res-stage"><div class="res-stage-hd res-collapsible">'+sn+'<span class="res-tog">\u25b6</span></div><div class="res-body collapsed">';
     for(const job of stage.jobs){
       const jn=escHtml(job.displayName||job.job);
-      html+='<div class="res-job"><div class="res-job-hd res-collapsible">\u25b6 '+jn+'<span class="res-tog">\u25bc</span></div><div class="res-body">';
+      html+='<div class="res-job"><div class="res-job-hd res-collapsible">\u25b6 '+jn+'<span class="res-tog">\u25b6</span></div><div class="res-body collapsed">';
       for(const step of job.steps){
         const res=step.result||'Skipped';
         const icon=ICON[res]||'?';
