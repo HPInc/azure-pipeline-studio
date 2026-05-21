@@ -251,7 +251,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .status-msg{font-size:.8em;color:#888}
 </style></head>
 <body>
-<div class="header"><h1>&#9889; Pipeline Simulation</h1><div class="filename">${esc(baseName)}</div></div>
+<div class="header"><h1>&#9889; Pipeline Simulation Run</h1><div class="filename">${esc(baseName)}</div></div>
 <div class="body">
   <div class="section-title">Build Options</div>
   <div class="options-row">
@@ -279,7 +279,7 @@ const vscode=acquireVsCodeApi();let varCount=0;
 function toggleCollapse(id,tid){const el=document.getElementById(id);const t=document.getElementById(tid);if(!el)return;const c=el.classList.toggle('collapsed');if(t)t.classList.toggle('open',!c);}
 function selectAll(v){document.querySelectorAll('.stage-cb').forEach(cb=>cb.checked=v);}
 function expandAll(v){document.querySelectorAll('.jobs-list,.steps-list').forEach(el=>el.classList.toggle('collapsed',!v));document.querySelectorAll('.toggle').forEach(t=>t.classList.toggle('open',v));}
-function addVar(){const id=varCount++;const tr=document.createElement('tr');tr.id='vr'+id;tr.innerHTML='<td style="width:42%"><input class="var-key" placeholder="key"></td><td style="width:4%;text-align:center;color:#555;font-size:.8em">=</td><td style="width:49%"><input class="var-val" placeholder="value"></td><td><button class="remove-var-btn" onclick="document.getElementById(\'vr'+id+'\').remove()">&times;</button></td>';document.getElementById('varRows').appendChild(tr);}
+function addVar(){var id='vr'+(varCount++);var tr=document.createElement('tr');tr.id=id;tr.innerHTML='<td style="width:42%"><input class="var-key" placeholder="key"></td><td style="width:4%;text-align:center;color:#555;font-size:.8em">=</td><td style="width:49%"><input class="var-val" placeholder="value"></td><td><button class="remove-var-btn">&times;</button></td>';tr.querySelector('.remove-var-btn').onclick=function(){document.getElementById(id).remove();};document.getElementById('varRows').appendChild(tr);}
 function runSimulation(){
   const stages=Array.from(document.querySelectorAll('.stage-cb:checked')).map(cb=>cb.dataset.name).filter(Boolean);
   const buildCounter=document.getElementById('buildCounter').value;
@@ -2304,7 +2304,7 @@ ${mermaidDiagram
         } else {
             simulationPanel = vscode.window.createWebviewPanel(
                 'pipelineSimulation',
-                'Pipeline Simulation',
+                'Simulate Pipeline Run',
                 vscode.ViewColumn.Two,
                 { enableScripts: true }
             );
@@ -2313,43 +2313,43 @@ ${mermaidDiagram
                 activeSimulationPanel = null;
             });
             activeSimulationPanel = simulationPanel;
+
+            simulationPanel.webview.onDidReceiveMessage(async (message) => {
+                if (message.command !== 'runSimulation') return;
+                const extBundlePath = path.join(path.dirname(__filename), 'extension-bundle.js');
+                const extCliPath = fs.existsSync(extBundlePath) ? extBundlePath : __filename;
+                const filePath = document.fileName;
+                const quotedArgs = [JSON.stringify(extCliPath), JSON.stringify(filePath), '--simulate'];
+                if (Array.isArray(message.stages) && message.stages.length) {
+                    quotedArgs.push('-S', JSON.stringify(message.stages.join(',')));
+                }
+                const counter = parseInt(message.buildCounter, 10);
+                if (!isNaN(counter) && counter !== 1) {
+                    quotedArgs.push('-c', String(counter));
+                }
+                if (message.variables && typeof message.variables === 'object') {
+                    for (const [k, v] of Object.entries(message.variables)) {
+                        if (k.trim() && v.trim()) {
+                            quotedArgs.push('-v', JSON.stringify(`${k.trim()}=${v.trim()}`));
+                        }
+                    }
+                }
+                const cmd = `node ${quotedArgs.join(' ')}`;
+                let terminal = vscode.window.terminals.find((t) => t.name === 'Pipeline Simulation');
+                if (!terminal || terminal.exitStatus !== undefined) {
+                    terminal = vscode.window.createTerminal({ name: 'Pipeline Simulation' });
+                }
+                terminal.show(false);
+                terminal.sendText(cmd);
+                try {
+                    simulationPanel?.webview.postMessage({ command: 'simulationStarted' });
+                } catch (_) {
+                    // panel may have been disposed
+                }
+            });
         }
 
         simulationPanel.webview.html = _generateSimulationViewHtml(stageTree, document.fileName);
-
-        simulationPanel.webview.onDidReceiveMessage(async (message) => {
-            if (message.command !== 'runSimulation') return;
-            const extBundlePath = path.join(path.dirname(__filename), 'extension-bundle.js');
-            const extCliPath = fs.existsSync(extBundlePath) ? extBundlePath : __filename;
-            const filePath = document.fileName;
-            const quotedArgs = [JSON.stringify(extCliPath), JSON.stringify(filePath), '--simulate'];
-            if (Array.isArray(message.stages) && message.stages.length) {
-                quotedArgs.push('-S', JSON.stringify(message.stages.join(',')));
-            }
-            const counter = parseInt(message.buildCounter, 10);
-            if (!isNaN(counter) && counter !== 1) {
-                quotedArgs.push('-c', String(counter));
-            }
-            if (message.variables && typeof message.variables === 'object') {
-                for (const [k, v] of Object.entries(message.variables)) {
-                    if (k.trim() && v.trim()) {
-                        quotedArgs.push('-v', JSON.stringify(`${k.trim()}=${v.trim()}`));
-                    }
-                }
-            }
-            const cmd = `node ${quotedArgs.join(' ')}`;
-            let terminal = vscode.window.terminals.find((t) => t.name === 'Pipeline Simulation');
-            if (!terminal || terminal.exitStatus !== undefined) {
-                terminal = vscode.window.createTerminal({ name: 'Pipeline Simulation' });
-            }
-            terminal.show(false);
-            terminal.sendText(cmd);
-            try {
-                simulationPanel?.webview.postMessage({ command: 'simulationStarted' });
-            } catch (_) {
-                // panel may have been disposed
-            }
-        });
     };
 
     const showSimulationViewDisposable = vscode.commands.registerCommand(

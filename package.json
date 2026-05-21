@@ -46,7 +46,7 @@
       },
       {
         "command": "azurePipelineStudio.showSimulationView",
-        "title": "Simulate Pipeline..."
+        "title": "Simulate Pipeline Run..."
       }
     ],
     "configuration": {
