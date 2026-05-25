@@ -1223,31 +1223,37 @@ class PipelineSimulator {
             let run = tryRun(shell);
             if (run.error && run.error.code === 'ENOENT') {
                 if (shell === 'bash') {
-                    // Some hosts expose bash only via /bin/bash or sh.
-                    run = tryRun('/bin/bash');
-                    if (run.error && run.error.code === 'ENOENT') {
-                        run = tryRun('sh');
+                    if (process.platform === 'win32') {
+                        // On Windows, try Git Bash first — /bin/bash and sh don't exist here.
+                        const gitBashCandidates = [
+                            'C:\\Program Files\\Git\\bin\\bash.exe',
+                            'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
+                            process.env.ProgramFiles
+                                ? path.join(process.env.ProgramFiles, 'Git', 'bin', 'bash.exe')
+                                : null,
+                            process.env['ProgramFiles(x86)']
+                                ? path.join(process.env['ProgramFiles(x86)'], 'Git', 'bin', 'bash.exe')
+                                : null,
+                            process.env.LOCALAPPDATA
+                                ? path.join(process.env.LOCALAPPDATA, 'Programs', 'Git', 'bin', 'bash.exe')
+                                : null,
+                        ].filter(Boolean);
+                        for (const gitBash of gitBashCandidates) {
+                            run = tryRun(gitBash);
+                            if (!run.error || run.error.code !== 'ENOENT') break;
+                        }
                         if (run.error && run.error.code === 'ENOENT') {
-                            // On Windows, try Git Bash in common installation locations.
-                            const gitBashCandidates = [
-                                'C:\\Program Files\\Git\\bin\\bash.exe',
-                                'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
-                                process.env.ProgramFiles
-                                    ? path.join(process.env.ProgramFiles, 'Git', 'bin', 'bash.exe')
-                                    : null,
-                                process.env['ProgramFiles(x86)']
-                                    ? path.join(process.env['ProgramFiles(x86)'], 'Git', 'bin', 'bash.exe')
-                                    : null,
-                                process.env.LOCALAPPDATA
-                                    ? path.join(process.env.LOCALAPPDATA, 'Programs', 'Git', 'bin', 'bash.exe')
-                                    : null,
-                            ].filter(Boolean);
-
-                            for (const gitBash of gitBashCandidates) {
-                                run = tryRun(gitBash);
-                                if (!run.error || run.error.code !== 'ENOENT') break;
-                            }
-
+                            return {
+                                stdout: '[mock] bash/sh not available locally; step simulated.',
+                                stderr: '',
+                                exitCode: 0,
+                            };
+                        }
+                    } else {
+                        // Non-Windows: try /bin/bash then sh.
+                        run = tryRun('/bin/bash');
+                        if (run.error && run.error.code === 'ENOENT') {
+                            run = tryRun('sh');
                             if (run.error && run.error.code === 'ENOENT') {
                                 return {
                                     stdout: '[mock] bash/sh not available locally; step simulated.',
