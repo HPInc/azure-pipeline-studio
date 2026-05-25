@@ -161,10 +161,9 @@ class PipelineSimulator {
         this._releaseStageNugetFeed = this._extractReleaseStageNugetFeed(stages);
 
         // Build a case-insensitive set of stage names to run, if the caller restricted them.
-        const stageFilter =
-            Array.isArray(options.stages) && options.stages.length
-                ? new Set(options.stages.map((s) => String(s).toLowerCase()))
-                : null;
+        const stageFilter = Array.isArray(options.stages) && options.stages.length
+            ? new Set(options.stages.map((s) => String(s).toLowerCase()))
+            : null;
 
         // stageDeps accumulates stageDependencies.* keys from completed stages
         // so that downstream stages can resolve $[ stageDependencies.S.J.outputs['...'] ].
@@ -1238,13 +1237,22 @@ class PipelineSimulator {
                                 ? path.join(process.env.LOCALAPPDATA, 'Programs', 'Git', 'bin', 'bash.exe')
                                 : null,
                         ].filter(Boolean);
+                        const bashLog = [
+                            `[bash-lookup] platform=win32, 'bash' not found in PATH`,
+                        ];
                         for (const gitBash of gitBashCandidates) {
                             run = tryRun(gitBash);
-                            if (!run.error || run.error.code !== 'ENOENT') break;
+                            if (!run.error || run.error.code !== 'ENOENT') {
+                                bashLog.push(`[bash-lookup] found: ${gitBash}`);
+                                break;
+                            }
+                            bashLog.push(`[bash-lookup] not found: ${gitBash}`);
                         }
+                        process.stderr.write(bashLog.join('\n') + '\n');
                         if (run.error && run.error.code === 'ENOENT') {
+                            bashLog.push('[bash-lookup] no git bash found; falling back to mock');
                             return {
-                                stdout: '[mock] bash/sh not available locally; step simulated.',
+                                stdout: bashLog.join('\n') + '\n[mock] bash/sh not available locally; step simulated.',
                                 stderr: '',
                                 exitCode: 0,
                             };
