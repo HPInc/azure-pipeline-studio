@@ -179,6 +179,14 @@
             "type": "object"
           },
           "type": "array"
+        },
+        "azurePipelineStudio.simulation.executablePaths": {
+          "type": "object",
+          "description": "Override paths to executables used during pipeline simulation. Keys are tool names (e.g. \"bash\", \"pwsh\") and values are absolute paths to the executable. Example: { \"bash\": \"C:\\\\Users\\\\me\\\\PortableGit\\\\git-bash.exe\" }",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
         }
       },
       "title": "Azure Pipeline Studio"

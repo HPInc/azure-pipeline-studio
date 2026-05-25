@@ -2465,6 +2465,12 @@ ${mermaidDiagram
                             if (k.trim()) simArgs.push('-v', `${k.trim()}=${String(v).trim()}`);
                         }
                     }
+                    const termExecPaths = vscode.workspace
+                        .getConfiguration('azurePipelineStudio', document.uri)
+                        .get('simulation.executablePaths', {});
+                    for (const [exeName, exePath] of Object.entries(termExecPaths)) {
+                        simArgs.push('--exe', `${exeName}=${exePath}`);
+                    }
                     simArgs.push('--output-json', jsonLinuxPath);
                     if (!simOutputChannel) {
                         simOutputChannel = vscode.window.createOutputChannel('Pipeline Simulation');
@@ -2573,7 +2579,10 @@ ${mermaidDiagram
                     ...(stages && { stages }),
                 };
 
-                const simulator = new PipelineSimulator({ outputRoot: simOutRoot });
+                const execPaths = vscode.workspace
+                    .getConfiguration('azurePipelineStudio', document.uri)
+                    .get('simulation.executablePaths', {});
+                const simulator = new PipelineSimulator({ outputRoot: simOutRoot, executablePaths: execPaths });
                 let results;
                 try {
                     results = simulator.simulate(docToSimulate, simOptions);
@@ -3302,6 +3311,7 @@ function runCli(args) {
 
     const { map: variablesMap, errors: variableErrors } = parseKeyValue(toArray(argv.variables), 'variable');
     const { map: repoMap, errors: repoErrors } = parseKeyValue(toArray(argv.repo), 'repository mapping');
+    const { map: executablePaths } = parseKeyValue(toArray(argv.exe), 'executable path');
     const repositoryEntries = Object.entries(repoMap).map(([alias, path]) => ({ alias, path }));
 
     const libraryVariablesMap = {};
@@ -3494,7 +3504,7 @@ function runCli(args) {
 
         try {
             const { document } = simulateParser.expandPipeline(simulateSource, simulateParserOptions);
-            const simulator = new PipelineSimulator({ mockCatalog, outputRoot: simulationRoot });
+            const simulator = new PipelineSimulator({ mockCatalog, outputRoot: simulationRoot, executablePaths });
             if (debugLibVars) {
                 console.log('[DEBUG] Library Variables Map:', JSON.stringify(libraryVariablesMap, null, 2));
             }

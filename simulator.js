@@ -88,6 +88,7 @@ class PipelineSimulator {
     constructor(options = {}) {
         this.outputRoot = options.outputRoot || '';
         this.mockCatalog = options.mockCatalog || {};
+        this.executablePaths = options.executablePaths || {};
         // Tools to shim when they are not present on the local machine.
         // Each entry: { name, exitCode, stdout }. exitCode defaults to 0.
         this.mockTools = options.mockTools || [
@@ -1219,8 +1220,18 @@ class PipelineSimulator {
                     timeout: 60000,
                 });
 
-            let run = tryRun(shell);
+            const configuredShell = this.executablePaths[shell];
+            let run = tryRun(configuredShell || shell);
             if (run.error && run.error.code === 'ENOENT') {
+                if (configuredShell) {
+                    const errMsg = `[bash-lookup] configured path not found: ${configuredShell}`;
+                    process.stderr.write(errMsg + '\n');
+                    return {
+                        stdout: errMsg + '\n[mock] configured executable not found; step simulated.',
+                        stderr: '',
+                        exitCode: 0,
+                    };
+                }
                 if (shell === 'bash') {
                     if (process.platform === 'win32') {
                         // On Windows, try Git Bash first — /bin/bash and sh don't exist here.
