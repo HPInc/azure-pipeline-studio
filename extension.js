@@ -2444,44 +2444,60 @@ ${mermaidDiagram
 
             simulationPanel.webview.onDidReceiveMessage(async (message) => {
                 if (message.command === 'runInTerminal') {
-                    const os = require('os');
                     const { spawn } = require('child_process');
                     const pipelineFile = _toSimulatorPath(document.fileName);
                     const bundlePath = _toSimulatorPath(path.join(__dirname, 'extension-bundle.js'));
-                    const jsonResultsFile = path.join(os.tmpdir(), `aps-sim-${Date.now()}.json`);
+                    const isWindows = process.platform === 'win32';
+                    // Extract WSL distro name from the UNC path so we can read back the results file
+                    const distroMatch = document.fileName.match(/^\\\\wsl\.localhost\\([^\\]+)/i);
+                    const distro = distroMatch ? distroMatch[1] : 'Ubuntu';
+                    const token = `aps-sim-${Date.now()}.json`;
+                    const jsonLinuxPath = `/tmp/${token}`;
+                    const jsonReadPath = isWindows ? `\\\\wsl.localhost\\${distro}\\tmp\\${token}` : jsonLinuxPath;
                     const counter = parseInt(message.buildCounter, 10);
-                    const spawnArgs = ['--simulate', pipelineFile];
-                    if (!isNaN(counter)) spawnArgs.push('--build-counter', String(counter));
+                    const simArgs = ['--simulate', pipelineFile];
+                    if (!isNaN(counter)) simArgs.push('--build-counter', String(counter));
                     if (Array.isArray(message.stages) && message.stages.length) {
-                        for (const s of message.stages) spawnArgs.push('--stage', s);
+                        for (const s of message.stages) simArgs.push('--stage', s);
                     }
                     if (message.variables && typeof message.variables === 'object') {
                         for (const [k, v] of Object.entries(message.variables)) {
-                            if (k.trim()) spawnArgs.push('-v', `${k.trim()}=${String(v).trim()}`);
+                            if (k.trim()) simArgs.push('-v', `${k.trim()}=${String(v).trim()}`);
                         }
                     }
-                    spawnArgs.push('--output-json', jsonResultsFile);
+                    simArgs.push('--output-json', jsonLinuxPath);
                     if (!simOutputChannel) {
                         simOutputChannel = vscode.window.createOutputChannel('Pipeline Simulation');
                     }
                     simOutputChannel.clear();
                     simOutputChannel.show(true);
-                    const child = spawn('node', [bundlePath, ...spawnArgs], {
-                        shell: '/bin/bash',
-                        cwd: path.dirname(pipelineFile),
-                    });
+                    let child;
+                    if (isWindows) {
+                        // Extension host is a Windows process — run the command inside WSL via wsl.exe
+                        // so that bash is available for script steps.
+                        const argStr = simArgs.map((a) => JSON.stringify(a)).join(' ');
+                        const bashCmd = `cd ${JSON.stringify(path.dirname(pipelineFile))} && node ${JSON.stringify(bundlePath)} ${argStr}`;
+                        child = spawn('wsl.exe', ['bash', '-c', bashCmd]);
+                    } else {
+                        child = spawn('node', [bundlePath, ...simArgs], {
+                            shell: '/bin/bash',
+                            cwd: path.dirname(pipelineFile),
+                        });
+                    }
                     child.stdout.on('data', (data) => simOutputChannel.append(data.toString()));
                     child.stderr.on('data', (data) => simOutputChannel.append(data.toString()));
                     child.on('close', () => {
                         try {
-                            if (fs.existsSync(jsonResultsFile)) {
-                                const results = JSON.parse(fs.readFileSync(jsonResultsFile, 'utf8'));
-                                fs.unlinkSync(jsonResultsFile);
+                            if (fs.existsSync(jsonReadPath)) {
+                                const results = JSON.parse(fs.readFileSync(jsonReadPath, 'utf8'));
+                                try {
+                                    fs.unlinkSync(jsonReadPath);
+                                } catch (_) {}
                                 simulationPanel?.webview.postMessage({ command: 'simulationResults', results });
                             } else {
                                 simulationPanel?.webview.postMessage({
                                     command: 'simulationError',
-                                    error: 'Simulation failed — see Output > Pipeline Simulation for details.',
+                                    error: 'Simulation failed — see Output \u203a Pipeline Simulation for details.',
                                 });
                             }
                         } catch (err) {
