@@ -89,6 +89,9 @@ class PipelineSimulator {
         this.outputRoot = options.outputRoot || '';
         this.mockCatalog = options.mockCatalog || {};
         this.executablePaths = options.executablePaths || {};
+        this.wslMountRoot = options.wslMountRoot || null;
+        // e.g. "\\\\wsl.localhost\\Ubuntu-22.04" — Windows UNC prefix used to
+        // convert Linux working directories to Windows-accessible paths for Git Bash.
         // Tools to shim when they are not present on the local machine.
         // Each entry: { name, exitCode, stdout }. exitCode defaults to 0.
         this.mockTools = options.mockTools || [
@@ -1212,19 +1215,38 @@ class PipelineSimulator {
                 ? path.resolve(String(workingDirectory).replace(/\\/g, '/'))
                 : process.cwd();
 
+            // On Windows, Git Bash (bash.exe) needs:
+            //   1. Script path in MSYS format (/c/Users/... not C:\\Users\\...)
+            //      otherwise bash receives a backslash path it cannot execute.
+            //   2. cwd as a Windows-accessible UNC path for WSL files — a raw Linux
+            //      path like /root/workspace/... resolves to C:\\root\\... on Windows
+            //      (non-existent), causing spawnSync to silently return ENOENT which
+            //      the simulator mistakes for "bash not found".
+            let effectiveCwd = resolvedCwd;
+            let scriptArg = tmpFile;
+            if (process.platform === 'win32') {
+                scriptArg = tmpFile
+                    .replace(/^([A-Za-z]):\\/, (_, d) => `/${d.toLowerCase()}/`)
+                    .replace(/\\/g, '/');
+                if (workingDirectory && String(workingDirectory).startsWith('/') && this.wslMountRoot) {
+                    effectiveCwd = this.wslMountRoot + String(workingDirectory).replace(/\//g, '\\');
+                }
+            }
+
+            const configuredShell = this.executablePaths[shell];
+
             const tryRun = (shellName) =>
-                spawnSync(shellName, [tmpFile], {
+                spawnSync(shellName, [scriptArg], {
                     env,
-                    cwd: resolvedCwd,
+                    cwd: effectiveCwd,
                     encoding: 'utf8',
                     timeout: 60000,
                 });
 
-            const configuredShell = this.executablePaths[shell];
             let run = tryRun(configuredShell || shell);
             if (run.error && run.error.code === 'ENOENT') {
                 if (configuredShell) {
-                    const errMsg = `[bash-lookup] configured path not found: ${configuredShell}`;
+                    const errMsg = `[bash-lookup] configured path not found: ${configuredShell} (cwd: ${effectiveCwd})`;
                     process.stderr.write(errMsg + '\n');
                     return {
                         stdout: errMsg + '\n[mock] configured executable not found; step simulated.',
@@ -1250,6 +1272,8 @@ class PipelineSimulator {
                         ].filter(Boolean);
                         const bashLog = [
                             `[bash-lookup] platform=win32, 'bash' not found in PATH`,
+                            `[bash-lookup] cwd: ${effectiveCwd}`,
+                            `[bash-lookup] script: ${scriptArg}`,
                         ];
                         for (const gitBash of gitBashCandidates) {
                             run = tryRun(gitBash);

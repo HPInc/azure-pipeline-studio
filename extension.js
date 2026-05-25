@@ -2582,7 +2582,11 @@ ${mermaidDiagram
                 const execPaths = vscode.workspace
                     .getConfiguration('azurePipelineStudio', document.uri)
                     .get('simulation.executablePaths', {});
-                const simulator = new PipelineSimulator({ outputRoot: simOutRoot, executablePaths: execPaths });
+                const simDistroMatch = document.fileName.match(/^\\\\wsl\.localhost\\([^\\]+)/i);
+                const wslMountRoot = process.platform === 'win32' && simDistroMatch
+                    ? `\\\\wsl.localhost\\${simDistroMatch[1]}`
+                    : null;
+                const simulator = new PipelineSimulator({ outputRoot: simOutRoot, executablePaths: execPaths, wslMountRoot });
                 let results;
                 try {
                     results = simulator.simulate(docToSimulate, simOptions);
@@ -3204,6 +3208,7 @@ function runCli(args) {
             'build-counter',
             'stage',
             'output-json',
+            'wsl-mount-root',
         ],
         boolean: ['help', 'expand-templates', 'azure-compatible', 'skip-syntax-check', 'debug', 'simulate', 'timing'],
         alias: {
@@ -3504,7 +3509,7 @@ function runCli(args) {
 
         try {
             const { document } = simulateParser.expandPipeline(simulateSource, simulateParserOptions);
-            const simulator = new PipelineSimulator({ mockCatalog, outputRoot: simulationRoot, executablePaths });
+            const simulator = new PipelineSimulator({ mockCatalog, outputRoot: simulationRoot, executablePaths, wslMountRoot: argv['wsl-mount-root'] || null });
             if (debugLibVars) {
                 console.log('[DEBUG] Library Variables Map:', JSON.stringify(libraryVariablesMap, null, 2));
             }
