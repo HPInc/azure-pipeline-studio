@@ -731,7 +731,12 @@ class PipelineSimulator {
                     `\nscript (substituted):\n${substituted}` +
                     _scriptContext;
                 stepResult.stderr = (run.stderr || '') + _debugBlock;
-                process.stderr.write('[aps-debug][_runStep] "' + displayName + '" FAILED exit=' + run.exitCode + '\n');
+                const debugEnabled = this.debugScript || !!process.env.APS_DEBUG_SCRIPT;
+                if (debugEnabled) {
+                    process.stderr.write(
+                        '[aps-debug][_runStep] "' + displayName + '" FAILED exit=' + run.exitCode + '\n'
+                    );
+                }
             }
             applyDirectives(this._parseVsoDirectives(run.stdout));
         } else if (stepDoc.task) {
@@ -1622,29 +1627,31 @@ class PipelineSimulator {
                 _scriptContent: scriptContent,
             };
             const _exitCode = _result.exitCode;
-            process.stderr.write(
-                `[aps-debug][_executeScript] exit=${_exitCode} stdout-bytes=${(_result.stdout || '').length} stderr-bytes=${(_result.stderr || '').length}\n`
-            );
-            if (_exitCode !== 0) {
-                const _tail = (s, n) => (s ? s.split('\n').slice(-n).join('\n') : '');
-                process.stderr.write('[aps-debug] stdout(last 20):\n' + _tail(_result.stdout, 20) + '\n');
-                process.stderr.write('[aps-debug] stderr(last 20):\n' + _tail(_result.stderr, 20) + '\n');
-                // Extract line number from error (e.g. "line 16: syntax error") and show that line
-                const _lineMatch = /line (\d+):/i.exec(_result.stderr || '');
-                if (_lineMatch) {
-                    const _errLine = parseInt(_lineMatch[1], 10);
-                    const _scriptLines = scriptContent.split('\n');
-                    const _start = Math.max(0, _errLine - 4);
-                    const _end = Math.min(_scriptLines.length, _errLine + 2);
-                    const _context = _scriptLines
-                        .slice(_start, _end)
-                        .map((l, i) => `  ${_start + i + 1}${_start + i + 1 === _errLine ? ' >>>' : '    '} ${l}`)
-                        .join('\n');
-                    process.stderr.write(`[aps-debug] script around line ${_errLine}:\n${_context}\n`);
+            if (_debugEnabled) {
+                process.stderr.write(
+                    `[aps-debug][_executeScript] exit=${_exitCode} stdout-bytes=${(_result.stdout || '').length} stderr-bytes=${(_result.stderr || '').length}\n`
+                );
+                if (_exitCode !== 0) {
+                    const _tail = (s, n) => (s ? s.split('\n').slice(-n).join('\n') : '');
+                    process.stderr.write('[aps-debug] stdout(last 20):\n' + _tail(_result.stdout, 20) + '\n');
+                    process.stderr.write('[aps-debug] stderr(last 20):\n' + _tail(_result.stderr, 20) + '\n');
+                    // Extract line number from error (e.g. "line 16: syntax error") and show that line
+                    const _lineMatch = /line (\d+):/i.exec(_result.stderr || '');
+                    if (_lineMatch) {
+                        const _errLine = parseInt(_lineMatch[1], 10);
+                        const _scriptLines = scriptContent.split('\n');
+                        const _start = Math.max(0, _errLine - 4);
+                        const _end = Math.min(_scriptLines.length, _errLine + 2);
+                        const _context = _scriptLines
+                            .slice(_start, _end)
+                            .map((l, i) => `  ${_start + i + 1}${_start + i + 1 === _errLine ? ' >>>' : '    '} ${l}`)
+                            .join('\n');
+                        process.stderr.write(`[aps-debug] script around line ${_errLine}:\n${_context}\n`);
+                    }
+                } else {
+                    const _tail = (s, n) => (s ? s.split('\n').slice(-n).join('\n') : '');
+                    process.stderr.write('[aps-debug] stdout(last 10):\n' + _tail(_result.stdout, 10) + '\n');
                 }
-            } else if (_debugEnabled) {
-                const _tail = (s, n) => (s ? s.split('\n').slice(-n).join('\n') : '');
-                process.stderr.write('[aps-debug] stdout(last 10):\n' + _tail(_result.stdout, 10) + '\n');
             }
             return _result;
         } finally {
