@@ -1275,7 +1275,9 @@ class PipelineSimulator {
         // variables.x reference
         const varsPrefixMatch = /^variables\.(.+)$/i.exec(arg);
         if (varsPrefixMatch) {
-            return variables[varsPrefixMatch[1].trim()] ?? '';
+            const resolvedKey = varsPrefixMatch[1].trim();
+            const resolvedValue = variables[resolvedKey];
+            return resolvedValue !== undefined && resolvedValue !== null ? resolvedValue : '';
         }
 
         // Direct lookup: stageDependencies.S.J.outputs['key'], etc.

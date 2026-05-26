@@ -204,7 +204,7 @@ function restoreEmptyValues(content, commentMap) {
             const [, indent, key, commentId] = match;
             const comments = commentMap.get(commentId);
             result.push(`${indent}${key}:`);
-            if (comments?.length) {
+            if (comments && comments.length) {
                 comments.forEach((comment) => result.push(comment));
             }
         } else if (line.match(/:\s*__EMPTY_VALUE_PLACEHOLDER__\s*$/)) {
@@ -2210,7 +2210,8 @@ function applyPipelineFormatting(text, newline, options) {
     // here because expansion-formatting follows a different path (handled elsewhere
     // or intentionally preserved). Respect the wasExpanded flag to prevent adding
     // extra blank lines for expanded output.
-    const finalLines = options?.stepSpacing && !options?.wasExpanded ? insertStepSpacing(compacted) : compacted;
+    const finalLines =
+        options && options.stepSpacing && !(options && options.wasExpanded) ? insertStepSpacing(compacted) : compacted;
 
     return finalLines.join(newline);
 }

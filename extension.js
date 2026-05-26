@@ -138,6 +138,109 @@ function _extractSimulationTree(document) {
     }));
 }
 
+/**
+ * Builds the standard default simulation variables from resolved paths.
+ * Both the CLI and UI share this baseline variable set.
+ *
+ * @param {string} workingDirectory - Resolved working directory
+ * @param {string} outputRoot - Resolved output root (no trailing slash)
+ * @param {string} buildCounter - Build counter value as string
+ * @param {Object} [extra={}] - Additional variables to merge in (e.g. checkout vars)
+ */
+function _buildSimulationDefaultVariables(workingDirectory, outputRoot, buildCounter, extra) {
+    const out = outputRoot.replace(/[/\\]$/, '').replace(/\\/g, '/');
+    return {
+        'Build.Repository.LocalPath': workingDirectory,
+        'Build.SourcesDirectory': workingDirectory,
+        'System.DefaultWorkingDirectory': workingDirectory,
+        'Build.ArtifactStagingDirectory': out + '/artifacts',
+        'Build.StagingDirectory': out + '/staging',
+        'Build.BinariesDirectory': out + '/binaries',
+        'Pipeline.Workspace': out + '/workspace',
+        'Agent.WorkFolder': out + '/agent/work',
+        'Agent.BuildDirectory': out + '/agent/build',
+        'Agent.TempDirectory': out + '/agent/temp',
+        'Agent.ToolsDirectory': out + '/agent/tools',
+        'Agent.HomeDirectory': out + '/agent/home',
+        'Simulator.OutputRoot': out,
+        buildCounter: buildCounter || '1',
+        ...extra,
+    };
+}
+
+/**
+ * Runs a pipeline simulation from a pre-parsed document and a resolved config.
+ * Shared between the CLI path and the VS Code extension UI path.
+ *
+ * @param {object} parsedDoc - Parsed pipeline document from AzurePipelineParser
+ * @param {object} config
+ * @param {string} config.workingDirectory - Resolved working directory
+ * @param {string} config.outputRoot - Resolved simulation output root
+ * @param {string} [config.buildCounter='1'] - Build counter value
+ * @param {Object} [config.userVariables={}] - User-supplied variable overrides (-v / UI variables)
+ * @param {Object} [config.libraryVariables={}] - { groupName: { varName: value } }
+ * @param {string[]} [config.stages] - Stage filter; undefined means all stages
+ * @param {Object} [config.executablePaths={}] - Tool executable path overrides
+ * @param {string|null} [config.wslMountRoot=null] - WSL UNC mount root for path resolution
+ * @param {string} [config.checkoutSource] - 'local' or 'git'; adds Simulator.Checkout* vars
+ * @param {string} [config.checkoutRepository] - Repo path/URL for checkout
+ * @param {Object} [config.mockCatalog] - Mock catalog for task outputs (CLI only)
+ * @returns simulation results from PipelineSimulator.simulate()
+ */
+function runPipelineSimulation(
+    parsedDoc,
+    {
+        workingDirectory,
+        outputRoot,
+        buildCounter = '1',
+        userVariables = {},
+        libraryVariables = {},
+        stages,
+        executablePaths = {},
+        wslMountRoot = null,
+        checkoutSource,
+        checkoutRepository,
+        mockCatalog,
+    } = {}
+) {
+    const counterStr = String(buildCounter || '1');
+    const counterNum = parseInt(counterStr, 10);
+
+    const checkoutVars =
+        checkoutSource !== undefined
+            ? {
+                  'Simulator.CheckoutSource': checkoutSource,
+                  'Simulator.CheckoutRepository': checkoutRepository || '',
+                  'Simulator.RepositoryRoot': checkoutRepository || workingDirectory,
+              }
+            : {};
+
+    const defaultVariables = _buildSimulationDefaultVariables(workingDirectory, outputRoot, counterStr, checkoutVars);
+
+    const userOverrides = { ...userVariables };
+    if (!isNaN(counterNum)) {
+        userOverrides['Build.BuildNumber'] = counterStr;
+        userOverrides['Build.BuildId'] = counterStr;
+        userOverrides.buildCounter = counterStr;
+    }
+
+    const simOptions = {
+        defaultVariables,
+        variables: { ...defaultVariables, ...userOverrides },
+        workingDirectory,
+        userOverrides,
+        libraryVariables,
+        ...(checkoutSource !== undefined ? { checkoutSource, checkoutRepository: checkoutRepository || '' } : {}),
+        ...(stages && stages.length ? { stages } : {}),
+    };
+
+    const outRoot = outputRoot.replace(/[/\\]$/, '');
+    const simulatorConfig = { outputRoot: outRoot, executablePaths, wslMountRoot };
+    if (mockCatalog) simulatorConfig.mockCatalog = mockCatalog;
+    const simulator = new PipelineSimulator(simulatorConfig);
+    return simulator.simulate(parsedDoc, simOptions);
+}
+
 function _generateSimulationViewHtml(stageTree, fileName) {
     const esc = _escHtml;
     const STEP_ICONS = {
@@ -212,18 +315,20 @@ function _generateSimulationViewHtml(stageTree, fileName) {
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Pipeline Simulation</title>
 <style id="mainStyle">
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#1e1e1e;color:#cccccc;min-height:100vh}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#1e1e1e;color:#cccccc;min-height:100vh;font-size:14px;line-height:1.4}
 .header{background:linear-gradient(135deg,#1a1a1a,#0d0d0d);padding:16px 20px;border-bottom:3px solid #0078d4}
-.header h1{color:#fff;font-size:1.2em;display:flex;align-items:center;gap:10px}
-.header .filename{color:#888;font-size:.78em;margin-top:4px;font-family:monospace;word-break:break-all}
+.header h1{color:#fff;font-size:1.35em;display:flex;align-items:center;gap:10px}
+.header .filename{color:#888;font-size:.9em;margin-top:4px;font-family:monospace;word-break:break-all}
 .body{padding:16px 20px}
-.section-title{color:#888;font-size:.72em;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin:16px 0 8px}
+.section-title{color:#888;font-size:.74em;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin:16px 0 8px}
 .options-row{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:4px}
 .field-group{display:flex;align-items:center;gap:8px}
-.field-label{font-size:.85em;color:#ccc}
-.field-input{background:#2d2d30;border:1px solid #3e3e42;color:#e0e0e0;padding:4px 8px;border-radius:3px;font-size:.85em;width:90px}
+.field-label{font-size:.82em;color:#ccc}
+.field-input{background:#2d2d30;border:1px solid #3e3e42;color:#e0e0e0;padding:4px 8px;border-radius:3px;font-size:.82em;width:90px}
 .field-input:focus{outline:none;border-color:#0078d4}
-.vars-table{width:100%;border-collapse:collapse;margin-top:4px;font-size:.82em}
+.field-select{background:#2d2d30;border:1px solid #3e3e42;color:#e0e0e0;padding:4px 8px;border-radius:3px;font-size:.82em;cursor:pointer}
+.field-select:focus{outline:none;border-color:#0078d4}
+.vars-table{width:100%;border-collapse:collapse;margin-top:4px;font-size:.8em}
 .vars-table td{padding:2px 3px}
 .var-key,.var-val{background:#2d2d30;border:1px solid #3e3e42;color:#e0e0e0;padding:4px 8px;border-radius:3px;width:100%}
 .var-key:focus,.var-val:focus{outline:none;border-color:#0078d4}
@@ -232,16 +337,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .remove-var-btn{background:none;border:none;color:#555;cursor:pointer;font-size:.9em;padding:0 4px;line-height:1}
 .remove-var-btn:hover{color:#fc8181}
 .toolbar{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}
-.toolbar-btn{background:#2d2d30;border:1px solid #3e3e42;color:#aaa;padding:4px 10px;border-radius:3px;cursor:pointer;font-size:.76em}
+.toolbar-btn{background:#2d2d30;border:1px solid #3e3e42;color:#aaa;padding:4px 8px;border-radius:3px;cursor:pointer;font-size:.74em}
 .toolbar-btn:hover{border-color:#555;color:#ddd}
 .stage-item{background:#252526;border:1px solid #3e3e42;border-radius:3px;margin-bottom:5px;overflow:hidden}
 .stage-header{display:flex;align-items:center;gap:8px;padding:8px 12px;background:#2d2d30}
 .stage-cb{cursor:pointer;accent-color:#0078d4;width:14px;height:14px;flex-shrink:0}
 .toggle{display:inline-block;font-size:.65em;color:#555;transition:transform .15s;cursor:pointer;width:14px;flex-shrink:0;text-align:center}
 .toggle.open{transform:rotate(90deg);color:#aaa}
-.stage-name{font-size:.88em;font-weight:600;color:#ddd;cursor:pointer;flex:1}
+.stage-name{font-size:.9em;font-weight:600;color:#ddd;cursor:pointer;flex:1}
 .stage-name:hover{color:#fff}
-.count-badge{font-size:.7em;color:#555;background:#1e1e1e;padding:1px 6px;border-radius:10px;border:1px solid #3e3e42;white-space:nowrap}
+.count-badge{font-size:.62em;color:#555;background:#1e1e1e;padding:1px 5px;border-radius:10px;border:1px solid #3e3e42;white-space:nowrap}
 .jobs-list,.steps-list{padding:0}
 .collapsed{display:none}
 .job-item{border-top:1px solid #2d2d30}
@@ -254,24 +359,24 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .step-row{display:flex;align-items:baseline;gap:6px;padding:2px 8px}
 .step-icon{font-size:.85em;flex-shrink:0;width:16px;text-align:center}
 .step-type{font-size:.66em;color:#555;font-family:monospace;flex-shrink:0;min-width:52px}
-.step-label{font-size:.8em;color:#999}
+.step-label{font-size:.82em;color:#999}
 .empty-msg{font-size:.78em;color:#444;padding:6px 12px;font-style:italic}
 .actions{display:flex;align-items:center;gap:10px;margin-top:18px;padding-top:14px;border-top:1px solid #3e3e42}
-.run-btn{background:#0078d4;border:none;color:#fff;padding:8px 20px;border-radius:3px;cursor:pointer;font-size:.88em;font-weight:600}
+.run-btn{background:#0078d4;border:none;color:#fff;padding:9px 20px;border-radius:3px;cursor:pointer;font-size:.92em;font-weight:600}
 .run-btn:hover{background:#005a9e}
 .run-btn:disabled{background:#444;color:#777;cursor:not-allowed}
-.status-msg{font-size:.8em;color:#888}
+.status-msg{font-size:.84em;color:#888}
 .res-wrap{margin-top:18px;border-top:1px solid #3e3e42;padding-top:14px}
 .res-stage{margin-bottom:10px}
-.res-stage-hd{font-size:.9em;font-weight:700;color:#ddd;padding:6px 0 4px;border-bottom:1px solid #3e3e42;text-transform:uppercase;letter-spacing:.04em}
+.res-stage-hd{font-size:1em;font-weight:700;color:#ddd;padding:6px 0 4px;border-bottom:1px solid #3e3e42;text-transform:uppercase;letter-spacing:.03em}
 .res-job{margin:4px 0 4px 12px}
-.res-job-hd{font-size:.82em;font-weight:600;color:#aaa;padding:4px 0 2px}
-.res-step{margin:3px 0 3px 20px;font-size:.8em}
-.res-icon{margin-right:5px;font-size:.9em}
+.res-job-hd{font-size:.96em;font-weight:600;color:#aaa;padding:4px 0 2px}
+.res-step{margin:4px 0 4px 20px;font-size:1.02em}
+.res-icon{margin-right:6px;font-size:1.04em}
 .res-step-name{color:#ccc}
-.res-out{margin:2px 0 2px 20px;font-family:monospace;font-size:.77em;color:#888;white-space:pre-wrap;word-break:break-all;max-height:120px;overflow-y:auto;background:#1a1a1a;padding:3px 6px;border-radius:2px}
+.res-out{margin:3px 0 3px 20px;font-family:monospace;font-size:.96em;color:#9fa8b0;white-space:pre-wrap;word-break:break-all;max-height:140px;overflow-y:auto;background:#1a1a1a;padding:5px 8px;border-radius:2px}
 .res-vars{margin:2px 0 2px 20px}
-.res-var{font-size:.74em;color:#777;font-family:monospace}
+.res-var{font-size:.94em;color:#8f98a1;font-family:monospace}
 .res-out-var{color:#7eb8d4}
 .res-vk{color:#444;margin-right:3px}
 .res-summary{margin-top:12px;padding:8px 10px;background:#252526;border:1px solid #3e3e42;border-radius:3px;font-size:.84em;font-weight:600}
@@ -288,7 +393,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .res-tog{font-size:.7em;color:#555;margin-left:6px;flex-shrink:0}
 .res-body{overflow:hidden}
 .res-browser-btn{background:#0e639c;color:#fff;border:none;padding:4px 10px;border-radius:3px;cursor:pointer;font-size:.78em}.res-browser-btn:hover{background:#1177bb}
-.term-btn{background:none;border:1px solid #3e3e42;color:#ccc;padding:8px 16px;border-radius:3px;cursor:pointer;font-size:.88em;font-weight:600}
+.term-btn{display:none;background:none;border:1px solid #3e3e42;color:#ccc;padding:8px 16px;border-radius:3px;cursor:pointer;font-size:.88em;font-weight:600}
 .term-btn:hover{border-color:#0078d4;color:#fff}
 .term-btn:disabled{border-color:#333;color:#555;cursor:not-allowed}
 #pageLoader{position:fixed;inset:0;background:#1e1e1e;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:9999}
@@ -303,11 +408,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <div class="options-row">
     <div class="field-group"><label class="field-label" for="buildCounter">Build Counter</label>
       <input class="field-input" type="number" id="buildCounter" value="1" min="1" step="1"></div>
+    <div class="field-group"><label class="field-label" for="buildReason">Build Reason</label>
+      <select class="field-select" id="buildReason"><option value="Manual">Manual</option><option value="IndividualCI">IndividualCI</option><option value="BatchedCI">BatchedCI</option><option value="Schedule">Schedule</option><option value="PullRequest">PullRequest</option><option value="BuildCompletion">BuildCompletion</option><option value="ResourceTrigger">ResourceTrigger</option></select></div>
+    <div class="field-group"><label class="field-label" for="sourceBranch">Source Branch</label>
+      <input class="field-input" list="sourceBranchList" id="sourceBranch" value="refs/heads/main" style="width:170px">
+      <datalist id="sourceBranchList"><option value="refs/heads/main"><option value="refs/heads/master"><option value="refs/heads/develop"><option value="refs/heads/release"><option value="refs/pull/1/merge"></datalist></div>
     <div class="field-group"><input type="checkbox" id="debugMode" style="cursor:pointer;accent-color:#0078d4;width:14px;height:14px"><label class="field-label" for="debugMode" style="cursor:pointer">Enable Debug</label></div>
   </div>
   <div class="section-title">Variables <span style="font-weight:400;font-size:.9em">(key=value overrides)</span></div>
   <table class="vars-table"><tbody id="varRows"></tbody></table>
   <button class="add-var-btn" onclick="addVar()">+ Add variable</button>
+  <div class="section-title" style="margin-top:14px">Library Variables <span style="font-weight:400;font-size:.9em">(group.variable=value)</span></div>
+  <table class="vars-table"><thead><tr><td style="width:30%;padding:0 3px 3px"><span style="font-size:.74em;color:#555">Group</span></td><td style="width:30%;padding:0 3px 3px"><span style="font-size:.74em;color:#555">Variable</span></td><td style="width:4%"></td><td style="width:31%;padding:0 3px 3px"><span style="font-size:.74em;color:#555">Value</span></td><td></td></tr></thead><tbody id="libVarRows"></tbody></table>
+  <button class="add-var-btn" onclick="addLibVar()">+ Add library variable</button>
   <div class="actions">
     <button class="run-btn" id="runBtn" onclick="runSimulation()">&#9654; Run Simulation</button>
     <button class="term-btn" id="termBtn" onclick="runInTerminal()">&#10095;_ Run in Terminal</button>
@@ -326,23 +439,32 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <div id="resultsPanel"></div>
 </div>
 <script>
-const vscode=acquireVsCodeApi();let varCount=0;
+window.onerror=function(msg,src,line,col,err){var l=document.getElementById('pageLoader');if(l){l.innerHTML='<div style="color:#f47174;padding:20px;font-family:monospace;font-size:13px"><b>JS Error (line '+line+'):</b><br>'+msg+'<br><br>'+(err&&err.stack?err.stack.replace(/\\n/g,'<br>'):'')+'</div>';}return false;};
+window.addEventListener('unhandledrejection',function(e){var l=document.getElementById('pageLoader');if(l){l.innerHTML='<div style="color:#f47174;padding:20px;font-family:monospace;font-size:13px"><b>Unhandled Promise Rejection:</b><br>'+String(e.reason)+'</div>';}});
+const vscode=acquireVsCodeApi();let varCount=0;let libVarCount=0;
 function toggleCollapse(id,tid){const el=document.getElementById(id);const t=document.getElementById(tid);if(!el)return;const c=el.classList.toggle('collapsed');if(t)t.classList.toggle('open',!c);}
 function selectAll(v){document.querySelectorAll('.stage-cb').forEach(cb=>cb.checked=v);}
 function expandAll(v){document.querySelectorAll('.jobs-list,.steps-list').forEach(el=>el.classList.toggle('collapsed',!v));document.querySelectorAll('.toggle').forEach(t=>t.classList.toggle('open',v));}
 function addVar(){var id='vr'+(varCount++);var tr=document.createElement('tr');tr.id=id;tr.innerHTML='<td style="width:42%"><input class="var-key" placeholder="key"></td><td style="width:4%;text-align:center;color:#555;font-size:.8em">=</td><td style="width:49%"><input class="var-val" placeholder="value"></td><td><button class="remove-var-btn">&times;</button></td>';tr.querySelector('.remove-var-btn').onclick=function(){document.getElementById(id).remove();};document.getElementById('varRows').appendChild(tr);}
+function addLibVar(){var id='lv'+(libVarCount++);var tr=document.createElement('tr');tr.id=id;tr.innerHTML='<td style="width:30%"><input class="var-key lib-group" placeholder="group"></td><td style="width:30%"><input class="var-key lib-name" placeholder="variable"></td><td style="width:4%;text-align:center;color:#555;font-size:.8em">=</td><td style="width:31%"><input class="var-val lib-val" placeholder="value"></td><td><button class="remove-var-btn">&times;</button></td>';tr.querySelector('.remove-var-btn').onclick=function(){document.getElementById(id).remove();};document.getElementById('libVarRows').appendChild(tr);}
+function _collectLibVars(){var m={};document.querySelectorAll('#libVarRows tr').forEach(function(row){var g=row.querySelector('.lib-group');var n=row.querySelector('.lib-name');var v=row.querySelector('.lib-val');if(g&&n&&v&&g.value.trim()&&n.value.trim()){var gk=g.value.trim();if(!m[gk])m[gk]={};m[gk][n.value.trim()]=v.value.trim();}});return m;}
 function runSimulation(){
+  try{
   const stages=Array.from(document.querySelectorAll('.stage-cb:checked')).map(cb=>cb.dataset.name).filter(Boolean);
   const buildCounter=document.getElementById('buildCounter').value;
   const variables={};
   document.querySelectorAll('#varRows tr').forEach(row=>{const k=row.querySelector('.var-key');const v=row.querySelector('.var-val');if(k&&v&&k.value.trim()&&v.value.trim())variables[k.value.trim()]=v.value.trim();});
   if(document.getElementById('debugMode').checked)variables['System.Debug']='true';
+  const buildReason=document.getElementById('buildReason').value;if(buildReason)variables['Build.Reason']=buildReason;
+  const sourceBranch=document.getElementById('sourceBranch').value.trim();if(sourceBranch){variables['Build.SourceBranch']=sourceBranch;const sbn=sourceBranch.replace(/^refs\\/heads\\//,'');variables['Build.SourceBranchName']=sbn!==sourceBranch?sbn:sourceBranch.split('/').pop()||sourceBranch;}
   document.getElementById('runBtn').disabled=true;
   document.getElementById('termBtn').disabled=true;
   document.getElementById('statusMsg').textContent='';
   document.getElementById('resultsPanel').innerHTML='<div class="sim-loading"><div class="sim-spinner"></div><span>Running simulation\u2026</span></div>';
-  var ss=document.getElementById('stagesSection');var st=document.getElementById('stagesToggle');if(ss){ss.classList.add('collapsed');st.innerHTML='&#9660; Stages to Run';}
-  vscode.postMessage({command:'runSimulation',stages,buildCounter,variables});
+  var ss=document.getElementById('stagesSection');var st=document.getElementById('stagesToggle');if(ss){ss.classList.add('collapsed');if(st)st.innerHTML='&#9660; Stages to Run';}
+  const libVars=_collectLibVars();
+  vscode.postMessage({command:'runSimulation',stages,buildCounter,variables,libraryVariables:libVars});
+  }catch(e){console.error('[aps] runSimulation error',e);document.getElementById('resultsPanel').innerHTML='';document.getElementById('statusMsg').textContent='\u26a0 JS error: '+String(e);document.getElementById('runBtn').disabled=false;document.getElementById('termBtn').disabled=false;}
 }
 function runInTerminal(){
   const stages=Array.from(document.querySelectorAll('.stage-cb:checked')).map(cb=>cb.dataset.name).filter(Boolean);
@@ -350,12 +472,14 @@ function runInTerminal(){
   const variables={};
   document.querySelectorAll('#varRows tr').forEach(row=>{const k=row.querySelector('.var-key');const v=row.querySelector('.var-val');if(k&&v&&k.value.trim()&&v.value.trim())variables[k.value.trim()]=v.value.trim();});
   if(document.getElementById('debugMode').checked)variables['System.Debug']='true';
+  const buildReason2=document.getElementById('buildReason').value;if(buildReason2)variables['Build.Reason']=buildReason2;
+  const sourceBranch2=document.getElementById('sourceBranch').value.trim();if(sourceBranch2){variables['Build.SourceBranch']=sourceBranch2;const sbn2=sourceBranch2.replace(/^refs\\/heads\\//,'');variables['Build.SourceBranchName']=sbn2!==sourceBranch2?sbn2:sourceBranch2.split('/').pop()||sourceBranch2;}
   document.getElementById('runBtn').disabled=true;
   document.getElementById('termBtn').disabled=true;
   document.getElementById('statusMsg').textContent='';
   document.getElementById('resultsPanel').innerHTML='<div class="sim-loading"><div class="sim-spinner"></div><span>Running in terminal\u2026</span></div>';
   var ss=document.getElementById('stagesSection');var st=document.getElementById('stagesToggle');if(ss){ss.classList.add('collapsed');st.innerHTML='&#9660; Stages to Run';}
-  vscode.postMessage({command:'runInTerminal',stages,buildCounter,variables});
+  vscode.postMessage({command:'runInTerminal',stages,buildCounter,variables,libraryVariables:_collectLibVars()});
 }
 function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function toggleStagesSection(){var s=document.getElementById('stagesSection');var btn=document.getElementById('stagesToggle');if(!s)return;var c=s.classList.toggle('collapsed');btn.innerHTML=c?'&#9660; Stages to Run':'&#9650; Collapse';}
@@ -483,7 +607,10 @@ function activate(context) {
         if (!vscode) return defaults;
 
         try {
-            const config = vscode.workspace.getConfiguration('azurePipelineStudio', document?.uri);
+            const config = vscode.workspace.getConfiguration(
+                'azurePipelineStudio',
+                document ? document.uri : undefined
+            );
             const result = { ...defaults };
 
             const booleanSettings = [
@@ -682,16 +809,16 @@ function activate(context) {
         if (lastRenderedDocument) {
             try {
                 const resourceOverrides = buildResourceOverridesForDocument(lastRenderedDocument);
-                if (resourceOverrides?.repositories) {
+                if (resourceOverrides && resourceOverrides.repositories) {
                     for (const entry of Object.values(resourceOverrides.repositories)) {
-                        const loc = entry?.location;
+                        const loc = entry && entry.location;
                         if (loc && typeof loc === 'string' && !templateResolveBaseDirs.includes(loc)) {
                             templateResolveBaseDirs.push(loc);
                         }
                     }
                 }
                 const wf = vscode.workspace.getWorkspaceFolder(lastRenderedDocument.uri);
-                if (wf?.uri?.fsPath && !templateResolveBaseDirs.includes(wf.uri.fsPath)) {
+                if (wf && wf.uri && wf.uri.fsPath && !templateResolveBaseDirs.includes(wf.uri.fsPath)) {
                     templateResolveBaseDirs.push(wf.uri.fsPath);
                 }
             } catch (e) {
@@ -1246,13 +1373,15 @@ function activate(context) {
             const skipSyntaxCheck = options.silent ? configuredSkipSyntaxCheck : false;
             const resourceOverrides = buildResourceOverridesForDocument(document);
             const rootDirectoryOverride = buildRootDirectoryOverrideForDocument(document);
-            const azureCompatible = options.azureCompatible ?? false;
+            const azureCompatible = options.azureCompatible !== undefined ? options.azureCompatible : false;
 
             const resourceLocations =
-                resourceOverrides?.repositories && typeof resourceOverrides.repositories === 'object'
+                resourceOverrides &&
+                resourceOverrides.repositories &&
+                typeof resourceOverrides.repositories === 'object'
                     ? Object.fromEntries(
                           Object.entries(resourceOverrides.repositories)
-                              .map(([alias, entry]) => [alias, entry?.location])
+                              .map(([alias, entry]) => [alias, entry && entry.location])
                               .filter(([, location]) => typeof location === 'string' && location.trim().length)
                       )
                     : undefined;
@@ -1344,14 +1473,14 @@ function activate(context) {
         }
 
         const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
-        const workspaceDir = workspaceFolder?.uri.fsPath;
+        const workspaceDir = workspaceFolder && workspaceFolder.uri ? workspaceFolder.uri.fsPath : undefined;
         const documentDir = document.fileName ? path.dirname(document.fileName) : undefined;
         const repositories = {};
 
         for (const entry of configuredResources) {
             if (!entry || typeof entry !== 'object') continue;
 
-            const alias = entry.repository?.trim();
+            const alias = entry.repository && entry.repository.trim ? entry.repository.trim() : '';
             const rawPath = pickFirstString(entry.path, entry.location);
             if (!alias || !rawPath) continue;
 
@@ -1362,7 +1491,7 @@ function activate(context) {
             const matchCriteria = {};
 
             ['repository', 'name', 'endpoint', 'ref', 'type'].forEach((key) => {
-                const value = entry[key]?.trim();
+                const value = entry[key] && entry[key].trim ? entry[key].trim() : '';
                 if (value) matchCriteria[key] = value;
             });
 
@@ -1392,7 +1521,7 @@ function activate(context) {
         const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
         return resolveConfiguredPath(
             rawRootDirectory,
-            workspaceFolder?.uri.fsPath,
+            workspaceFolder && workspaceFolder.uri ? workspaceFolder.uri.fsPath : undefined,
             document.fileName ? path.dirname(document.fileName) : undefined
         );
     }
@@ -1406,7 +1535,7 @@ function activate(context) {
     };
 
     const isRelevantDocument = (document) =>
-        shouldRenderDocument(document) && lastRenderedDocument?.fileName === document.fileName;
+        shouldRenderDocument(document) && lastRenderedDocument && lastRenderedDocument.fileName === document.fileName;
 
     const commandDisposable = vscode.commands.registerCommand('azurePipelineStudio.showRenderedYaml', async () => {
         const editor = vscode.window.activeTextEditor;
@@ -1604,7 +1733,7 @@ function activate(context) {
 
         activeDependenciesPanel = dependenciesPanel = panel;
 
-        const projectName = document?.fileName || 'Pipeline';
+        const projectName = (document && document.fileName) || 'Pipeline';
         const loadingHtml = generateLoadingHtml(projectName);
         try {
             panel.webview.html = loadingHtml;
@@ -2394,13 +2523,14 @@ ${mermaidDiagram
         const skipSyntaxCheck = config.get('expansion.skipSyntaxCheck', false);
         const resourceOverrides = buildResourceOverridesForDocument(document);
         const rootDirectoryOverride = buildRootDirectoryOverrideForDocument(document);
-        const resourceLocations = resourceOverrides?.repositories
-            ? Object.fromEntries(
-                  Object.entries(resourceOverrides.repositories)
-                      .map(([alias, entry]) => [alias, entry?.location])
-                      .filter(([, loc]) => typeof loc === 'string' && loc.trim().length)
-              )
-            : undefined;
+        const resourceLocations =
+            resourceOverrides && resourceOverrides.repositories
+                ? Object.fromEntries(
+                      Object.entries(resourceOverrides.repositories)
+                          .map(([alias, entry]) => [alias, entry && entry.location])
+                          .filter(([, loc]) => typeof loc === 'string' && loc.trim().length)
+                  )
+                : undefined;
 
         const parserOptions = {
             fileName: document.fileName,
@@ -2443,17 +2573,23 @@ ${mermaidDiagram
             activeSimulationPanel = simulationPanel;
 
             simulationPanel.webview.onDidReceiveMessage(async (message) => {
+                if (!simOutputChannel) {
+                    simOutputChannel = vscode.window.createOutputChannel('Pipeline Simulation');
+                }
                 if (message.command === 'runInTerminal') {
                     const { spawn } = require('child_process');
-                    const pipelineFile = _toSimulatorPath(document.fileName);
-                    const bundlePath = _toSimulatorPath(path.join(__dirname, 'extension-bundle.js'));
+                    const os = require('os');
                     const isWindows = process.platform === 'win32';
-                    // Extract WSL distro name from the UNC path so we can read back the results file
-                    const distroMatch = document.fileName.match(/^\\\\wsl\.localhost\\([^\\]+)/i);
-                    const distro = distroMatch ? distroMatch[1] : 'Ubuntu';
+
+                    // On Windows hosts, run with Windows Node to avoid old WSL /usr/bin/node syntax limitations.
+                    const pipelineFile = isWindows ? document.fileName : _toSimulatorPath(document.fileName);
+                    const bundlePath = isWindows
+                        ? path.join(__dirname, 'extension-bundle.js')
+                        : _toSimulatorPath(path.join(__dirname, 'extension-bundle.js'));
+
                     const token = `aps-sim-${Date.now()}.json`;
-                    const jsonLinuxPath = `/tmp/${token}`;
-                    const jsonReadPath = isWindows ? `\\\\wsl.localhost\\${distro}\\tmp\\${token}` : jsonLinuxPath;
+                    const jsonOutputPath = isWindows ? path.join(os.tmpdir(), token) : `/tmp/${token}`;
+                    const jsonReadPath = jsonOutputPath;
                     const counter = parseInt(message.buildCounter, 10);
                     const simArgs = ['--simulate', pipelineFile];
                     if (!isNaN(counter)) simArgs.push('--build-counter', String(counter));
@@ -2465,13 +2601,42 @@ ${mermaidDiagram
                             if (k.trim()) simArgs.push('-v', `${k.trim()}=${String(v).trim()}`);
                         }
                     }
+                    if (message.libraryVariables && typeof message.libraryVariables === 'object') {
+                        for (const [groupName, vars] of Object.entries(message.libraryVariables)) {
+                            if (!vars || typeof vars !== 'object') continue;
+                            for (const [varName, value] of Object.entries(vars)) {
+                                if (groupName.trim() && varName.trim()) {
+                                    simArgs.push('-l', `${groupName.trim()}.${varName.trim()}=${String(value).trim()}`);
+                                }
+                            }
+                        }
+                    }
+                    const termResourceOverrides = buildResourceOverridesForDocument(document);
+                    if (termResourceOverrides && termResourceOverrides.repositories) {
+                        for (const [alias, entry] of Object.entries(termResourceOverrides.repositories)) {
+                            const resolvedLocation = entry && entry.location;
+                            if (
+                                typeof alias === 'string' &&
+                                alias.trim() &&
+                                typeof resolvedLocation === 'string' &&
+                                resolvedLocation.trim()
+                            ) {
+                                const repoPath = isWindows
+                                    ? resolvedLocation.trim()
+                                    : _toSimulatorPath(resolvedLocation.trim());
+                                simArgs.push('--repo', `${alias.trim()}=${repoPath}`);
+                            }
+                        }
+                    }
                     const termExecPaths = vscode.workspace
                         .getConfiguration('azurePipelineStudio', document.uri)
                         .get('simulation.executablePaths', {});
                     for (const [exeName, exePath] of Object.entries(termExecPaths)) {
-                        simArgs.push('--exe', `${exeName}=${exePath}`);
+                        const rawExePath = String(exePath || '').trim();
+                        if (!rawExePath) continue;
+                        simArgs.push('--exe', `${exeName}=${rawExePath}`);
                     }
-                    simArgs.push('--output-json', jsonLinuxPath);
+                    simArgs.push('--output-json', jsonOutputPath);
                     if (!simOutputChannel) {
                         simOutputChannel = vscode.window.createOutputChannel('Pipeline Simulation');
                     }
@@ -2479,35 +2644,74 @@ ${mermaidDiagram
                     simOutputChannel.show(true);
                     let child;
                     if (isWindows) {
-                        // Extension host is a Windows process — run the command inside WSL via wsl.exe
-                        // so that bash is available for script steps.
-                        const argStr = simArgs.map((a) => JSON.stringify(a)).join(' ');
-                        const bashCmd = `cd ${JSON.stringify(path.dirname(pipelineFile))} && node ${JSON.stringify(bundlePath)} ${argStr}`;
-                        child = spawn('wsl.exe', ['bash', '-c', bashCmd]);
+                        const cliArgs = [bundlePath, ...simArgs]
+                            .map((a) => (/\s/.test(a) ? JSON.stringify(a) : a))
+                            .join(' ');
+                        simOutputChannel.appendLine(
+                            `[aps] Reproducing this run from PowerShell/CMD:\n  node ${cliArgs}\n`
+                        );
+                        child = spawn('node', [bundlePath, ...simArgs], {
+                            cwd: path.dirname(pipelineFile),
+                        });
                     } else {
+                        const cliArgs = [bundlePath, ...simArgs]
+                            .map((a) => (/\s/.test(a) ? JSON.stringify(a) : a))
+                            .join(' ');
+                        simOutputChannel.appendLine(`[aps] Reproducing this run from a terminal:\n  node ${cliArgs}\n`);
                         child = spawn('node', [bundlePath, ...simArgs], {
                             shell: '/bin/bash',
                             cwd: path.dirname(pipelineFile),
                         });
                     }
-                    child.stdout.on('data', (data) => simOutputChannel.append(data.toString()));
-                    child.stderr.on('data', (data) => simOutputChannel.append(data.toString()));
-                    child.on('close', () => {
+                    const appendProcessOutput = (data) => {
+                        let text = '';
+                        if (Buffer.isBuffer(data)) {
+                            text = data.toString('utf8');
+                            if (text.includes('\u0000')) {
+                                text = data.toString('utf16le');
+                            }
+                        } else {
+                            text = String(data || '');
+                        }
+                        text = text.replace(/\u0000/g, '');
+                        if (text) simOutputChannel.append(text);
+                    };
+                    child.stdout.on('data', appendProcessOutput);
+                    child.stderr.on('data', appendProcessOutput);
+                    child.on('error', (err) => {
+                        simOutputChannel.appendLine(`[aps] Failed to start simulation process: ${err.message}`);
+                        if (simulationPanel && simulationPanel.webview) {
+                            simulationPanel.webview.postMessage({
+                                command: 'simulationError',
+                                error: `Failed to start simulation process: ${err.message}`,
+                            });
+                        }
+                    });
+                    child.on('close', (code, signal) => {
+                        simOutputChannel.appendLine(
+                            `[aps] Simulation process exited with code=${code} signal=${signal || 'none'}`
+                        );
                         try {
                             if (fs.existsSync(jsonReadPath)) {
                                 const results = JSON.parse(fs.readFileSync(jsonReadPath, 'utf8'));
                                 try {
                                     fs.unlinkSync(jsonReadPath);
                                 } catch (_) {}
-                                simulationPanel?.webview.postMessage({ command: 'simulationResults', results });
+                                if (simulationPanel && simulationPanel.webview) {
+                                    simulationPanel.webview.postMessage({ command: 'simulationResults', results });
+                                }
                             } else {
-                                simulationPanel?.webview.postMessage({
-                                    command: 'simulationError',
-                                    error: 'Simulation failed — see Output \u203a Pipeline Simulation for details.',
-                                });
+                                if (simulationPanel && simulationPanel.webview) {
+                                    simulationPanel.webview.postMessage({
+                                        command: 'simulationError',
+                                        error: 'Simulation failed — see Output \u203a Pipeline Simulation for details.',
+                                    });
+                                }
                             }
                         } catch (err) {
-                            simulationPanel?.webview.postMessage({ command: 'simulationError', error: err.message });
+                            if (simulationPanel && simulationPanel.webview) {
+                                simulationPanel.webview.postMessage({ command: 'simulationError', error: err.message });
+                            }
                         }
                     });
                     return;
@@ -2527,74 +2731,83 @@ ${mermaidDiagram
 
                 const docToSimulate = lastExpandedDoc;
                 if (!docToSimulate) {
-                    simulationPanel?.webview.postMessage({
-                        command: 'simulationError',
-                        error: 'No expanded pipeline document available. Re-open the simulation view.',
-                    });
+                    if (simulationPanel && simulationPanel.webview) {
+                        simulationPanel.webview.postMessage({
+                            command: 'simulationError',
+                            error: 'No expanded pipeline document available. Re-open the simulation view.',
+                        });
+                    }
                     return;
                 }
 
                 const stages = Array.isArray(message.stages) && message.stages.length ? message.stages : undefined;
                 const counter = parseInt(message.buildCounter, 10);
-                const userOverrides = {};
-                if (!isNaN(counter)) {
-                    userOverrides['Build.BuildNumber'] = String(counter);
-                    userOverrides['Build.BuildId'] = String(counter);
-                }
+                const counterStr = isNaN(counter) ? '1' : String(counter);
+
+                const userVariables = {};
                 if (message.variables && typeof message.variables === 'object') {
                     for (const [k, v] of Object.entries(message.variables)) {
-                        if (k.trim() && v.trim()) userOverrides[k.trim()] = v.trim();
+                        if (k.trim() && String(v).trim()) userVariables[k.trim()] = String(v).trim();
                     }
                 }
 
-                simulationPanel?.webview.postMessage({ command: 'simulationStarted' });
+                const libVarsFromMessage =
+                    message.libraryVariables && typeof message.libraryVariables === 'object'
+                        ? message.libraryVariables
+                        : {};
 
-                // Mirror the CLI setup: derive proper Linux paths from the document location
-                // so the simulator never falls back to process.cwd() (VS Code's install dir).
-                const simWorkDir = _toSimulatorPath(path.dirname(document.fileName));
-                const simOutRoot = simWorkDir.replace(/[/\\]$/, '') + '/.aps-simulation';
-                const simulationVariables = {
-                    'Build.Repository.LocalPath': simWorkDir,
-                    'Build.SourcesDirectory': simWorkDir,
-                    'System.DefaultWorkingDirectory': simWorkDir,
-                    'Build.ArtifactStagingDirectory': simOutRoot + '/artifacts',
-                    'Build.StagingDirectory': simOutRoot + '/staging',
-                    'Build.BinariesDirectory': simOutRoot + '/binaries',
-                    'Pipeline.Workspace': simOutRoot + '/workspace',
-                    'Agent.WorkFolder': simOutRoot + '/agent/work',
-                    'Agent.BuildDirectory': simOutRoot + '/agent/build',
-                    'Agent.TempDirectory': simOutRoot + '/agent/temp',
-                    'Agent.ToolsDirectory': simOutRoot + '/agent/tools',
-                    'Agent.HomeDirectory': simOutRoot + '/agent/home',
-                    'Simulator.OutputRoot': simOutRoot,
-                    buildCounter: isNaN(counter) ? '1' : String(counter),
-                };
-                if (!isNaN(counter)) userOverrides.buildCounter = String(counter);
-
-                const simOptions = {
-                    defaultVariables: simulationVariables,
-                    variables: { ...simulationVariables, ...userOverrides },
-                    workingDirectory: simWorkDir,
-                    userOverrides,
-                    ...(stages && { stages }),
-                };
-
-                const execPaths = vscode.workspace
-                    .getConfiguration('azurePipelineStudio', document.uri)
-                    .get('simulation.executablePaths', {});
-                const simDistroMatch = document.fileName.match(/^\\\\wsl\.localhost\\([^\\]+)/i);
-                const wslMountRoot = process.platform === 'win32' && simDistroMatch
-                    ? `\\\\wsl.localhost\\${simDistroMatch[1]}`
-                    : null;
-                const simulator = new PipelineSimulator({ outputRoot: simOutRoot, executablePaths: execPaths, wslMountRoot });
-                let results;
-                try {
-                    results = simulator.simulate(docToSimulate, simOptions);
-                } catch (err) {
-                    simulationPanel?.webview.postMessage({ command: 'simulationError', error: err.message });
-                    return;
+                if (simulationPanel && simulationPanel.webview) {
+                    simulationPanel.webview.postMessage({ command: 'simulationStarted' });
                 }
-                simulationPanel?.webview.postMessage({ command: 'simulationResults', results });
+
+                if (!simOutputChannel) {
+                    simOutputChannel = vscode.window.createOutputChannel('Pipeline Simulation');
+                }
+                simOutputChannel.appendLine(
+                    `[aps] runSimulation started — stages=${JSON.stringify(stages !== undefined ? stages : 'all')} counter=${counterStr}`
+                );
+                simOutputChannel.show(true);
+
+                try {
+                    const simWorkDir = _toSimulatorPath(path.dirname(document.fileName));
+                    const simOutRoot = simWorkDir.replace(/[/\\]$/, '') + '/simulation';
+                    simOutputChannel.appendLine(`[aps] workDir=${simWorkDir}`);
+                    const execPaths = vscode.workspace
+                        .getConfiguration('azurePipelineStudio', document.uri)
+                        .get('simulation.executablePaths', {});
+                    const simDistroMatch = document.fileName.match(/^\\\\wsl\.localhost\\([^\\]+)/i);
+                    const wslMountRoot =
+                        process.platform === 'win32' && simDistroMatch
+                            ? `\\\\wsl.localhost\\${simDistroMatch[1]}`
+                            : null;
+
+                    simOutputChannel.appendLine(`[aps] calling runPipelineSimulation...`);
+                    const results = runPipelineSimulation(docToSimulate, {
+                        workingDirectory: simWorkDir,
+                        outputRoot: simOutRoot,
+                        buildCounter: counterStr,
+                        userVariables,
+                        libraryVariables: libVarsFromMessage,
+                        stages,
+                        executablePaths: execPaths,
+                        wslMountRoot,
+                    });
+                    simOutputChannel.appendLine(
+                        `[aps] simulation complete — passed=${results.totalPassed} failed=${results.totalFailed} skipped=${results.totalSkipped}`
+                    );
+                    if (simulationPanel && simulationPanel.webview) {
+                        simulationPanel.webview.postMessage({ command: 'simulationResults', results });
+                    }
+                    simOutputChannel.appendLine(`[aps] simulationResults posted`);
+                } catch (err) {
+                    simOutputChannel.appendLine(`[aps] ERROR: ${(err && err.stack) || err}`);
+                    if (simulationPanel && simulationPanel.webview) {
+                        simulationPanel.webview.postMessage({
+                            command: 'simulationError',
+                            error: String((err && err.message) || err),
+                        });
+                    }
+                }
             });
         }
 
@@ -2812,7 +3025,10 @@ ${mermaidDiagram
                 ? vscode.window.activeTextEditor.document
                 : undefined);
 
-        const config = vscode.workspace.getConfiguration('azurePipelineStudio', targetDocument?.uri);
+        const config = vscode.workspace.getConfiguration(
+            'azurePipelineStudio',
+            targetDocument ? targetDocument.uri : undefined
+        );
         const currentRoot = config.get('pipelineRoot', '');
 
         const methodChoice = await vscode.window.showQuickPick(
@@ -2905,7 +3121,7 @@ function deactivate() {
 }
 
 function formatTemplateExpansionError(displayPath, expandError) {
-    const msg = typeof expandError?.message === 'string' ? expandError.message : String(expandError);
+    const msg = expandError && typeof expandError.message === 'string' ? expandError.message : String(expandError);
     const potentialIssuesMatch = msg.match(/Template\s+'([^']+)'\s+potential issues:([\s\S]*)/);
     if (potentialIssuesMatch) {
         const tmpl = potentialIssuesMatch[1];
@@ -3171,8 +3387,11 @@ function runCli(args) {
         '  -s, --skip-syntax-check      Skip syntax checking during expansion\n' +
         '  -d, --debug                  Print files being formatted\n' +
         '  -t, --timing                 Print timing breakdown for each expansion phase\n' +
+        '      --simulate               Run local pipeline simulation mode\n' +
         '  -c, --build-counter <n>      Set the build counter value used in version expressions (default: 1)\n' +
-        '  -S, --stage <name>           Run only the named stage(s); repeat or comma-separate (e.g. -S Build,Test)';
+        '  -S, --stage <name>           Run only the named stage(s); repeat or comma-separate (e.g. -S Build,Test)\n' +
+        '      --exe <name=path>        Override executable/tool path for simulation (repeatable)\n' +
+        '      --output-json <file>     Write simulation results JSON to the provided path';
 
     const failWithUsage = (message) => {
         if (message) {
@@ -3207,6 +3426,7 @@ function runCli(args) {
             'library-variables-file',
             'build-counter',
             'stage',
+            'exe',
             'output-json',
             'wsl-mount-root',
         ],
@@ -3281,6 +3501,9 @@ function runCli(args) {
         'c',
         'stage',
         'S',
+        'exe',
+        'output-json',
+        'wsl-mount-root',
     ]);
     const unknownKeys = Object.keys(argv).filter((k) => !knownArgvKeys.has(k));
     if (unknownKeys.length) {
@@ -3458,24 +3681,6 @@ function runCli(args) {
         fs.rmSync(simulationRoot, { recursive: true, force: true });
         const buildCounterRaw = argv['build-counter'];
         const buildCounterValue = buildCounterRaw !== undefined ? String(parseInt(buildCounterRaw, 10) || 1) : '1';
-        const simulationVariables = {
-            'Build.Repository.LocalPath': path.dirname(simulateFile),
-            'Build.SourcesDirectory': path.dirname(simulateFile),
-            'Build.ArtifactStagingDirectory': path.join(simulationRoot, 'artifacts'),
-            'Build.StagingDirectory': path.join(simulationRoot, 'staging'),
-            'Build.BinariesDirectory': path.join(simulationRoot, 'binaries'),
-            'Pipeline.Workspace': path.join(simulationRoot, 'workspace'),
-            'Agent.WorkFolder': path.join(simulationRoot, 'agent', 'work'),
-            'Agent.BuildDirectory': path.join(simulationRoot, 'agent', 'build'),
-            'Agent.TempDirectory': path.join(simulationRoot, 'agent', 'temp'),
-            'Agent.ToolsDirectory': path.join(simulationRoot, 'agent', 'tools'),
-            'Agent.HomeDirectory': path.join(simulationRoot, 'agent', 'home'),
-            'Simulator.OutputRoot': simulationRoot,
-            'Simulator.CheckoutSource': checkoutConfig.checkoutSource,
-            'Simulator.CheckoutRepository': checkoutConfig.checkoutRepository,
-            'Simulator.RepositoryRoot': checkoutConfig.checkoutRepository || path.dirname(simulateFile),
-            buildCounter: buildCounterValue,
-        };
 
         const simulateParserOptions = {
             fileName: simulateFile,
@@ -3509,29 +3714,24 @@ function runCli(args) {
 
         try {
             const { document } = simulateParser.expandPipeline(simulateSource, simulateParserOptions);
-            const simulator = new PipelineSimulator({ mockCatalog, outputRoot: simulationRoot, executablePaths, wslMountRoot: argv['wsl-mount-root'] || null });
             if (debugLibVars) {
                 console.log('[DEBUG] Library Variables Map:', JSON.stringify(libraryVariablesMap, null, 2));
             }
-            // userOverrides contains only the explicitly user-supplied values (-c and -v flags).
-            // These are re-applied after each stage/job variable extraction to prevent
-            // YAML-declared counter() expressions from overwriting them.
-            const userOverrides = { ...variablesMap };
-            if (buildCounterRaw !== undefined) {
-                userOverrides.buildCounter = buildCounterValue;
-            }
-            const results = simulator.simulate(document, {
-                defaultVariables: simulationVariables,
-                variables: { ...simulationVariables, ...variablesMap },
-                libraryVariables: libraryVariablesMap,
+            const results = runPipelineSimulation(document, {
                 workingDirectory: path.dirname(simulateFile),
-                checkoutSource: checkoutConfig.checkoutSource,
-                checkoutRepository: checkoutConfig.checkoutRepository,
+                outputRoot: simulationRoot,
+                buildCounter: buildCounterValue,
+                userVariables: variablesMap,
+                libraryVariables: libraryVariablesMap,
                 stages: toArray(argv.stage)
                     .flatMap((s) => s.split(','))
                     .map((s) => s.trim())
                     .filter(Boolean),
-                userOverrides,
+                executablePaths,
+                wslMountRoot: argv['wsl-mount-root'] || null,
+                checkoutSource: checkoutConfig.checkoutSource,
+                checkoutRepository: checkoutConfig.checkoutRepository,
+                mockCatalog,
             });
             printSimulationResults(results);
             if (argv['output-json']) {

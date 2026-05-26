@@ -180,13 +180,18 @@
           },
           "type": "array"
         },
+        "azurePipelineStudio.simulation.debugScript": {
+          "default": false,
+          "description": "Enable verbose script debugging during pipeline simulation. Logs the script content, exit code, stdout, and stderr for each bash/pwsh step to the Output panel.",
+          "type": "boolean"
+        },
         "azurePipelineStudio.simulation.executablePaths": {
-          "type": "object",
-          "description": "Override paths to executables used during pipeline simulation. Keys are tool names (e.g. \"bash\", \"pwsh\") and values are absolute paths to the executable. Example: { \"bash\": \"C:\\\\Users\\\\me\\\\PortableGit\\\\git-bash.exe\" }",
           "additionalProperties": {
             "type": "string"
           },
-          "default": {}
+          "default": {},
+          "description": "Override paths to executables used during pipeline simulation. Keys are tool names (e.g. \"bash\", \"pwsh\") and values are absolute paths to the executable. Example: { \"bash\": \"C:\\\\Users\\\\me\\\\PortableGit\\\\git-bash.exe\" }",
+          "type": "object"
         }
       },
       "title": "Azure Pipeline Studio"
