@@ -90,6 +90,7 @@ class PipelineSimulator {
         this.mockCatalog = options.mockCatalog || {};
         this.executablePaths = options.executablePaths || {};
         this.wslMountRoot = options.wslMountRoot || null;
+        this.debugScript = options.debugScript || false;
         // e.g. "\\\\wsl.localhost\\Ubuntu-22.04" — Windows UNC prefix used to
         // convert Linux working directories to Windows-accessible paths for Git Bash.
         // Tools to shim when they are not present on the local machine.
@@ -100,9 +101,9 @@ class PipelineSimulator {
             { name: 'MSBuild' },
             { name: 'vstest.console' },
             { name: 'signtool' },
-            { name: '7z' },
             { name: 'curl' },
             { name: 'unzip' },
+            { name: '7z' },
             { name: 'zip' },
             { name: 'aws' },
             { name: 'java', emitToStderr: false },
@@ -111,6 +112,7 @@ class PipelineSimulator {
             { name: 'file' },
             { name: 'yq', stdout: 'mock-version' },
             { name: 'cygpath', stdout: '/mock-path' },
+            { name: 'git', onlyIfMissing: true },
         ];
         this._shimDir = null;
         this._publishedArtifacts = [];
@@ -118,6 +120,7 @@ class PipelineSimulator {
         this._releaseStageNugetFeed = null;
         this._downloadedArtifactTargets = new Map();
         this._jobRunCounter = 0;
+        this._resolvedToolsPaths = null;
     }
 
     /**
@@ -158,6 +161,8 @@ class PipelineSimulator {
             ...(options.variables || {}),
         };
 
+        this._printSimulationContext(initialVariables, pipelineVars, options, resolvedWorkDir);
+
         this._ensureSimulationDirectories(initialVariables);
         this._resetSimulationWorkspace(initialVariables, resolvedWorkDir);
 
@@ -165,20 +170,30 @@ class PipelineSimulator {
         this._releaseStageNugetFeed = this._extractReleaseStageNugetFeed(stages);
 
         // Build a case-insensitive set of stage names to run, if the caller restricted them.
-        const stageFilter = Array.isArray(options.stages) && options.stages.length
-            ? new Set(options.stages.map((s) => String(s).toLowerCase()))
-            : null;
+        const stageFilter =
+            Array.isArray(options.stages) && options.stages.length
+                ? new Set(options.stages.map((s) => String(s).toLowerCase()))
+                : null;
+
+        const selectedStages = stageFilter
+            ? stages.filter((stageDoc) => {
+                  const stageName = stageDoc.stage || 'Stage';
+                  return stageFilter.has(stageName.toLowerCase());
+              })
+            : stages;
+
+        const stageOrdering = this._orderByDependencies(
+            selectedStages,
+            (stageDoc) => stageDoc.stage || 'Stage',
+            (stageDoc) => stageDoc.dependsOn,
+            'stage'
+        );
 
         // stageDeps accumulates stageDependencies.* keys from completed stages
         // so that downstream stages can resolve $[ stageDependencies.S.J.outputs['...'] ].
         const stageDeps = {};
 
-        for (const stageDoc of stages) {
-            // Skip stages that are not in the caller-supplied filter (if any).
-            const stageName = stageDoc.stage || 'Stage';
-            if (stageFilter && !stageFilter.has(stageName.toLowerCase())) {
-                continue;
-            }
+        for (const stageDoc of stageOrdering.ordered) {
             // Merge stageDeps into the base variables so each stage sees prior outputs.
             // User-supplied -v overrides (already in initialVariables) take precedence.
             const stageVars = { ...initialVariables, ...stageDeps };
@@ -204,6 +219,13 @@ class PipelineSimulator {
             }
         }
 
+        if (stageOrdering.skipped.length > 0) {
+            console.warn(
+                '[sim-deps] Skipped stages due to unresolved/cyclic dependencies:',
+                stageOrdering.skipped.join(', ')
+            );
+        }
+
         // Always materialize publish roots so callers can inspect expected paths
         // even when no publish step ran due to conditions or earlier failures.
         this._ensureFallbackPackageArtifacts(initialVariables, resolvedWorkDir);
@@ -214,6 +236,107 @@ class PipelineSimulator {
         results.publishedArtifacts = [...this._publishedArtifacts];
         results.feedPublishes = [...this._feedPublishes];
         return results;
+    }
+
+    _printSimulationContext(initialVariables, pipelineVars, options, resolvedWorkDir) {
+        const simulationRoot = this._getSimulationRoot(initialVariables, resolvedWorkDir);
+        const shimDir = this._getShimDir();
+        const toolsPaths = this._getResolvedToolsPaths();
+
+        const context = {
+            platform: process.platform,
+            nodeVersion: process.version,
+            processCwd: process.cwd(),
+            workingDirectory: this._formatContextPath(resolvedWorkDir),
+            simulationRoot: this._formatContextPath(simulationRoot),
+            outputRoot: this.outputRoot ? this._formatContextPath(this.outputRoot) : null,
+            wslMountRoot: this.wslMountRoot || null,
+            stageFilter: Array.isArray(options.stages) ? options.stages : null,
+            debugFlags: {
+                debugScript: this.debugScript,
+                apsDebugScript: process.env.APS_DEBUG_SCRIPT === 'true',
+                debugLibVars: process.env.DEBUG_LIB_VARS === 'true',
+            },
+            shimToolPath: this._formatContextPath(shimDir),
+            toolsPaths: { ...this.executablePaths },
+            resolvedToolsPaths: toolsPaths,
+            variableSummary: {
+                pipelineVariableCount: Object.keys(pipelineVars || {}).length,
+                totalVariableCount: Object.keys(initialVariables || {}).length,
+            },
+            variables: this._formatContextVariables(initialVariables),
+        };
+
+        console.log('[sim-context]', JSON.stringify(context, null, 2));
+    }
+
+    _resolveCommandPath(commandName) {
+        const configuredPath = this.executablePaths && this.executablePaths[commandName];
+        if (configuredPath) {
+            return path.normalize(String(configuredPath));
+        }
+
+        const lookupCommand = process.platform === 'win32' ? 'where' : 'which';
+        const lookup = spawnSync(lookupCommand, [commandName], { encoding: 'utf8' });
+        if (lookup.status === 0) {
+            const firstLine = String(lookup.stdout || '')
+                .split(/\r?\n/)
+                .map((line) => line.trim())
+                .find((line) => line);
+            return firstLine ? path.normalize(firstLine) : '';
+        }
+        return '';
+    }
+
+    _getResolvedToolsPaths() {
+        if (this._resolvedToolsPaths) {
+            return { ...this._resolvedToolsPaths };
+        }
+
+        const toolNames = ['bash', 'pwsh', 'git', 'dotnet', 'node', 'nuget', 'msbuild'];
+        const resolved = {};
+        for (const name of toolNames) {
+            resolved[name] = this._resolveCommandPath(name);
+        }
+        this._resolvedToolsPaths = resolved;
+        return { ...resolved };
+    }
+
+    _formatContextPath(rawPath) {
+        if (rawPath === null || rawPath === undefined) return rawPath;
+        const input = String(rawPath).trim();
+        if (!input) return input;
+        const resolved = this._resolveHostPath(input);
+        return String(resolved).replace(/\\/g, '/');
+    }
+
+    _formatContextVariables(variables) {
+        const formatted = { ...(variables || {}) };
+        const pathVariableKeys = [
+            'Build.Repository.LocalPath',
+            'Build.ArtifactStagingDirectory',
+            'Build.StagingDirectory',
+            'Build.BinariesDirectory',
+            'Build.SourcesDirectory',
+            'System.DefaultWorkingDirectory',
+            'Agent.WorkFolder',
+            'Agent.BuildDirectory',
+            'Agent.TempDirectory',
+            'Agent.ToolsDirectory',
+            'Agent.HomeDirectory',
+            'Pipeline.Workspace',
+            'Simulator.OutputRoot',
+            'Simulator.RepositoryRoot',
+        ];
+
+        for (const variableKey of pathVariableKeys) {
+            if (!Object.prototype.hasOwnProperty.call(formatted, variableKey)) {
+                continue;
+            }
+            formatted[variableKey] = this._formatContextPath(formatted[variableKey]);
+        }
+
+        return formatted;
     }
 
     _resetSimulationWorkspace(variables, workDir) {
@@ -266,7 +389,14 @@ class PipelineSimulator {
             ...(options.userOverrides || {}),
         };
 
-        for (const jobDoc of jobs) {
+        const jobOrdering = this._orderByDependencies(
+            jobs,
+            (jobDoc) => jobDoc.job || jobDoc.deployment || 'Job',
+            (jobDoc) => jobDoc.dependsOn,
+            'job'
+        );
+
+        for (const jobDoc of jobOrdering.ordered) {
             const matrixJobs = this._expandMatrixJob(jobDoc, stageVariables);
             for (const { jobDoc: expandedJobDoc, matrixVars, matrixName } of matrixJobs) {
                 const jobVariablesWithMatrix = { ...stageVariables, ...matrixVars };
@@ -288,7 +418,55 @@ class PipelineSimulator {
             }
         }
 
+        if (jobOrdering.skipped.length > 0) {
+            console.warn(
+                `[sim-deps] Stage ${stageName}: skipped jobs due to unresolved/cyclic dependencies: ${jobOrdering.skipped.join(', ')}`
+            );
+        }
+
         return stageResult;
+    }
+
+    _orderByDependencies(items, getName, getDependsOn, kindLabel) {
+        const pending = [...(items || [])];
+        const ordered = [];
+        const completed = new Set();
+        const inScopeNames = new Set(pending.map((item) => String(getName(item) || '')));
+
+        let madeProgress = true;
+        while (pending.length > 0 && madeProgress) {
+            madeProgress = false;
+
+            for (let idx = 0; idx < pending.length; idx++) {
+                const item = pending[idx];
+                const dependencies = this._normalizeDependsOn(getDependsOn(item));
+                const inScopeDependencies = dependencies.filter((dependencyName) => inScopeNames.has(dependencyName));
+                const ready = inScopeDependencies.every((dependencyName) => completed.has(dependencyName));
+                if (!ready) {
+                    continue;
+                }
+
+                const itemName = String(getName(item) || '');
+                ordered.push(item);
+                completed.add(itemName);
+                pending.splice(idx, 1);
+                idx -= 1;
+                madeProgress = true;
+            }
+        }
+
+        const skipped = pending.map((item) => String(getName(item) || kindLabel || 'item'));
+        return { ordered, skipped };
+    }
+
+    _normalizeDependsOn(dependsOn) {
+        if (Array.isArray(dependsOn)) {
+            return dependsOn.map((dependencyName) => String(dependencyName).trim()).filter(Boolean);
+        }
+        if (typeof dependsOn === 'string' && dependsOn.trim()) {
+            return [dependsOn.trim()];
+        }
+        return [];
     }
 
     /**
@@ -346,7 +524,25 @@ class PipelineSimulator {
             repositoryRoot: options.workingDirectory || process.cwd(),
         };
 
-        for (const stepDoc of steps) {
+        let jobFailed = false;
+        for (let stepIdx = 0; stepIdx < steps.length; stepIdx++) {
+            const stepDoc = steps[stepIdx];
+
+            // Steps after a job failure are not started (emit as Skipped so they appear in output).
+            if (jobFailed) {
+                jobResult.steps.push({
+                    displayName: stepDoc.displayName || 'Step',
+                    stepName: stepDoc.name || null,
+                    result: 'Skipped',
+                    variables: {},
+                    outputVariables: {},
+                    stdout: '',
+                    stderr: '',
+                    exitCode: 0,
+                });
+                continue;
+            }
+
             if (!this._shouldRunStep(stepDoc, jobVariables)) {
                 jobResult.steps.push({
                     displayName: stepDoc.displayName || 'Step',
@@ -378,7 +574,7 @@ class PipelineSimulator {
             }
 
             if (stepResult.result === 'Failed' && !stepDoc.continueOnError) {
-                break;
+                jobFailed = true;
             }
         }
 
@@ -463,6 +659,13 @@ class PipelineSimulator {
                 ? this._substituteVariables(rawWorkDir, variables) || process.cwd()
                 : process.cwd();
 
+            const debugEnabled = this.debugScript || !!process.env.APS_DEBUG_SCRIPT;
+            if (debugEnabled) {
+                process.stderr.write(
+                    `[aps-debug][_runStep] "${displayName}" shell=${shell} scriptKey=${scriptKey} workDir=${workDir}\n`
+                );
+            }
+
             const simulatedNugetPack = this._simulateTemplateNuGetPackStep(
                 displayName,
                 substituted,
@@ -505,6 +708,30 @@ class PipelineSimulator {
             stepResult.result = run.exitCode === 0 ? 'Succeeded' : 'Failed';
             if (ignoreFailure) {
                 stepResult.result = 'Succeeded';
+            }
+            if (run.exitCode !== 0 && !ignoreFailure) {
+                // Build a diagnostic block visible in the simulation panel
+                const _scriptLines = run._scriptContent ? run._scriptContent.split('\n') : [];
+                const _lineMatch = /line (\d+):/i.exec(run.stderr || '');
+                let _scriptContext = '';
+                if (_lineMatch && _scriptLines.length) {
+                    const _errLine = parseInt(_lineMatch[1], 10);
+                    const _s = Math.max(0, _errLine - 4);
+                    const _e = Math.min(_scriptLines.length, _errLine + 3);
+                    _scriptContext =
+                        '\n--- script context ---\n' +
+                        _scriptLines
+                            .slice(_s, _e)
+                            .map((l, i) => `${_s + i + 1}${_s + i + 1 === _errLine ? ' >>>' : '    '} ${l}`)
+                            .join('\n');
+                }
+                const _debugBlock =
+                    `\n--- aps-debug: "${displayName}" exit=${run.exitCode} shell=${shell} ---` +
+                    `\nworkDir: ${workDir}` +
+                    `\nscript (substituted):\n${substituted}` +
+                    _scriptContext;
+                stepResult.stderr = (run.stderr || '') + _debugBlock;
+                process.stderr.write('[aps-debug][_runStep] "' + displayName + '" FAILED exit=' + run.exitCode + '\n');
             }
             applyDirectives(this._parseVsoDirectives(run.stdout));
         } else if (stepDoc.task) {
@@ -1153,7 +1380,7 @@ class PipelineSimulator {
                 scriptContent = scriptContent.replace(/\$\(([A-Za-z_][A-Za-z0-9_.]*)\)/g, (match, varName) => {
                     const trimmed = varName.trim();
                     const shellName = trimmed.toUpperCase().replace(/[^A-Z0-9_]/g, '_');
-                    // Exact match (preserves existing behaviour).
+                    // Exact match: materialize to bash env-var reference.
                     if (Object.prototype.hasOwnProperty.call(variables, trimmed)) {
                         return '${' + shellName + '}';
                     }
@@ -1161,28 +1388,52 @@ class PipelineSimulator {
                     if (Object.prototype.hasOwnProperty.call(variablesLower, trimmed.toLowerCase())) {
                         return '${' + shellName + '}';
                     }
-                    // ADO naming convention: names with uppercase or dots are pipeline variables.
-                    if (/[A-Z.]/.test(trimmed)) {
-                        return '${' + shellName + '}';
-                    }
-                    return match;
+                    // Keep unresolved macros as a literal token (no command substitution).
+                    return `\\$(${trimmed})`;
                 });
+
+                // Rewrite bash 5.1+ parameter transformations that BusyBox ash does not support.
+                //   ${VAR@L}  → $(printf '%s' "${VAR}" | tr '[:upper:]' '[:lower:]')
+                //   ${VAR@U}  → $(printf '%s' "${VAR}" | tr '[:lower:]' '[:upper:]')
+                //   ${VAR@u}  → first-char uppercase (approximated via sed)
+                //   ${VAR@Q}  → "${VAR}"  (quoted — approximation sufficient for simulation)
+                //   ${VAR@E}  → "${VAR}"  (expand-escapes — approximation)
+                //   ${VAR@A}  → "${VAR}"  (assignment form — approximation)
+                scriptContent = scriptContent.replace(
+                    /\$\{([A-Za-z_][A-Za-z0-9_]*)@([LUuQEA])\}/g,
+                    (match, varName, op) => {
+                        const ref = `"\${${varName}}"`;
+                        if (op === 'L') return `$(printf '%s' ${ref} | tr '[:upper:]' '[:lower:]')`;
+                        if (op === 'U') return `$(printf '%s' ${ref} | tr '[:lower:]' '[:upper:]')`;
+                        if (op === 'u') return `$(printf '%s' ${ref} | sed 's/^./\\u&/')`;
+                        // Q, E, A — just emit the value; adequate for simulation
+                        return ref;
+                    }
+                );
 
                 // Inject a preamble that intercepts each echo "##vso[task.setvariable...]"
                 // call and exports the variable as a real bash variable. This makes
                 // ##vso-set variables available to later lines in the same script.
                 const preamble = [
-                    '# APS Simulator preamble: export ##vso[task.setvariable] variables as bash variables',
+                    '# APS Simulator preamble: intercept ##vso[task.setvariable] and export as shell variables',
                     'echo() {',
                     '    command echo "$@"',
                     '    local _aps_line="$*" _aps_var _aps_val',
-                    "    if [[ \"$_aps_line\" =~ ^'##vso[task.setvariable'[^]]*'variable='([A-Za-z_][A-Za-z0-9_]*)[^]]*']'(.*) ]]; then",
-                    '        _aps_var="${BASH_REMATCH[1]}"',
-                    '        _aps_val="${BASH_REMATCH[2]}"',
-                    '        declare -g "$_aps_var=$_aps_val" 2>/dev/null || true',
-                    '        export "$_aps_var" 2>/dev/null || true',
-                    '    fi',
+                    '    case "$_aps_line" in',
+                    "        '##vso[task.setvariable'*)",
+                    "            _aps_var=$(printf '%s' \"$_aps_line\" | sed -n 's/.*variable=\\([A-Za-z_][A-Za-z0-9_]*\\)[^]]*\\].*/\\1/p') || true",
+                    "            _aps_val=$(printf '%s' \"$_aps_line\" | sed -n 's/^[^]]*\\]//p') || true",
+                    '            [ -n "$_aps_var" ] && export "$_aps_var=$_aps_val" 2>/dev/null || true',
+                    '            ;;',
+                    '    esac',
                     '}',
+                    '',
+                    '# Prefer resolved git path over PATH lookup on Windows bash variants.',
+                    'if [ -n "${APS_TOOL_PATH_GIT_WIN:-}" ]; then',
+                    '    git() { "${APS_TOOL_PATH_GIT_WIN}" "$@"; }',
+                    'elif [ -n "${APS_TOOL_PATH_GIT:-}" ]; then',
+                    '    git() { "${APS_TOOL_PATH_GIT}" "$@"; }',
+                    'fi',
                     '',
                 ].join('\n');
                 scriptContent = preamble + scriptContent;
@@ -1207,36 +1458,74 @@ class PipelineSimulator {
             }
             // Prepend shim dir so mock tools shadow any missing real tools
             env.PATH = shimDir + path.delimiter + (env.PATH || '');
+            if (shell === 'bash' && process.platform === 'win32') {
+                // BusyBox/Git Bash command lookup is more reliable with a POSIX-style
+                // shim path in front of PATH. Also add directories of all resolved tools
+                // so that e.g. git from PortableGit is visible inside the bash script.
+                const bashShimDir = this._toBashPath(shimDir);
+                const resolvedForPath = this._getResolvedToolsPaths();
+                const toolDirs = [
+                    ...new Set(
+                        Object.values(resolvedForPath)
+                            .filter(Boolean)
+                            .map((p) => this._toBashPath(path.dirname(p)))
+                            .filter(Boolean)
+                    ),
+                ];
+                const extraDirs = toolDirs.length ? toolDirs.join(':') + ':' : '';
+                env.PATH = `${bashShimDir}:${extraDirs}${env.PATH || ''}`;
+            }
             if (pythonApiShimDir) {
                 env.PYTHONPATH = pythonApiShimDir + path.delimiter + (env.PYTHONPATH || '');
             }
-
-            const resolvedCwd = workingDirectory
-                ? path.resolve(String(workingDirectory).replace(/\\/g, '/'))
-                : process.cwd();
-
-            // On Windows, Git Bash (bash.exe) needs:
-            //   1. Script path in MSYS format (/c/Users/... not C:\\Users\\...)
-            //      otherwise bash receives a backslash path it cannot execute.
-            //   2. cwd as a Windows-accessible UNC path for WSL files — a raw Linux
-            //      path like /root/workspace/... resolves to C:\\root\\... on Windows
-            //      (non-existent), causing spawnSync to silently return ENOENT which
-            //      the simulator mistakes for "bash not found".
-            let effectiveCwd = resolvedCwd;
-            let scriptArg = tmpFile;
-            if (process.platform === 'win32') {
-                scriptArg = tmpFile
-                    .replace(/^([A-Za-z]):\\/, (_, d) => `/${d.toLowerCase()}/`)
-                    .replace(/\\/g, '/');
-                if (workingDirectory && String(workingDirectory).startsWith('/') && this.wslMountRoot) {
-                    effectiveCwd = this.wslMountRoot + String(workingDirectory).replace(/\//g, '\\');
+            if (shell === 'bash') {
+                const resolvedToolsPaths = this._getResolvedToolsPaths();
+                env.APS_RESOLVED_TOOLS_PATHS = JSON.stringify(resolvedToolsPaths);
+                for (const [toolName, toolPath] of Object.entries(resolvedToolsPaths)) {
+                    const safeToolName = String(toolName)
+                        .toUpperCase()
+                        .replace(/[^A-Z0-9_]/g, '_');
+                    const pathValue =
+                        process.platform === 'win32' ? this._toBashPath(toolPath) : String(toolPath || '');
+                    env[`APS_TOOL_PATH_${safeToolName}`] = pathValue;
+                    if (process.platform === 'win32') {
+                        env[`APS_TOOL_PATH_${safeToolName}_WIN`] = String(toolPath || '').replace(/\\/g, '/');
+                    }
                 }
             }
 
+            const resolvedCwd = workingDirectory
+                ? this._resolveHostPath(String(workingDirectory).replace(/\\/g, '/'))
+                : process.cwd();
+
+            // Debug: log which shell + script will be run
+            const _debugEnabled = this.debugScript || !!process.env.APS_DEBUG_SCRIPT;
+            if (_debugEnabled) {
+                process.stderr.write(`[aps-debug][_executeScript] shell=${shell} tmp=${tmpFile} cwd=${resolvedCwd}\n`);
+                if (shell === 'bash') {
+                    process.stderr.write('[aps-debug] bash env:\n' + JSON.stringify(env, null, 2) + '\n');
+                }
+            }
+            if (_debugEnabled) {
+                process.stderr.write('[aps-debug] script content:\n' + scriptContent.slice(0, 2000) + '\n');
+            }
+
+            const effectiveCwd = resolvedCwd;
+
+            // Git Bash (MSYS2) requires the script path in MSYS format (/c/Users/... not C:\Users\...).
+            // BusyBox and other native Windows shells expect the plain Windows path.
+            // Compute both and choose per-shell.
+            const scriptArg = tmpFile;
+            const scriptArgMsys =
+                process.platform === 'win32'
+                    ? tmpFile.replace(/^([A-Za-z]):\\/, (_, d) => `/${d.toLowerCase()}/`).replace(/\\/g, '/')
+                    : tmpFile;
+
             const configuredShell = this.executablePaths[shell];
 
-            const tryRun = (shellName) =>
-                spawnSync(shellName, [scriptArg], {
+            // tryRun uses the native Windows path by default; pass scriptArgMsys for Git Bash.
+            const tryRun = (shellName, scriptPath = scriptArg) =>
+                spawnSync(shellName, [scriptPath], {
                     env,
                     cwd: effectiveCwd,
                     encoding: 'utf8',
@@ -1246,57 +1535,47 @@ class PipelineSimulator {
             let run = tryRun(configuredShell || shell);
             if (run.error && run.error.code === 'ENOENT') {
                 if (configuredShell) {
-                    const errMsg = `[bash-lookup] configured path not found: ${configuredShell} (cwd: ${effectiveCwd})`;
-                    process.stderr.write(errMsg + '\n');
-                    return {
-                        stdout: errMsg + '\n[mock] configured executable not found; step simulated.',
-                        stderr: '',
-                        exitCode: 0,
-                    };
+                    // Configured path not found — warn and fall through to the auto-discovery chain.
+                    process.stderr.write(
+                        `[bash-lookup] configured path not found: ${configuredShell}; falling back to auto-discovery\n`
+                    );
+                    run = tryRun(shell);
                 }
-                if (shell === 'bash') {
-                    if (process.platform === 'win32') {
-                        // On Windows, try Git Bash first — /bin/bash and sh don't exist here.
-                        const gitBashCandidates = [
-                            'C:\\Program Files\\Git\\bin\\bash.exe',
-                            'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
-                            process.env.ProgramFiles
-                                ? path.join(process.env.ProgramFiles, 'Git', 'bin', 'bash.exe')
-                                : null,
-                            process.env['ProgramFiles(x86)']
-                                ? path.join(process.env['ProgramFiles(x86)'], 'Git', 'bin', 'bash.exe')
-                                : null,
-                            process.env.LOCALAPPDATA
-                                ? path.join(process.env.LOCALAPPDATA, 'Programs', 'Git', 'bin', 'bash.exe')
-                                : null,
-                        ].filter(Boolean);
-                        const bashLog = [
-                            `[bash-lookup] platform=win32, 'bash' not found in PATH`,
-                            `[bash-lookup] cwd: ${effectiveCwd}`,
-                            `[bash-lookup] script: ${scriptArg}`,
-                        ];
-                        for (const gitBash of gitBashCandidates) {
-                            run = tryRun(gitBash);
-                            if (!run.error || run.error.code !== 'ENOENT') {
-                                bashLog.push(`[bash-lookup] found: ${gitBash}`);
-                                break;
+                if (run.error && run.error.code === 'ENOENT') {
+                    if (shell === 'bash') {
+                        if (process.platform === 'win32') {
+                            // bash (BusyBox symlink) was already tried above. Fall back to Git Bash
+                            // for machines that don't have BusyBox installed.
+                            const gitBashCandidates = [
+                                'C:\\Program Files\\Git\\bin\\bash.exe',
+                                'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
+                                process.env.ProgramFiles
+                                    ? path.join(process.env.ProgramFiles, 'Git', 'bin', 'bash.exe')
+                                    : null,
+                                process.env['ProgramFiles(x86)']
+                                    ? path.join(process.env['ProgramFiles(x86)'], 'Git', 'bin', 'bash.exe')
+                                    : null,
+                                process.env.LOCALAPPDATA
+                                    ? path.join(process.env.LOCALAPPDATA, 'Programs', 'Git', 'bin', 'bash.exe')
+                                    : null,
+                            ].filter(Boolean);
+                            for (const gitBash of gitBashCandidates) {
+                                run = tryRun(gitBash, scriptArgMsys);
+                                if (!run.error || run.error.code !== 'ENOENT') break;
                             }
-                            bashLog.push(`[bash-lookup] not found: ${gitBash}`);
-                        }
-                        process.stderr.write(bashLog.join('\n') + '\n');
-                        if (run.error && run.error.code === 'ENOENT') {
-                            bashLog.push('[bash-lookup] no git bash found; falling back to mock');
-                            return {
-                                stdout: bashLog.join('\n') + '\n[mock] bash/sh not available locally; step simulated.',
-                                stderr: '',
-                                exitCode: 0,
-                            };
-                        }
-                    } else {
-                        // Non-Windows: try /bin/bash then sh.
-                        run = tryRun('/bin/bash');
-                        if (run.error && run.error.code === 'ENOENT') {
-                            run = tryRun('sh');
+                            if (run.error && run.error.code === 'ENOENT') {
+                                return {
+                                    stdout: '[mock] bash not available locally; step simulated.',
+                                    stderr: '',
+                                    exitCode: 0,
+                                };
+                            }
+                        } else {
+                            // Non-Windows: bash already tried; fall back to sh.
+                            run = tryRun('/bin/bash');
+                            if (run.error && run.error.code === 'ENOENT') {
+                                run = tryRun('sh');
+                            }
                             if (run.error && run.error.code === 'ENOENT') {
                                 return {
                                     stdout: '[mock] bash/sh not available locally; step simulated.',
@@ -1305,42 +1584,69 @@ class PipelineSimulator {
                                 };
                             }
                         }
-                    }
-                } else if (shell === 'pwsh') {
-                    if (/\b(msbuild|dotnet\s+build|dotnet\s+test|devenv)\b/i.test(script) && resolvedCwd) {
-                        this._materializeMockBuildOutputs(resolvedCwd);
-                    }
-                    if (/signatures\.json/i.test(script) && workingDirectory) {
-                        const signatureCandidates = new Set([
-                            path.join(resolvedCwd, 'signatures.json'),
-                            path.join(resolvedCwd, 'signature-validation', 'signatures.json'),
-                            path.join(
-                                String(variables['Build.SourcesDirectory'] || resolvedCwd),
-                                'signature-validation',
-                                'signatures.json'
-                            ),
-                        ]);
-                        for (const signaturesPath of signatureCandidates) {
-                            fs.mkdirSync(path.dirname(signaturesPath), { recursive: true });
-                            if (!fs.existsSync(signaturesPath)) {
-                                fs.writeFileSync(signaturesPath, '[]\n', 'utf8');
+                    } else if (shell === 'pwsh') {
+                        if (/\b(msbuild|dotnet\s+build|dotnet\s+test|devenv)\b/i.test(script) && resolvedCwd) {
+                            this._materializeMockBuildOutputs(resolvedCwd);
+                        }
+                        if (/signatures\.json/i.test(script) && workingDirectory) {
+                            const signatureCandidates = new Set([
+                                path.join(resolvedCwd, 'signatures.json'),
+                                path.join(resolvedCwd, 'signature-validation', 'signatures.json'),
+                                path.join(
+                                    String(variables['Build.SourcesDirectory'] || resolvedCwd),
+                                    'signature-validation',
+                                    'signatures.json'
+                                ),
+                            ]);
+                            for (const signaturesPath of signatureCandidates) {
+                                fs.mkdirSync(path.dirname(signaturesPath), { recursive: true });
+                                if (!fs.existsSync(signaturesPath)) {
+                                    fs.writeFileSync(signaturesPath, '[]\n', 'utf8');
+                                }
                             }
                         }
+                        // Keep simulation moving when pwsh is unavailable locally.
+                        return {
+                            stdout: '[mock] pwsh not available locally; step simulated.',
+                            stderr: '',
+                            exitCode: 0,
+                        };
                     }
-                    // Keep simulation moving when pwsh is unavailable locally.
-                    return {
-                        stdout: '[mock] pwsh not available locally; step simulated.',
-                        stderr: '',
-                        exitCode: 0,
-                    };
-                }
+                } // end: if (run.error && run.error.code === 'ENOENT') after configured-shell fallback
             }
 
-            return {
+            const _result = {
                 stdout: run.stdout || '',
                 stderr: run.stderr || (run.error ? run.error.message : ''),
                 exitCode: run.status !== null ? run.status : 1,
+                _scriptContent: scriptContent,
             };
+            const _exitCode = _result.exitCode;
+            process.stderr.write(
+                `[aps-debug][_executeScript] exit=${_exitCode} stdout-bytes=${(_result.stdout || '').length} stderr-bytes=${(_result.stderr || '').length}\n`
+            );
+            if (_exitCode !== 0) {
+                const _tail = (s, n) => (s ? s.split('\n').slice(-n).join('\n') : '');
+                process.stderr.write('[aps-debug] stdout(last 20):\n' + _tail(_result.stdout, 20) + '\n');
+                process.stderr.write('[aps-debug] stderr(last 20):\n' + _tail(_result.stderr, 20) + '\n');
+                // Extract line number from error (e.g. "line 16: syntax error") and show that line
+                const _lineMatch = /line (\d+):/i.exec(_result.stderr || '');
+                if (_lineMatch) {
+                    const _errLine = parseInt(_lineMatch[1], 10);
+                    const _scriptLines = scriptContent.split('\n');
+                    const _start = Math.max(0, _errLine - 4);
+                    const _end = Math.min(_scriptLines.length, _errLine + 2);
+                    const _context = _scriptLines
+                        .slice(_start, _end)
+                        .map((l, i) => `  ${_start + i + 1}${_start + i + 1 === _errLine ? ' >>>' : '    '} ${l}`)
+                        .join('\n');
+                    process.stderr.write(`[aps-debug] script around line ${_errLine}:\n${_context}\n`);
+                }
+            } else if (_debugEnabled) {
+                const _tail = (s, n) => (s ? s.split('\n').slice(-n).join('\n') : '');
+                process.stderr.write('[aps-debug] stdout(last 10):\n' + _tail(_result.stdout, 10) + '\n');
+            }
+            return _result;
         } finally {
             try {
                 fs.unlinkSync(tmpFile);
@@ -1417,6 +1723,28 @@ class PipelineSimulator {
      * Lazily create (once per simulator instance) a temp directory of no-op
      * shim scripts for tools listed in this.mockTools that aren't on the PATH.
      */
+    _isToolOnPath(name) {
+        // On Windows, check accessibility from the bash context that will actually run scripts,
+        // since the Windows PATH (used by `where`) differs from what bash sees.
+        if (process.platform === 'win32') {
+            const configuredBash = this.executablePaths && this.executablePaths['bash'];
+            const bashCandidates = [
+                configuredBash,
+                'bash',
+                'C:\\Program Files\\Git\\bin\\bash.exe',
+                process.env.ProgramFiles ? `${process.env.ProgramFiles}\\Git\\bin\\bash.exe` : null,
+            ].filter(Boolean);
+            for (const bash of bashCandidates) {
+                const result = spawnSync(bash, ['-c', `command -v ${name}`], { encoding: 'utf8' });
+                if (result.status === 0) return true;
+                if (!result.error || result.error.code !== 'ENOENT') break;
+            }
+            return false;
+        }
+        const result = spawnSync('which', [name], { encoding: 'utf8' });
+        return result.status === 0;
+    }
+
     _getShimDir() {
         if (this._shimDir) return this._shimDir;
 
@@ -1424,6 +1752,7 @@ class PipelineSimulator {
         this._shimDir = dir;
 
         for (const tool of this.mockTools) {
+            if (tool.onlyIfMissing && this._isToolOnPath(tool.name)) continue;
             const toolPath = path.join(dir, tool.name);
             const exitCode = tool.exitCode !== undefined ? tool.exitCode : 0;
             const stdout = tool.stdout || '';
@@ -1578,6 +1907,40 @@ case "$target" in
         ;;
 esac
 exit 0
+`;
+            } else if (tool.name === 'git') {
+                shimContent = `#!/usr/bin/env bash
+# Mock shim for git used by simulator offline mode
+cmd="\${1:-}"
+case "\$cmd" in
+    config)
+        if [[ "\$2" == "--get"* || "\$2" == "--list" ]]; then
+            exit 0
+        fi
+        exit 0
+        ;;
+    rev-parse)
+        echo "0000000000000000000000000000000000000000"
+        exit 0
+        ;;
+    log)
+        echo "0000000 [mock] simulated commit"
+        exit 0
+        ;;
+    status)
+        echo "On branch main"
+        echo "nothing to commit, working tree clean"
+        exit 0
+        ;;
+    clone|fetch|pull|push|checkout|submodule|remote|tag|branch|merge|rebase|stash|reset|clean|init|add|commit|show|diff|describe|ls-files|ls-remote)
+        echo ${JSON.stringify('[mock-tool] git $*')} >&2
+        exit 0
+        ;;
+    *)
+        echo ${JSON.stringify('[mock-tool] git $*')} >&2
+        exit 0
+        ;;
+esac
 `;
             } else if (tool.name === 'cygpath') {
                 shimContent = `#!/usr/bin/env bash
@@ -1835,20 +2198,67 @@ exit 0
     _getSimulationRoot(variables, workDir) {
         const configuredRoot = this.outputRoot || variables['Simulator.OutputRoot'];
         if (configuredRoot) {
-            const resolved = path.resolve(String(configuredRoot));
+            const resolved = this._resolveHostPath(String(configuredRoot));
             fs.mkdirSync(resolved, { recursive: true });
             return resolved;
         }
         const workspaceRoot = variables['Pipeline.Workspace'] || workDir || process.cwd();
-        return path.resolve(workspaceRoot);
+        return this._resolveHostPath(workspaceRoot);
+    }
+
+    /**
+     * Resolve a path to something the host OS can use for fs/spawn operations.
+     * On Windows, Linux absolute paths (e.g. /root/workspace/...) are prefixed
+     * with wslMountRoot (e.g. \\wsl.localhost\Ubuntu-22.04) if available,
+     * otherwise path.resolve() would produce a wrong C:\root\... path.
+     */
+    _resolveHostPath(p) {
+        const s = String(p || '').trim();
+        if (process.platform === 'win32') {
+            // Already a UNC WSL path (\\wsl.localhost\Distro\...) → keep as-is.
+            if (/^\\\\wsl\.localhost\\[^\\]+\\/i.test(s)) {
+                return path.normalize(s);
+            }
+
+            // UNC-like WSL path expressed with forward slashes (//wsl.localhost/Distro/...)
+            // should be normalized, not prefixed with wslMountRoot again.
+            if (/^\/\/wsl\.localhost\/[^/]+\//i.test(s)) {
+                return path.normalize(s.replace(/\//g, '\\'));
+            }
+
+            // Linux absolute path inside WSL (/root/...): map to configured UNC mount root.
+            if (this.wslMountRoot && s.startsWith('/')) {
+                return path.normalize(this.wslMountRoot + s.replace(/\//g, '\\'));
+            }
+        }
+        return path.resolve(s);
+    }
+
+    _toBashPath(rawPath) {
+        const s = String(rawPath || '').trim();
+        if (!s) return '';
+        if (process.platform !== 'win32') return s;
+
+        // C:\foo\bar -> /c/foo/bar
+        const driveMatch = /^([A-Za-z]):[\\/](.*)$/.exec(s);
+        if (driveMatch) {
+            return `/${driveMatch[1].toLowerCase()}/${driveMatch[2].replace(/[\\/]+/g, '/')}`;
+        }
+
+        // \\wsl.localhost\Distro\path -> //wsl.localhost/Distro/path
+        if (/^\\\\wsl\.localhost\\/i.test(s)) {
+            return s.replace(/\\/g, '/');
+        }
+
+        return s.replace(/\\/g, '/');
     }
 
     _resolvePath(rawPath, variables, workDir) {
         const substituted = this._substituteTaskInputVariables(String(rawPath), variables).replace(/\\/g, '/');
         if (path.isAbsolute(substituted)) {
-            return path.resolve(substituted);
+            return this._resolveHostPath(substituted);
         }
-        return path.resolve(workDir || process.cwd(), substituted);
+        return this._resolveHostPath(path.posix.join((workDir || process.cwd()).replace(/\\/g, '/'), substituted));
     }
 
     _recordDownloadTarget(targetPath) {
