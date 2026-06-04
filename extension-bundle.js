@@ -138,6 +138,87 @@ function _extractSimulationTree(document) {
     }));
 }
 
+function _extractTopLevelParameterDefinitions(parser, sourceText, skipSyntaxCheck) {
+    if (!parser || typeof parser.parseYamlDocument !== 'function') {
+        return [];
+    }
+
+    let jsonDoc;
+    try {
+        ({ jsonDoc } = parser.parseYamlDocument(sourceText, undefined, !!skipSyntaxCheck));
+    } catch (_) {
+        return [];
+    }
+
+    if (!jsonDoc || typeof jsonDoc !== 'object' || !jsonDoc.parameters) {
+        return [];
+    }
+
+    const toType = (rawType, fallback) => {
+        const normalized = String(rawType || fallback || 'string')
+            .trim()
+            .toLowerCase();
+        return normalized || 'string';
+    };
+
+    const normalizeArrayOrNull = (input) =>
+        Array.isArray(input) ? input.map((entry) => (entry === undefined || entry === null ? '' : entry)) : null;
+
+    const defs = [];
+    const parametersNode = jsonDoc.parameters;
+
+    if (Array.isArray(parametersNode)) {
+        for (const item of parametersNode) {
+            if (!item || typeof item !== 'object' || !item.name) {
+                continue;
+            }
+
+            const hasDefault = Object.prototype.hasOwnProperty.call(item, 'default');
+            defs.push({
+                name: String(item.name),
+                type: toType(item.type, 'string'),
+                hasDefault,
+                defaultValue: hasDefault ? item.default : '',
+                values: normalizeArrayOrNull(item.values),
+            });
+        }
+        return defs;
+    }
+
+    if (typeof parametersNode === 'object') {
+        for (const [name, item] of Object.entries(parametersNode)) {
+            if (!name || !String(name).trim()) {
+                continue;
+            }
+
+            if (item && typeof item === 'object' && !Array.isArray(item)) {
+                const hasDefault =
+                    Object.prototype.hasOwnProperty.call(item, 'default') ||
+                    Object.prototype.hasOwnProperty.call(item, 'value');
+                const defaultValue = Object.prototype.hasOwnProperty.call(item, 'default') ? item.default : item.value;
+                defs.push({
+                    name: String(name),
+                    type: toType(item.type, 'string'),
+                    hasDefault,
+                    defaultValue: hasDefault ? defaultValue : '',
+                    values: normalizeArrayOrNull(item.values),
+                });
+                continue;
+            }
+
+            defs.push({
+                name: String(name),
+                type: toType(typeof item, 'string'),
+                hasDefault: item !== undefined,
+                defaultValue: item === undefined ? '' : item,
+                values: null,
+            });
+        }
+    }
+
+    return defs;
+}
+
 /**
  * Builds the standard default simulation variables from resolved paths.
  * Both the CLI and UI share this baseline variable set.
@@ -187,27 +268,33 @@ function _buildSimulationDefaultVariables(workingDirectory, outputRoot, buildCou
  * @param {Object} [config.mockCatalog] - Mock catalog for task outputs (CLI only)
  * @returns simulation results from PipelineSimulator.simulate()
  */
-function runPipelineSimulation(parsedDoc, {
-    workingDirectory,
-    outputRoot,
-    buildCounter = '1',
-    userVariables = {},
-    libraryVariables = {},
-    stages,
-    executablePaths = {},
-    wslMountRoot = null,
-    checkoutSource,
-    checkoutRepository,
-    mockCatalog,
-} = {}) {
+function runPipelineSimulation(
+    parsedDoc,
+    {
+        workingDirectory,
+        outputRoot,
+        buildCounter = '1',
+        userVariables = {},
+        libraryVariables = {},
+        stages,
+        executablePaths = {},
+        wslMountRoot = null,
+        checkoutSource,
+        checkoutRepository,
+        mockCatalog,
+    } = {}
+) {
     const counterStr = String(buildCounter || '1');
     const counterNum = parseInt(counterStr, 10);
 
-    const checkoutVars = checkoutSource !== undefined ? {
-        'Simulator.CheckoutSource': checkoutSource,
-        'Simulator.CheckoutRepository': checkoutRepository || '',
-        'Simulator.RepositoryRoot': checkoutRepository || workingDirectory,
-    } : {};
+    const checkoutVars =
+        checkoutSource !== undefined
+            ? {
+                  'Simulator.CheckoutSource': checkoutSource,
+                  'Simulator.CheckoutRepository': checkoutRepository || '',
+                  'Simulator.RepositoryRoot': checkoutRepository || workingDirectory,
+              }
+            : {};
 
     const defaultVariables = _buildSimulationDefaultVariables(workingDirectory, outputRoot, counterStr, checkoutVars);
 
@@ -228,15 +315,23 @@ function runPipelineSimulation(parsedDoc, {
         ...(stages && stages.length ? { stages } : {}),
     };
 
+    const systemDebugValue =
+        userOverrides['System.Debug'] !== undefined ? userOverrides['System.Debug'] : defaultVariables['System.Debug'];
+    const debugScript =
+        String(systemDebugValue || '')
+            .trim()
+            .toLowerCase() === 'true';
+
     const outRoot = outputRoot.replace(/[/\\]$/, '');
-    const simulatorConfig = { outputRoot: outRoot, executablePaths, wslMountRoot };
+    const simulatorConfig = { outputRoot: outRoot, executablePaths, wslMountRoot, debugScript };
     if (mockCatalog) simulatorConfig.mockCatalog = mockCatalog;
     const simulator = new PipelineSimulator(simulatorConfig);
     return simulator.simulate(parsedDoc, simOptions);
 }
 
-function _generateSimulationViewHtml(stageTree, fileName) {
+function _generateSimulationViewHtml(stageTree, fileName, topLevelParameterDefinitions = []) {
     const esc = _escHtml;
+    const topLevelParametersJson = JSON.stringify(topLevelParameterDefinitions || []).replace(/</g, '\\u003c');
     const STEP_ICONS = {
         task: '⚙',
         bash: '🐚',
@@ -260,7 +355,56 @@ function _generateSimulationViewHtml(stageTree, fileName) {
         step: '#a0aec0',
     };
 
-    const stagesHtml = stageTree
+    // Generate sidebar stages list with expandable jobs/tasks
+    const stagesSidebarHtml = stageTree
+        .map((stage, si) => {
+            const sidebarJobsHtml =
+                stage.jobs
+                    .map((job, ji) => {
+                        const sidebarStepsHtml =
+                            job.steps
+                                .map(
+                                    (step, ti) =>
+                                        `<div class="sidebar-task-row" data-stage-index="${si}" data-job-index="${ji}" data-step-index="${ti}" onclick="selectSidebarTask(event,${si},${ji},${ti})">` +
+                                        `<span class="sidebar-task-icon" style="color:${STEP_COLORS[step.type] || '#a0aec0'}">${STEP_ICONS[step.type] || '▸'}</span>` +
+                                        `<span class="sidebar-result" id="ssr-task-${si}-${ji}-${ti}">•</span>` +
+                                        `<span class="sidebar-task-name">${esc(step.label)}</span>` +
+                                        `</div>`
+                                )
+                                .join('') || '<div class="empty-msg">No tasks</div>';
+
+                        return (
+                            `<div class="sidebar-job-item">` +
+                            `<div class="sidebar-job-header" onclick="toggleSidebarJob(event,'ssjt-${si}-${ji}','ssjto-${si}-${ji}')">` +
+                            `<span class="toggle sidebar-toggle" id="ssjto-${si}-${ji}">&#9658;</span>` +
+                            `<span class="sidebar-result" id="ssr-job-${si}-${ji}">•</span>` +
+                            `<span class="sidebar-job-name">${esc(job.displayName)}</span>` +
+                            `<span class="count-badge">${job.steps.length}</span>` +
+                            `</div>` +
+                            `<div class="sidebar-job-steps collapsed" id="ssjt-${si}-${ji}">${sidebarStepsHtml}</div>` +
+                            `</div>`
+                        );
+                    })
+                    .join('') || '<div class="empty-msg">No jobs</div>';
+
+            return (
+                `<div class="sidebar-stage ${si === 0 ? 'active' : ''}" data-stage-index="${si}">` +
+                `<div class="sidebar-stage-header" onclick="toggleSidebarStage(event,${si})">` +
+                `<span class="toggle sidebar-toggle" id="sst-${si}">&#9658;</span>` +
+                `<span class="sidebar-result" id="ssr-stage-${si}">•</span>` +
+                `<span class="stage-checkbox-wrap" onclick="event.stopPropagation()"><input type="checkbox" class="stage-cb" data-name="${esc(stage.name)}" checked onchange="onStageSelectionChange()"></span>` +
+                `<span class="stage-indicator"></span>` +
+                `<span class="sidebar-stage-name">${esc(stage.displayName)}</span>` +
+                `</div>` +
+                `<div class="sidebar-stage-meta">${stage.jobs.length} job${stage.jobs.length !== 1 ? 's' : ''}</div>` +
+                `<div class="sidebar-stage-jobs collapsed" id="ssj-${si}">${sidebarJobsHtml}</div>` +
+                `</div>`
+            );
+        })
+        .join('');
+
+    // Generate main content for each stage
+    const stageContentsHtml = stageTree
         .map((stage, si) => {
             const jobsHtml =
                 stage.jobs
@@ -268,34 +412,29 @@ function _generateSimulationViewHtml(stageTree, fileName) {
                         const stepsHtml = job.steps
                             .map(
                                 (step) =>
-                                    `<div class="step-row"><span class="step-icon" style="color:${
-                                        STEP_COLORS[step.type] || '#a0aec0'
-                                    }">${STEP_ICONS[step.type] || '▸'}</span>` +
+                                    `<div class="step-row">` +
+                                    `<span class="step-icon" style="color:${STEP_COLORS[step.type] || '#a0aec0'}">${STEP_ICONS[step.type] || '▸'}</span>` +
                                     `<span class="step-type">${esc(step.type)}</span>` +
-                                    `<span class="step-label">${esc(step.label)}</span></div>`
+                                    `<span class="step-label">${esc(step.label)}</span>` +
+                                    `</div>`
                             )
                             .join('');
                         return (
                             `<div class="job-item">` +
-                            `<div class="job-header" onclick="toggleCollapse('steps-${si}-${ji}','tj-${si}-${ji}')">` +
+                            `<div class="job-header" onclick="toggleSteps('steps-${si}-${ji}')">` +
                             `<span class="toggle" id="tj-${si}-${ji}">&#9658;</span>` +
                             `<span class="job-badge${job.isDeployment ? ' deploy' : ''}">${job.isDeployment ? 'DEPLOY' : 'JOB'}</span>` +
                             `<span class="job-name">${esc(job.displayName)}</span>` +
-                            `<span class="count-badge">${job.steps.length} step${job.steps.length !== 1 ? 's' : ''}</span></div>` +
+                            `<span class="count-badge">${job.steps.length}</span>` +
+                            `</div>` +
                             `<div class="steps-list collapsed" id="steps-${si}-${ji}">${stepsHtml || '<div class="empty-msg">No steps</div>'}</div>` +
                             `</div>`
                         );
                     })
                     .join('') || '<div class="empty-msg">No jobs</div>';
             return (
-                `<div class="stage-item">` +
-                `<div class="stage-header">` +
-                `<input type="checkbox" class="stage-cb" id="scb-${si}" data-name="${esc(stage.name)}" checked>` +
-                `<span class="toggle" id="ts-${si}" onclick="toggleCollapse('jobs-${si}','ts-${si}')">&#9658;</span>` +
-                `<label class="stage-name" for="scb-${si}">${esc(stage.displayName)}</label>` +
-                `<span class="count-badge">${stage.jobs.length} job${stage.jobs.length !== 1 ? 's' : ''}</span>` +
-                `</div>` +
-                `<div class="jobs-list collapsed" id="jobs-${si}">${jobsHtml}</div>` +
+                `<div class="stage-content ${si === 0 ? 'active' : ''}" data-stage-index="${si}">` +
+                `<div class="jobs-container">${jobsHtml}</div>` +
                 `</div>`
             );
         })
@@ -309,14 +448,66 @@ function _generateSimulationViewHtml(stageTree, fileName) {
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Pipeline Simulation</title>
 <style id="mainStyle">
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#1e1e1e;color:#cccccc;min-height:100vh;font-size:14px;line-height:1.4}
-.header{background:linear-gradient(135deg,#1a1a1a,#0d0d0d);padding:16px 20px;border-bottom:3px solid #0078d4}
-.header h1{color:#fff;font-size:1.35em;display:flex;align-items:center;gap:10px}
-.header .filename{color:#888;font-size:.9em;margin-top:4px;font-family:monospace;word-break:break-all}
-.body{padding:16px 20px}
-.section-title{color:#888;font-size:.74em;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin:16px 0 8px}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#1e1e1e;color:#cccccc;height:100vh;display:flex;flex-direction:column;line-height:1.4}
+.main-container{display:flex;flex:1;overflow:hidden}
+.header{background:#2d2d30;padding:14px 20px;border-bottom:2px solid #555;flex-shrink:0}
+.header h1{color:#e8e8e8;font-size:1.2em;display:flex;align-items:center;gap:10px;font-weight:600}
+.header .filename{color:#999;font-size:.88em;margin-top:3px;font-family:monospace;word-break:break-all}
+.sidebar{width:300px;background:#252526;border-right:1px solid #3e3e42;display:flex;flex-direction:column;overflow-y:auto;flex-shrink:0}
+.sidebar-header{padding:10px 14px;border-bottom:1px solid #3e3e42;background:#2d2d30;font-size:.82em;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.08em;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.sidebar-header-controls{display:flex;align-items:center;gap:6px;font-size:.9em;text-transform:none;letter-spacing:normal;color:#bbb}
+.sidebar-header-controls input{cursor:pointer;accent-color:#0078d4;width:14px;height:14px}
+.sidebar-header-controls label{cursor:pointer}
+.sidebar-content{flex:1;overflow-y:auto;padding:6px 0}
+.sidebar-stage{padding:6px 12px;border-bottom:1px solid #2e2e2e;cursor:pointer;transition:background .1s}
+.sidebar-stage:hover{background:#2c2c2e}
+.sidebar-stage.active{background:#3a3a3c;border-left:3px solid #888}
+.sidebar-stage.active .stage-indicator{background:#ccc}
+.sidebar-stage-header{display:flex;align-items:center;gap:8px;margin-bottom:2px}
+.stage-indicator{width:7px;height:7px;border-radius:50%;background:#555;flex-shrink:0}
+.sidebar-stage-name{font-size:.92em;color:#d0d0d0;font-weight:600;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sidebar-stage-meta{font-size:.8em;color:#666;padding-left:16px}
+.sidebar-stage-jobs{margin-top:4px;padding:0 0 6px 14px;border-left:1px solid #3a3a3c}
+.sidebar-stage-jobs.collapsed{display:none}
+.sidebar-job-item{margin:4px 0 0}
+.sidebar-job-header{display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:4px;cursor:pointer}
+.sidebar-job-header:hover{background:#303033}
+.sidebar-job-name{font-size:.86em;color:#c0c0c0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sidebar-job-steps{padding:2px 0 2px 18px}
+.sidebar-job-steps.collapsed{display:none}
+.sidebar-task-row{display:flex;align-items:center;gap:6px;padding:4px 4px;border-radius:3px;cursor:pointer}
+.sidebar-task-row:hover{background:#303033}
+.sidebar-task-row.active{background:#3c3c3f}
+.sidebar-task-icon{font-size:.82em;width:14px;flex-shrink:0;text-align:center}
+.sidebar-result{font-size:.78em;width:12px;flex-shrink:0;text-align:center;color:#666}
+.sidebar-result.succeeded{color:#4ec94e}
+.sidebar-result.failed{color:#f47174}
+.sidebar-result.skipped{color:#c8a84b}
+.sidebar-task-name{font-size:.82em;color:#a0a0a0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
+.sidebar-task-row:hover .sidebar-task-name{color:#d8d8d8}
+.sidebar-task-row.active .sidebar-task-name{color:#e8e8e8}
+.sidebar-toggle{width:12px}
+.main-content{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.settings-panel{background:#2a2a2c;border-bottom:1px solid #444;padding:12px 20px;overflow-y:auto;max-height:none;flex:1}
+.settings-panel.collapsed{max-height:36px;flex:0 0 auto;overflow:hidden}
+.body{flex:1;overflow-y:auto;padding:16px 20px}
+.body.hidden{display:none}
+.body-toolbar{display:flex;justify-content:flex-end;align-items:center;margin-bottom:4px}
+.stage-content{display:none}
+.stage-content.active{display:block}
+.stage-content-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:12px;border-bottom:2px solid #0078d4}
+.stage-content-header h2{color:#fff;font-size:1.2em;margin:0}
+.stage-checkbox-wrap{display:flex;align-items:center}
+.section-title{color:#b0b0b0;font-size:.78em;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin:12px 0 8px}
 .options-row{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:4px}
 .field-group{display:flex;align-items:center;gap:8px}
+.param-section{margin-top:12px}
+.param-grid{display:flex;flex-direction:column;gap:8px}
+.param-row{display:grid;grid-template-columns:220px minmax(0,1fr);gap:10px;align-items:center}
+.param-name{font-size:.8em;color:#aaa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.param-control{background:#2d2d30;border:1px solid #3e3e42;color:#e0e0e0;padding:6px 8px;border-radius:3px;width:100%}
+.param-control:focus{outline:none;border-color:#0078d4}
+.param-note{font-size:.74em;color:#666;grid-column:2}
 .field-label{font-size:.82em;color:#ccc}
 .field-input{background:#2d2d30;border:1px solid #3e3e42;color:#e0e0e0;padding:4px 8px;border-radius:3px;font-size:.82em;width:90px}
 .field-input:focus{outline:none;border-color:#0078d4}
@@ -333,28 +524,23 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .toolbar{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}
 .toolbar-btn{background:#2d2d30;border:1px solid #3e3e42;color:#aaa;padding:4px 8px;border-radius:3px;cursor:pointer;font-size:.74em}
 .toolbar-btn:hover{border-color:#555;color:#ddd}
-.stage-item{background:#252526;border:1px solid #3e3e42;border-radius:3px;margin-bottom:5px;overflow:hidden}
-.stage-header{display:flex;align-items:center;gap:8px;padding:8px 12px;background:#2d2d30}
-.stage-cb{cursor:pointer;accent-color:#0078d4;width:14px;height:14px;flex-shrink:0}
-.toggle{display:inline-block;font-size:.65em;color:#555;transition:transform .15s;cursor:pointer;width:14px;flex-shrink:0;text-align:center}
-.toggle.open{transform:rotate(90deg);color:#aaa}
-.stage-name{font-size:.9em;font-weight:600;color:#ddd;cursor:pointer;flex:1}
-.stage-name:hover{color:#fff}
-.count-badge{font-size:.62em;color:#555;background:#1e1e1e;padding:1px 5px;border-radius:10px;border:1px solid #3e3e42;white-space:nowrap}
-.jobs-list,.steps-list{padding:0}
-.collapsed{display:none}
-.job-item{border-top:1px solid #2d2d30}
-.job-header{display:flex;align-items:center;gap:8px;padding:6px 12px 6px 28px;cursor:pointer}
-.job-header:hover{background:#2a2a2a}
-.job-badge{font-size:.62em;font-weight:700;padding:1px 5px;border-radius:2px;background:#0078d4;color:#fff;flex-shrink:0}
+.jobs-container{display:flex;flex-direction:column;gap:8px}
+.job-item{display:none;background:#2a2a2a;border:1px solid #3e3e42;border-radius:3px;overflow:hidden}
+.job-header{display:flex;align-items:center;gap:8px;padding:10px 12px;background:#2d2d30;cursor:pointer;transition:background .15s}
+.job-header:hover{background:#333333}
+.toggle{display:inline-block;font-size:.72em;color:#888;transition:transform .15s;cursor:pointer;width:14px;flex-shrink:0;text-align:center;user-select:none}
+.toggle.open{transform:rotate(90deg);color:#ccc}
+.job-badge{font-size:.62em;font-weight:700;padding:2px 6px;border-radius:2px;background:#0078d4;color:#fff;flex-shrink:0}
 .job-badge.deploy{background:#6b46c1}
-.job-name{font-size:.84em;color:#ccc;flex:1}
-.steps-list{padding:2px 0 2px 48px;background:#1e1e1e}
-.step-row{display:flex;align-items:baseline;gap:6px;padding:2px 8px}
+.job-name{font-size:.85em;color:#ccc;flex:1}
+.count-badge{font-size:.66em;color:#999;background:#1e1e1e;padding:2px 6px;border-radius:10px;border:1px solid #3e3e42;white-space:nowrap;font-weight:600}
+.steps-list{padding:0;background:#1e1e1e}
+.steps-list.collapsed{display:none}
+.step-row{display:flex;align-items:baseline;gap:8px;padding:8px 12px;border-top:1px solid #252526}
 .step-icon{font-size:.85em;flex-shrink:0;width:16px;text-align:center}
-.step-type{font-size:.66em;color:#555;font-family:monospace;flex-shrink:0;min-width:52px}
-.step-label{font-size:.82em;color:#999}
-.empty-msg{font-size:.78em;color:#444;padding:6px 12px;font-style:italic}
+.step-type{font-size:.68em;color:#666;font-family:monospace;flex-shrink:0;min-width:56px;font-weight:600}
+.step-label{font-size:.85em;color:#999;flex:1}
+.empty-msg{font-size:.78em;color:#555;padding:12px;font-style:italic;text-align:center}
 .actions{display:flex;align-items:center;gap:10px;margin-top:18px;padding-top:14px;border-top:1px solid #3e3e42}
 .run-btn{background:#0078d4;border:none;color:#fff;padding:9px 20px;border-radius:3px;cursor:pointer;font-size:.92em;font-weight:600}
 .run-btn:hover{background:#005a9e}
@@ -368,7 +554,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .res-step{margin:4px 0 4px 20px;font-size:1.02em}
 .res-icon{margin-right:6px;font-size:1.04em}
 .res-step-name{color:#ccc}
-.res-out{margin:3px 0 3px 20px;font-family:monospace;font-size:.96em;color:#9fa8b0;white-space:pre-wrap;word-break:break-all;max-height:140px;overflow-y:auto;background:#1a1a1a;padding:5px 8px;border-radius:2px}
+.res-out{margin:3px 0 3px 20px;font-family:monospace;font-size:.96em;color:#9fa8b0;white-space:pre-wrap;word-break:break-all;max-height:min(65vh,calc(100vh - 260px));overflow-y:auto;background:#1a1a1a;padding:5px 8px;border-radius:2px}
 .res-vars{margin:2px 0 2px 20px}
 .res-var{font-size:.94em;color:#8f98a1;font-family:monospace}
 .res-out-var{color:#7eb8d4}
@@ -378,14 +564,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .sim-loading{display:flex;align-items:center;gap:10px;padding:24px 0;color:#888;font-size:.9em}
 .sim-spinner{width:20px;height:20px;border:2px solid #3e3e42;border-top-color:#569cd6;border-radius:50%;animation:aps-spin .8s linear infinite;flex-shrink:0}
 .sec-title-row{display:flex;align-items:center;gap:8px}
-.sec-collapse-btn{margin-left:auto;background:none;border:1px solid #3e3e42;color:#555;padding:1px 8px;border-radius:3px;cursor:pointer;font-size:.72em}
-.sec-collapse-btn:hover{border-color:#555;color:#ccc}
+.sec-collapse-btn{margin-left:auto;background:#333335;border:1px solid #555;color:#bbb;padding:2px 10px;border-radius:3px;cursor:pointer;font-size:.76em;font-weight:600}
+.sec-collapse-btn:hover{border-color:#888;color:#fff;background:#3d3d3f}
 .res-stage-hd{cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between}
 .res-stage-hd:hover{color:#fff}
 .res-job-hd{cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between}
 .res-job-hd:hover{color:#ccc}
 .res-tog{font-size:.7em;color:#555;margin-left:6px;flex-shrink:0}
 .res-body{overflow:hidden}
+.res-body.collapsed{display:none}
+.back-btn{background:#3d3d3f;border:1px solid #555;color:#ccc;padding:8px 14px;border-radius:3px;cursor:pointer;font-size:.88em;font-weight:600}
+.back-btn:hover{background:#4a4a4e;border-color:#888;color:#fff}
 .res-browser-btn{background:#0e639c;color:#fff;border:none;padding:4px 10px;border-radius:3px;cursor:pointer;font-size:.78em}.res-browser-btn:hover{background:#1177bb}
 .term-btn{display:none;background:none;border:1px solid #3e3e42;color:#ccc;padding:8px 16px;border-radius:3px;cursor:pointer;font-size:.88em;font-weight:600}
 .term-btn:hover{border-color:#0078d4;color:#fff}
@@ -397,108 +586,547 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <body>
 <div id="pageLoader"><div class="pl-spinner"></div><div class="pl-text">Loading…</div></div>
 <div class="header"><h1>&#9889; Pipeline Simulation Run</h1><div class="filename">${esc(baseName)}</div></div>
-<div class="body">
-  <div class="section-title">Pipeline Variables</div>
-  <div class="options-row">
-    <div class="field-group"><label class="field-label" for="buildCounter">Build Counter</label>
-      <input class="field-input" type="number" id="buildCounter" value="1" min="1" step="1"></div>
-    <div class="field-group"><label class="field-label" for="buildReason">Build Reason</label>
-      <select class="field-select" id="buildReason"><option value="Manual">Manual</option><option value="IndividualCI">IndividualCI</option><option value="BatchedCI">BatchedCI</option><option value="Schedule">Schedule</option><option value="PullRequest">PullRequest</option><option value="BuildCompletion">BuildCompletion</option><option value="ResourceTrigger">ResourceTrigger</option></select></div>
-    <div class="field-group"><label class="field-label" for="sourceBranch">Source Branch</label>
-      <input class="field-input" list="sourceBranchList" id="sourceBranch" value="refs/heads/main" style="width:170px">
-      <datalist id="sourceBranchList"><option value="refs/heads/main"><option value="refs/heads/master"><option value="refs/heads/develop"><option value="refs/heads/release"><option value="refs/pull/1/merge"></datalist></div>
-    <div class="field-group"><input type="checkbox" id="debugMode" style="cursor:pointer;accent-color:#0078d4;width:14px;height:14px"><label class="field-label" for="debugMode" style="cursor:pointer">Enable Debug</label></div>
+<div class="main-container">
+  <div class="sidebar">
+    <div class="sidebar-header"><span>Stages</span><span class="sidebar-header-controls"><input type="checkbox" id="selectAllStages" checked onchange="toggleAllStages(this.checked)"><label for="selectAllStages">All</label></span></div>
+    <div class="sidebar-content">${stagesSidebarHtml || '<div class="empty-msg">No stages</div>'}</div>
   </div>
-  <div class="section-title">Variables <span style="font-weight:400;font-size:.9em">(key=value overrides)</span></div>
-  <table class="vars-table"><tbody id="varRows"></tbody></table>
-  <button class="add-var-btn" onclick="addVar()">+ Add variable</button>
-  <div class="section-title" style="margin-top:14px">Library Variables <span style="font-weight:400;font-size:.9em">(group.variable=value)</span></div>
-  <table class="vars-table"><thead><tr><td style="width:30%;padding:0 3px 3px"><span style="font-size:.74em;color:#555">Group</span></td><td style="width:30%;padding:0 3px 3px"><span style="font-size:.74em;color:#555">Variable</span></td><td style="width:4%"></td><td style="width:31%;padding:0 3px 3px"><span style="font-size:.74em;color:#555">Value</span></td><td></td></tr></thead><tbody id="libVarRows"></tbody></table>
-  <button class="add-var-btn" onclick="addLibVar()">+ Add library variable</button>
-  <div class="actions">
-    <button class="run-btn" id="runBtn" onclick="runSimulation()">&#9654; Run Simulation</button>
-    <button class="term-btn" id="termBtn" onclick="runInTerminal()">&#10095;_ Run in Terminal</button>
-    <span class="status-msg" id="statusMsg"></span>
+  <div class="main-content">
+    <div class="settings-panel" id="settingsPanel">
+      <div class="section-title sec-title-row" style="margin-top:0">Settings<button class="sec-collapse-btn" id="settingsToggle" onclick="toggleSettingsPanel()">&#9650; Collapse</button></div>
+      <div id="settingsContent">
+        <div class="section-title">Pipeline Variables</div>
+        <div class="options-row">
+          <div class="field-group"><label class="field-label" for="buildCounter">Build Counter</label>
+            <input class="field-input" type="number" id="buildCounter" value="1" min="1" step="1"></div>
+          <div class="field-group"><label class="field-label" for="buildReason">Build Reason</label>
+            <select class="field-select" id="buildReason"><option value="Manual">Manual</option><option value="IndividualCI">IndividualCI</option><option value="BatchedCI">BatchedCI</option><option value="Schedule">Schedule</option><option value="PullRequest">PullRequest</option><option value="BuildCompletion">BuildCompletion</option><option value="ResourceTrigger">ResourceTrigger</option></select></div>
+          <div class="field-group"><label class="field-label" for="sourceBranch">Source Branch</label>
+            <input class="field-input" list="sourceBranchList" id="sourceBranch" value="refs/heads/main" style="width:170px">
+            <datalist id="sourceBranchList"><option value="refs/heads/main"><option value="refs/heads/master"><option value="refs/heads/develop"><option value="refs/heads/release"><option value="refs/pull/1/merge"></datalist></div>
+          <div class="field-group"><input type="checkbox" id="debugMode" style="cursor:pointer;accent-color:#0078d4;width:14px;height:14px"><label class="field-label" for="debugMode" style="cursor:pointer">Enable Debug</label></div>
+        </div>
+                <div id="topLevelParamsSection" class="param-section" style="display:none">
+                    <div class="section-title">Top-Level Parameters</div>
+                    <div id="topLevelParamsRows" class="param-grid"></div>
+                </div>
+        <div style="display:flex;gap:10px;margin-top:12px">
+          <button class="run-btn" id="runBtn" onclick="runSimulation()">&#9654; Run Simulation</button>
+          <button class="term-btn" id="termBtn" onclick="runInTerminal()">&#10095;_ Run in Terminal</button>
+          <button class="back-btn" id="backBtn" onclick="showSettings()" style="display:none">&#9881; Settings</button>
+          <span class="status-msg" id="statusMsg"></span>
+        </div>
+      </div>
+    </div>
+        <div class="body hidden" id="renderBody">
+            <div class="body-toolbar"><button class="res-browser-btn" id="browserBtn" onclick="openResultsInBrowser()" style="display:none">&#127760; Open in Browser</button></div>
+      <div id="stageContents">${stageContentsHtml || '<div class="empty-msg">No stages found</div>'}</div>
+      <div id="resultsPanel"></div>
+    </div>
   </div>
-  <div class="section-title sec-title-row" style="margin-top:16px">Stages to Run<button class="sec-collapse-btn" id="stagesToggle" onclick="toggleStagesSection()">&#9650; Collapse</button></div>
-  <div id="stagesSection">
-  <div class="toolbar">
-    <button class="toolbar-btn" onclick="selectAll(true)">Select All</button>
-    <button class="toolbar-btn" onclick="selectAll(false)">Select None</button>
-    <button class="toolbar-btn" onclick="expandAll(true)">Expand All</button>
-    <button class="toolbar-btn" onclick="expandAll(false)">Collapse All</button>
-  </div>
-  <div id="stageList">${stagesHtml || '<div class="empty-msg">No stages found in expanded pipeline.</div>'}</div>
-  </div>
-  <div id="resultsPanel"></div>
 </div>
 <script>
 window.onerror=function(msg,src,line,col,err){var l=document.getElementById('pageLoader');if(l){l.innerHTML='<div style="color:#f47174;padding:20px;font-family:monospace;font-size:13px"><b>JS Error (line '+line+'):</b><br>'+msg+'<br><br>'+(err&&err.stack?err.stack.replace(/\\n/g,'<br>'):'')+'</div>';}return false;};
 window.addEventListener('unhandledrejection',function(e){var l=document.getElementById('pageLoader');if(l){l.innerHTML='<div style="color:#f47174;padding:20px;font-family:monospace;font-size:13px"><b>Unhandled Promise Rejection:</b><br>'+String(e.reason)+'</div>';}});
-const vscode=acquireVsCodeApi();let varCount=0;let libVarCount=0;
+const vscode=acquireVsCodeApi();let varCount=0;let libVarCount=0;let taskFilter=null;
+const topLevelParameterDefinitions=${topLevelParametersJson};
+function _normParamType(t){return String(t||'string').trim().toLowerCase();}
+function _asBool(v){if(typeof v==='boolean')return v;var s=String(v||'').trim().toLowerCase();return s==='true'||s==='1'||s==='yes';}
+function _stringifyParamValue(v){if(v===undefined||v===null)return '';if(typeof v==='object'){try{return JSON.stringify(v);}catch(_){return String(v);}}return String(v);}
+function _createParamControl(def){
+    const t=_normParamType(def.type);
+    const values=Array.isArray(def.values)&&def.values.length?def.values:null;
+    const hasDefault=!!def.hasDefault;
+    const defaultValue=hasDefault?def.defaultValue:'';
+    let control;
+    if(values){
+        control=document.createElement('select');
+        control.className='param-control';
+        values.forEach(function(opt){
+            const option=document.createElement('option');
+            const text=_stringifyParamValue(opt);
+            option.value=text;
+            option.textContent=text;
+            if(_stringifyParamValue(defaultValue)===text)option.selected=true;
+            control.appendChild(option);
+        });
+    }else if(t==='boolean'){
+        control=document.createElement('input');
+        control.type='checkbox';
+        control.style.accentColor='#0078d4';
+        control.style.width='16px';
+        control.style.height='16px';
+        control.checked=hasDefault?_asBool(defaultValue):false;
+    }else if(t==='number'){
+        control=document.createElement('input');
+        control.type='number';
+        control.className='param-control';
+        control.value=hasDefault?_stringifyParamValue(defaultValue):'';
+    }else{
+        control=document.createElement('input');
+        control.type='text';
+        control.className='param-control';
+        control.value=hasDefault?_stringifyParamValue(defaultValue):'';
+    }
+    control.setAttribute('data-param-name',String(def.name||''));
+    control.setAttribute('data-param-type',t);
+    control.setAttribute('data-param-has-default',hasDefault?'true':'false');
+    control.setAttribute('data-param-default',_stringifyParamValue(defaultValue));
+    return control;
+}
+function renderTopLevelParameters(){
+    const section=document.getElementById('topLevelParamsSection');
+    const rows=document.getElementById('topLevelParamsRows');
+    if(!section||!rows)return;
+    rows.innerHTML='';
+    if(!Array.isArray(topLevelParameterDefinitions)||!topLevelParameterDefinitions.length){
+        section.style.display='none';
+        return;
+    }
+    section.style.display='block';
+    topLevelParameterDefinitions.forEach(function(def){
+        const name=String((def&&def.name)||'').trim();
+        if(!name)return;
+        const row=document.createElement('div');
+        row.className='param-row';
+        const label=document.createElement('label');
+        label.className='param-name';
+        label.textContent=name;
+        const control=_createParamControl(def);
+        label.htmlFor='param-'+name;
+        control.id='param-'+name;
+        row.appendChild(label);
+        row.appendChild(control);
+        rows.appendChild(row);
+        const note=document.createElement('div');
+        note.className='param-note';
+        note.textContent='type: '+_normParamType(def.type)+(Array.isArray(def.values)&&def.values.length?'  values: '+def.values.map(_stringifyParamValue).join(', '):'');
+        rows.appendChild(note);
+    });
+}
+function _collectTopLevelParameters(){
+    const out={};
+    document.querySelectorAll('[data-param-name]').forEach(function(control){
+        const name=(control.getAttribute('data-param-name')||'').trim();
+        if(!name)return;
+        const t=_normParamType(control.getAttribute('data-param-type')||'string');
+        const hasDefault=control.getAttribute('data-param-has-default')==='true';
+        const defaultRaw=control.getAttribute('data-param-default')||'';
+        let value;
+        if(control.type==='checkbox'){
+            value=!!control.checked;
+            const defaultBool=hasDefault?_asBool(defaultRaw):false;
+            if(!hasDefault&&!value)return;
+            if(hasDefault&&value===defaultBool)return;
+            out[name]=value;
+            return;
+        }
+        const raw=String(control.value||'');
+        const trimmed=raw.trim();
+        if(trimmed===''){
+            if(!hasDefault)return;
+            if(defaultRaw==='')return;
+        }
+        if(hasDefault&&trimmed===defaultRaw)return;
+        if(t==='number'){
+            const n=Number(trimmed);
+            value=Number.isFinite(n)?n:trimmed;
+        }else if(t==='boolean'){
+            value=_asBool(trimmed);
+        }else{
+            value=trimmed;
+        }
+        out[name]=value;
+    });
+    return out;
+}
+function _collectSelectedStages(){
+    const unique=new Set();
+    document.querySelectorAll('.stage-cb:checked').forEach(function(cb){
+        const name=String((cb && cb.dataset && cb.dataset.name) || '').trim();
+        if(name)unique.add(name);
+    });
+    return Array.from(unique);
+}
+function syncSelectAllStages(){
+    const master=document.getElementById('selectAllStages');
+    const stageCheckboxes=Array.from(document.querySelectorAll('.stage-cb'));
+    if(!master)return;
+    if(!stageCheckboxes.length){
+        master.checked=false;
+        master.indeterminate=false;
+        return;
+    }
+    const checkedCount=stageCheckboxes.filter(cb=>cb.checked).length;
+    master.checked=checkedCount===stageCheckboxes.length;
+    master.indeterminate=checkedCount>0&&checkedCount<stageCheckboxes.length;
+}
+function onStageSelectionChange(){
+    syncSelectAllStages();
+}
+function toggleAllStages(checked){
+    document.querySelectorAll('.stage-cb').forEach(function(cb){
+        cb.checked=!!checked;
+    });
+    syncSelectAllStages();
+}
+function selectStage(index){
+    window.addEventListener('load',function(){try{renderTopLevelParameters();}catch(e){console.error('[aps] renderTopLevelParameters failed',e);}setTimeout(function(){var l=document.getElementById('pageLoader');if(l)l.style.display='none';var tbtn=document.getElementById('termBtn');if(tbtn)tbtn.style.display='inline-block';expandAll(false);selectStage(0);addVar();addLibVar();syncSelectAllStages();},50);});
+    taskFilter=null;
+    document.querySelectorAll('.sidebar-task-row').forEach(el=>el.classList.remove('active'));
+    document.querySelectorAll('.sidebar-stage').forEach((el,i)=>{el.classList.toggle('active',i===index);});
+    document.querySelectorAll('.stage-content').forEach((el,i)=>{el.classList.toggle('active',i===index);});
+    applyTaskFilter();
+}
+function toggleSidebarStage(event,index){
+    if(event)event.stopPropagation();
+    selectStage(index);
+    toggleCollapse('ssj-'+index,'sst-'+index);
+}
+function toggleSidebarJob(event,bodyId,toggleId){
+    if(event)event.stopPropagation();
+    toggleCollapse(bodyId,toggleId);
+}
+function selectSidebarTask(event,stageIndex,jobIndex,stepIndex){
+    if(event)event.stopPropagation();
+    selectStage(stageIndex);
+    taskFilter={stageIndex,jobIndex,stepIndex};
+    document.querySelectorAll('.sidebar-task-row').forEach(el=>el.classList.remove('active'));
+    if(event&&event.currentTarget)event.currentTarget.classList.add('active');
+    expandResultsForTask(stageIndex,jobIndex);
+    applyTaskFilter();
+}
+function expandResultsForTask(stageIndex,jobIndex){
+    const panel=document.getElementById('resultsPanel');
+    if(!panel)return;
+
+    const stageSel='.res-stage[data-stage-index="'+String(stageIndex)+'"]';
+    const stageEl=panel.querySelector(stageSel);
+    if(!stageEl)return;
+
+    const stageHeader=stageEl.querySelector('.res-stage-hd');
+    const stageBody=stageHeader?stageHeader.nextElementSibling:null;
+    if(stageBody&&stageBody.classList.contains('collapsed')){
+        stageBody.classList.remove('collapsed');
+        const stageTog=stageHeader.querySelector('.res-tog');
+        if(stageTog)stageTog.textContent='▼';
+    }
+
+    const jobSel='.res-job[data-stage-index="'+String(stageIndex)+'"][data-job-index="'+String(jobIndex)+'"]';
+    const jobEl=panel.querySelector(jobSel);
+    if(!jobEl)return;
+
+    const jobHeader=jobEl.querySelector('.res-job-hd');
+    const jobBody=jobHeader?jobHeader.nextElementSibling:null;
+    if(jobBody&&jobBody.classList.contains('collapsed')){
+        jobBody.classList.remove('collapsed');
+        const jobTog=jobHeader.querySelector('.res-tog');
+        if(jobTog)jobTog.textContent='▼';
+    }
+}
+function resetSidebarResults(){
+    document.querySelectorAll('.sidebar-result').forEach(el=>{
+        el.textContent='•';
+        el.classList.remove('succeeded','failed','skipped');
+    });
+}
+function setSidebarResult(id,result){
+    const el=document.getElementById(id);
+    if(!el)return;
+    el.classList.remove('succeeded','failed','skipped');
+    if(result==='Succeeded'){
+        el.textContent='✔';
+        el.classList.add('succeeded');
+        return;
+    }
+    if(result==='Failed'){
+        el.textContent='✖';
+        el.classList.add('failed');
+        return;
+    }
+    if(result==='Skipped'){
+        el.textContent='⦸';
+        el.classList.add('skipped');
+        return;
+    }
+    el.textContent='•';
+}
+function updateSidebarResults(r){
+    if(!r||!Array.isArray(r.stages))return;
+    for(let si=0;si<r.stages.length;si++){
+        const stage=r.stages[si]||{};
+        setSidebarResult('ssr-stage-'+si,stage.result);
+        const jobs=Array.isArray(stage.jobs)?stage.jobs:[];
+        for(let ji=0;ji<jobs.length;ji++){
+            const job=jobs[ji]||{};
+            setSidebarResult('ssr-job-'+si+'-'+ji,job.result);
+            const steps=Array.isArray(job.steps)?job.steps:[];
+            for(let ti=0;ti<steps.length;ti++){
+                const step=steps[ti]||{};
+                setSidebarResult('ssr-task-'+si+'-'+ji+'-'+ti,step.result);
+            }
+        }
+    }
+}
+function applyTaskFilter(){
+    const panel=document.getElementById('resultsPanel');
+    if(!panel)return;
+    const summary=panel.querySelector('.res-summary');
+    const steps=panel.querySelectorAll('.res-step');
+    if(!steps.length)return;
+    if(!taskFilter){
+        panel.querySelectorAll('.res-stage,.res-job,.res-step').forEach(el=>{el.style.display='';});
+        document.querySelectorAll('.job-item').forEach(el=>{el.style.display='';});
+        if(summary)summary.style.display='';
+        return;
+    }
+    const s=String(taskFilter.stageIndex),j=String(taskFilter.jobIndex),t=String(taskFilter.stepIndex);
+    steps.forEach(el=>{
+        const show=el.getAttribute('data-stage-index')===s&&el.getAttribute('data-job-index')===j&&el.getAttribute('data-step-index')===t;
+        el.style.display=show?'':'none';
+    });
+    panel.querySelectorAll('.res-stage').forEach(stageEl=>{
+        const stageIdx=stageEl.getAttribute('data-stage-index');
+        const matchesStage=stageIdx===s;
+        stageEl.style.display=matchesStage?'':'none';
+    });
+    panel.querySelectorAll('.res-job').forEach(jobEl=>{
+        const stageIdx=jobEl.getAttribute('data-stage-index');
+        const jobIdx=jobEl.getAttribute('data-job-index');
+        const matchesJob=stageIdx===s&&jobIdx===j;
+        jobEl.style.display=matchesJob?'':'none';
+    });
+    document.querySelectorAll('.job-item').forEach(el=>{el.style.display='none';});
+    if(summary)summary.style.display='none';
+}
+function toggleSteps(id){const el=document.getElementById(id);if(!el)return;el.classList.toggle('collapsed');}
+function toggleSettingsPanel(){var s=document.getElementById('settingsContent');var p=document.getElementById('settingsPanel');var btn=document.getElementById('settingsToggle');if(!s||!p)return;var c=s.classList.toggle('collapsed');p.classList.toggle('collapsed');btn.textContent=c?'▼ Settings':'▲ Collapse';}
+function showSettings(){var s=document.getElementById('settingsContent');var p=document.getElementById('settingsPanel');var btn=document.getElementById('settingsToggle');if(s)s.classList.remove('collapsed');if(p)p.classList.remove('collapsed');if(btn)btn.textContent='▲ Collapse';}
 function toggleCollapse(id,tid){const el=document.getElementById(id);const t=document.getElementById(tid);if(!el)return;const c=el.classList.toggle('collapsed');if(t)t.classList.toggle('open',!c);}
-function selectAll(v){document.querySelectorAll('.stage-cb').forEach(cb=>cb.checked=v);}
-function expandAll(v){document.querySelectorAll('.jobs-list,.steps-list').forEach(el=>el.classList.toggle('collapsed',!v));document.querySelectorAll('.toggle').forEach(t=>t.classList.toggle('open',v));}
-function addVar(){var id='vr'+(varCount++);var tr=document.createElement('tr');tr.id=id;tr.innerHTML='<td style="width:42%"><input class="var-key" placeholder="key"></td><td style="width:4%;text-align:center;color:#555;font-size:.8em">=</td><td style="width:49%"><input class="var-val" placeholder="value"></td><td><button class="remove-var-btn">&times;</button></td>';tr.querySelector('.remove-var-btn').onclick=function(){document.getElementById(id).remove();};document.getElementById('varRows').appendChild(tr);}
-function addLibVar(){var id='lv'+(libVarCount++);var tr=document.createElement('tr');tr.id=id;tr.innerHTML='<td style="width:30%"><input class="var-key lib-group" placeholder="group"></td><td style="width:30%"><input class="var-key lib-name" placeholder="variable"></td><td style="width:4%;text-align:center;color:#555;font-size:.8em">=</td><td style="width:31%"><input class="var-val lib-val" placeholder="value"></td><td><button class="remove-var-btn">&times;</button></td>';tr.querySelector('.remove-var-btn').onclick=function(){document.getElementById(id).remove();};document.getElementById('libVarRows').appendChild(tr);}
+function expandAll(v){document.querySelectorAll('.steps-list').forEach(el=>el.classList.toggle('collapsed',!v));document.querySelectorAll('.toggle').forEach(t=>t.classList.toggle('open',v));}
+function addVar(){var id='vr'+(varCount++);var tr=document.createElement('tr');tr.id=id;tr.innerHTML='<td style="width:42%"><input class="var-key" placeholder="key"></td><td style="width:4%;text-align:center;color:#555;font-size:.8em">=</td><td style="width:49%"><input class="var-val" placeholder="value"></td><td><button class="remove-var-btn">&times;</button></td>';tr.querySelector('.remove-var-btn').onclick=function(){document.getElementById(id).remove();};var tb=document.getElementById('varRows');if(!tb){tb=document.createElement('tbody');tb.id='varRows';document.querySelector('.vars-table')?.appendChild(tb);}tb.appendChild(tr);}
+function addLibVar(){var id='lv'+(libVarCount++);var tr=document.createElement('tr');tr.id=id;tr.innerHTML='<td style="width:30%"><input class="var-key lib-group" placeholder="group"></td><td style="width:30%"><input class="var-key lib-name" placeholder="variable"></td><td style="width:4%;text-align:center;color:#555;font-size:.8em">=</td><td style="width:31%"><input class="var-val lib-val" placeholder="value"></td><td><button class="remove-var-btn">&times;</button></td>';tr.querySelector('.remove-var-btn').onclick=function(){document.getElementById(id).remove();};var tb=document.getElementById('libVarRows');if(!tb){tb=document.createElement('tbody');tb.id='libVarRows';document.querySelector('.vars-table:nth-of-type(2)')?.appendChild(tb);}tb.appendChild(tr);}
 function _collectLibVars(){var m={};document.querySelectorAll('#libVarRows tr').forEach(function(row){var g=row.querySelector('.lib-group');var n=row.querySelector('.lib-name');var v=row.querySelector('.lib-val');if(g&&n&&v&&g.value.trim()&&n.value.trim()){var gk=g.value.trim();if(!m[gk])m[gk]={};m[gk][n.value.trim()]=v.value.trim();}});return m;}
 function runSimulation(){
   try{
-  const stages=Array.from(document.querySelectorAll('.stage-cb:checked')).map(cb=>cb.dataset.name).filter(Boolean);
+    const stages=_collectSelectedStages();
   const buildCounter=document.getElementById('buildCounter').value;
   const variables={};
-  document.querySelectorAll('#varRows tr').forEach(row=>{const k=row.querySelector('.var-key');const v=row.querySelector('.var-val');if(k&&v&&k.value.trim()&&v.value.trim())variables[k.value.trim()]=v.value.trim();});
+  var tb=document.getElementById('varRows');if(tb){tb.querySelectorAll('tr').forEach(row=>{const k=row.querySelector('.var-key');const v=row.querySelector('.var-val');if(k&&v&&k.value.trim()&&v.value.trim())variables[k.value.trim()]=v.value.trim();});}
   if(document.getElementById('debugMode').checked)variables['System.Debug']='true';
   const buildReason=document.getElementById('buildReason').value;if(buildReason)variables['Build.Reason']=buildReason;
   const sourceBranch=document.getElementById('sourceBranch').value.trim();if(sourceBranch){variables['Build.SourceBranch']=sourceBranch;const sbn=sourceBranch.replace(/^refs\\/heads\\//,'');variables['Build.SourceBranchName']=sbn!==sourceBranch?sbn:sourceBranch.split('/').pop()||sourceBranch;}
   document.getElementById('runBtn').disabled=true;
   document.getElementById('termBtn').disabled=true;
   document.getElementById('statusMsg').textContent='';
-  document.getElementById('resultsPanel').innerHTML='<div class="sim-loading"><div class="sim-spinner"></div><span>Running simulation\u2026</span></div>';
-  var ss=document.getElementById('stagesSection');var st=document.getElementById('stagesToggle');if(ss){ss.classList.add('collapsed');if(st)st.innerHTML='&#9660; Stages to Run';}
+    var ob=document.getElementById('browserBtn');if(ob)ob.style.display='none';
+    resetSidebarResults();
+  document.getElementById('resultsPanel').innerHTML='<div class="sim-loading"><div class="sim-spinner"></div><span>Running simulation…</span></div>';
+    var rb=document.getElementById('renderBody');if(rb)rb.classList.remove('hidden');
+  var s=document.getElementById('settingsContent');if(s){s.classList.add('collapsed');document.getElementById('settingsPanel').classList.add('collapsed');var btn=document.getElementById('settingsToggle');if(btn)btn.innerHTML='&#9660; Settings';}
+  var bb=document.getElementById('backBtn');if(bb)bb.style.display='inline-block';
   const libVars=_collectLibVars();
-  vscode.postMessage({command:'runSimulation',stages,buildCounter,variables,libraryVariables:libVars});
-  }catch(e){console.error('[aps] runSimulation error',e);document.getElementById('resultsPanel').innerHTML='';document.getElementById('statusMsg').textContent='\u26a0 JS error: '+String(e);document.getElementById('runBtn').disabled=false;document.getElementById('termBtn').disabled=false;}
+    const parameters=_collectTopLevelParameters();
+    vscode.postMessage({command:'runSimulation',stages,buildCounter,variables,libraryVariables:libVars,parameters});
+  }catch(e){console.error('[aps] runSimulation error',e);document.getElementById('resultsPanel').innerHTML='';document.getElementById('statusMsg').textContent='⚠ JS error: '+String(e);document.getElementById('runBtn').disabled=false;document.getElementById('termBtn').disabled=false;}
 }
 function runInTerminal(){
-  const stages=Array.from(document.querySelectorAll('.stage-cb:checked')).map(cb=>cb.dataset.name).filter(Boolean);
+    const stages=_collectSelectedStages();
   const buildCounter=document.getElementById('buildCounter').value;
   const variables={};
-  document.querySelectorAll('#varRows tr').forEach(row=>{const k=row.querySelector('.var-key');const v=row.querySelector('.var-val');if(k&&v&&k.value.trim()&&v.value.trim())variables[k.value.trim()]=v.value.trim();});
+  var tb=document.getElementById('varRows');if(tb){tb.querySelectorAll('tr').forEach(row=>{const k=row.querySelector('.var-key');const v=row.querySelector('.var-val');if(k&&v&&k.value.trim()&&v.value.trim())variables[k.value.trim()]=v.value.trim();});}
   if(document.getElementById('debugMode').checked)variables['System.Debug']='true';
   const buildReason2=document.getElementById('buildReason').value;if(buildReason2)variables['Build.Reason']=buildReason2;
   const sourceBranch2=document.getElementById('sourceBranch').value.trim();if(sourceBranch2){variables['Build.SourceBranch']=sourceBranch2;const sbn2=sourceBranch2.replace(/^refs\\/heads\\//,'');variables['Build.SourceBranchName']=sbn2!==sourceBranch2?sbn2:sourceBranch2.split('/').pop()||sourceBranch2;}
   document.getElementById('runBtn').disabled=true;
   document.getElementById('termBtn').disabled=true;
   document.getElementById('statusMsg').textContent='';
-  document.getElementById('resultsPanel').innerHTML='<div class="sim-loading"><div class="sim-spinner"></div><span>Running in terminal\u2026</span></div>';
-  var ss=document.getElementById('stagesSection');var st=document.getElementById('stagesToggle');if(ss){ss.classList.add('collapsed');st.innerHTML='&#9660; Stages to Run';}
-  vscode.postMessage({command:'runInTerminal',stages,buildCounter,variables,libraryVariables:_collectLibVars()});
+    var ob2=document.getElementById('browserBtn');if(ob2)ob2.style.display='none';
+    resetSidebarResults();
+  document.getElementById('resultsPanel').innerHTML='<div class="sim-loading"><div class="sim-spinner"></div><span>Running in terminal…</span></div>';
+    var rb2=document.getElementById('renderBody');if(rb2)rb2.classList.remove('hidden');
+  var s=document.getElementById('settingsContent');if(s){s.classList.add('collapsed');document.getElementById('settingsPanel').classList.add('collapsed');var btn=document.getElementById('settingsToggle');if(btn)btn.innerHTML='&#9660; Settings';}
+    const parameters=_collectTopLevelParameters();
+    vscode.postMessage({command:'runInTerminal',stages,buildCounter,variables,libraryVariables:_collectLibVars(),parameters});
 }
 function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
-function toggleStagesSection(){var s=document.getElementById('stagesSection');var btn=document.getElementById('stagesToggle');if(!s)return;var c=s.classList.toggle('collapsed');btn.innerHTML=c?'&#9660; Stages to Run':'&#9650; Collapse';}
 function toggleRes(hd){var body=hd.nextElementSibling;if(!body)return;var c=body.classList.toggle('collapsed');var t=hd.querySelector('.res-tog');if(t)t.textContent=c?'\u25b6':'\u25bc';}
-function openResultsInBrowser(){var el=document.getElementById('resultsPanel');if(!el||!el.querySelector('.res-wrap'))return;var styleEl=document.getElementById('mainStyle');var css=styleEl?styleEl.textContent:'';var clone=el.cloneNode(true);var btn=clone.querySelector('.res-browser-btn');if(btn)btn.remove();var ts="document.addEventListener('click',function(e){var hd=e.target.closest('.res-collapsible');if(!hd)return;var bd=hd.nextElementSibling;if(!bd)return;var c=bd.classList.toggle('collapsed');var t=hd.querySelector('.res-tog');if(t)t.textContent=c?'\u25b6':'\u25bc';});";vscode.postMessage({command:'openResultsInBrowser',html:'<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Simulation Results</title><style>'+css+'</style></head><body><div class="body">'+clone.innerHTML+'</div><scr'+'ipt>'+ts+'<\/scr'+'ipt></body></html>'});}
+function openResultsInBrowser(){
+    var results=document.getElementById('resultsPanel');
+    var sidebar=document.querySelector('.sidebar');
+    if(!results||!results.querySelector('.res-wrap')||!sidebar)return;
+    var styleEl=document.getElementById('mainStyle');
+    var css=styleEl?styleEl.textContent:'';
+    var resultsClone=results.cloneNode(true);
+    var sidebarClone=sidebar.cloneNode(true);
+    var btn=resultsClone.querySelector('.res-browser-btn');
+    if(btn)btn.remove();
+    sidebarClone.querySelectorAll('[onclick]').forEach(function(el){el.removeAttribute('onclick');});
+
+    var extraCss='body{height:auto;min-height:100vh;overflow:auto}.main-container{height:auto;min-height:100vh;overflow:visible}.sidebar,.body{overflow:visible}.export-content{flex:1;padding:16px 20px}.export-title{padding:14px 20px;border-bottom:2px solid #555;background:#2d2d30;color:#e8e8e8;font-size:1.05em;font-weight:600}';
+
+    var exportScript='(' + function () {
+        function expandResultsForTask(stageIndex, jobIndex) {
+            var panel = document.querySelector('.export-content');
+            if (!panel) return;
+
+            var stage = panel.querySelector('.res-stage[data-stage-index="' + stageIndex + '"]');
+            if (stage) {
+                var stageHeader = stage.querySelector('.res-stage-hd');
+                var stageBody = stageHeader ? stageHeader.nextElementSibling : null;
+                if (stageBody && stageBody.classList.contains('collapsed')) {
+                    stageBody.classList.remove('collapsed');
+                    var stageToggle = stageHeader.querySelector('.res-tog');
+                    if (stageToggle) stageToggle.textContent = '▼';
+                }
+            }
+
+            var job = panel.querySelector(
+                '.res-job[data-stage-index="' + stageIndex + '"][data-job-index="' + jobIndex + '"]'
+            );
+            if (!job) return;
+            var jobHeader = job.querySelector('.res-job-hd');
+            var jobBody = jobHeader ? jobHeader.nextElementSibling : null;
+            if (jobBody && jobBody.classList.contains('collapsed')) {
+                jobBody.classList.remove('collapsed');
+                var jobToggle = jobHeader.querySelector('.res-tog');
+                if (jobToggle) jobToggle.textContent = '▼';
+            }
+        }
+
+        function applyTaskFilter(filter) {
+            var panel = document.querySelector('.export-content');
+            if (!panel) return;
+            var summary = panel.querySelector('.res-summary');
+            var steps = panel.querySelectorAll('.res-step');
+            if (!steps.length) return;
+
+            if (!filter) {
+                panel.querySelectorAll('.res-stage,.res-job,.res-step').forEach(function (el) {
+                    el.style.display = '';
+                });
+                if (summary) summary.style.display = '';
+                return;
+            }
+
+            steps.forEach(function (el) {
+                var show =
+                    el.getAttribute('data-stage-index') === filter.stageIndex &&
+                    el.getAttribute('data-job-index') === filter.jobIndex &&
+                    el.getAttribute('data-step-index') === filter.stepIndex;
+                el.style.display = show ? '' : 'none';
+            });
+
+            panel.querySelectorAll('.res-job').forEach(function (jobEl) {
+                var visible = Array.from(jobEl.querySelectorAll('.res-step')).some(function (step) {
+                    return step.style.display !== 'none';
+                });
+                jobEl.style.display = visible ? '' : 'none';
+            });
+
+            panel.querySelectorAll('.res-stage').forEach(function (stageEl) {
+                var visible = Array.from(stageEl.querySelectorAll('.res-job')).some(function (jobEl) {
+                    return jobEl.style.display !== 'none';
+                });
+                stageEl.style.display = visible ? '' : 'none';
+            });
+
+            if (summary) summary.style.display = 'none';
+        }
+
+        function toggleResultHeader(headerEl) {
+            var body = headerEl.nextElementSibling;
+            if (!body) return;
+            var collapsed = body.classList.toggle('collapsed');
+            var toggle = headerEl.querySelector('.res-tog');
+            if (toggle) toggle.textContent = collapsed ? '▶' : '▼';
+        }
+
+        document.querySelectorAll('.res-collapsible').forEach(function (headerEl) {
+            headerEl.addEventListener('click', function () {
+                toggleResultHeader(headerEl);
+            });
+        });
+
+        document.querySelectorAll('.sidebar-task-row').forEach(function (taskRow) {
+            taskRow.addEventListener('click', function () {
+                document.querySelectorAll('.sidebar-task-row').forEach(function (el) {
+                    el.classList.remove('active');
+                });
+                taskRow.classList.add('active');
+
+                var filter = {
+                    stageIndex: String(taskRow.getAttribute('data-stage-index') || ''),
+                    jobIndex: String(taskRow.getAttribute('data-job-index') || ''),
+                    stepIndex: String(taskRow.getAttribute('data-step-index') || ''),
+                };
+
+                expandResultsForTask(filter.stageIndex, filter.jobIndex);
+                applyTaskFilter(filter);
+            });
+        });
+
+        document.querySelectorAll('.sidebar-stage-header').forEach(function (stageHeader) {
+            stageHeader.addEventListener('click', function () {
+                var stageWrap = stageHeader.parentElement;
+                if (!stageWrap) return;
+                document.querySelectorAll('.sidebar-task-row').forEach(function (el) {
+                    el.classList.remove('active');
+                });
+                applyTaskFilter(null);
+                var stageBody = stageWrap.querySelector('.sidebar-stage-jobs');
+                if (!stageBody) return;
+                var collapsed = stageBody.classList.toggle('collapsed');
+                var stageToggle = stageHeader.querySelector('.sidebar-toggle');
+                if (stageToggle) stageToggle.classList.toggle('open', !collapsed);
+            });
+        });
+
+        document.querySelectorAll('.sidebar-job-header').forEach(function (jobHeader) {
+            jobHeader.addEventListener('click', function () {
+                var jobWrap = jobHeader.parentElement;
+                if (!jobWrap) return;
+                var jobBody = jobWrap.querySelector('.sidebar-job-steps');
+                if (!jobBody) return;
+                var collapsed = jobBody.classList.toggle('collapsed');
+                var jobToggle = jobHeader.querySelector('.sidebar-toggle');
+                if (jobToggle) jobToggle.classList.toggle('open', !collapsed);
+            });
+        });
+    }.toString() + ')();';
+
+    vscode.postMessage({
+        command:'openResultsInBrowser',
+        html:'<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Simulation Results</title><style>'+css+extraCss+'</style></head><body><div class="export-title">Pipeline Simulation Results</div><div class="main-container">'+sidebarClone.outerHTML+'<div class="export-content">'+resultsClone.innerHTML+'</div></div><scr'+'ipt>'+exportScript+'<\/scr'+'ipt></body></html>'
+    });
+}
 function renderResults(r){
   const panel=document.getElementById('resultsPanel');
   const ICON={Succeeded:'\u2714',Failed:'\u2716',Skipped:'\u29d8'};
   const COL={Succeeded:'#4ec94e',Failed:'#f47174',Skipped:'#c8a84b'};
-  let html='<div class="res-wrap"><div style="text-align:right;margin-bottom:8px"><button class="res-browser-btn">&#127760; Open in Browser</button></div>';
-  for(const stage of r.stages){
+    let html='<div class="res-wrap">';
+    for(let si=0;si<r.stages.length;si++){
+        const stage=r.stages[si];
     const sn=escHtml(stage.displayName||stage.stage);
-    html+='<div class="res-stage"><div class="res-stage-hd res-collapsible">'+sn+'<span class="res-tog">\u25b6</span></div><div class="res-body collapsed">';
-    for(const job of stage.jobs){
+        html+='<div class="res-stage" data-stage-index="'+si+'"><div class="res-stage-hd res-collapsible">'+sn+'<span class="res-tog">\u25b6</span></div><div class="res-body collapsed">';
+        for(let ji=0;ji<stage.jobs.length;ji++){
+            const job=stage.jobs[ji];
       const jn=escHtml(job.displayName||job.job);
-      html+='<div class="res-job"><div class="res-job-hd res-collapsible">\u25b6 '+jn+'<span class="res-tog">\u25b6</span></div><div class="res-body collapsed">';
-      for(const step of job.steps){
+            html+='<div class="res-job" data-stage-index="'+si+'" data-job-index="'+ji+'"><div class="res-job-hd res-collapsible">\u25b6 '+jn+'<span class="res-tog">\u25b6</span></div><div class="res-body collapsed">';
+            for(let ti=0;ti<job.steps.length;ti++){
+                const step=job.steps[ti];
         const res=step.result||'Skipped';
         const icon=ICON[res]||'?';
         const col=COL[res]||'#888';
-        html+='<div class="res-step"><span class="res-icon" style="color:'+col+'">'+icon+'</span><span class="res-step-name">'+escHtml(step.displayName||'')+'</span>';
+                html+='<div class="res-step" data-stage-index="'+si+'" data-job-index="'+ji+'" data-step-index="'+ti+'"><span class="res-icon" style="color:'+col+'">'+icon+'</span><span class="res-step-name">'+escHtml(step.displayName||'')+'</span>';
         if(step.stdout&&step.stdout.trim()){
           const lines=step.stdout.split('\\n').filter(l=>l.trim()&&!l.startsWith('##vso[')).map(l=>'<div>'+escHtml(l)+'</div>').join('');
           html+='<div class="res-out">'+lines+'</div>';
         }
+                if(step.stderr&&step.stderr.trim()){
+                    const errLines=step.stderr.split('\\n').filter(l=>l.trim()).map(l=>'<div><span class="res-vk">[stderr]</span> '+escHtml(l)+'</div>').join('');
+                    html+='<div class="res-out">'+errLines+'</div>';
+                }
         const ov=Object.entries(step.outputVariables||{});
         const lv=Object.entries(step.variables||{}).filter(([k])=>!step.outputVariables||!(k in step.outputVariables));
         if(ov.length||lv.length){
@@ -517,21 +1145,29 @@ function renderResults(r){
   html+='<div class="res-summary"><span style="color:#4ec94e">\u2714 '+r.totalPassed+' passed</span>  <span style="color:#f47174">\u2716 '+r.totalFailed+' failed</span>  <span style="color:#c8a84b">\u29d8 '+r.totalSkipped+' skipped</span>  <span style="color:#888">'+total+' total</span></div>';
   html+='</div>';
   panel.innerHTML=html;
+        var browserBtn=document.getElementById('browserBtn');if(browserBtn)browserBtn.style.display='inline-block';
+    panel.querySelectorAll('.res-body.collapsed').forEach(function(el){el.classList.remove('collapsed');});
+    panel.querySelectorAll('.res-tog').forEach(function(el){el.textContent='\u25bc';});
+        updateSidebarResults(r);
+        if(taskFilter){
+                expandResultsForTask(taskFilter.stageIndex,taskFilter.jobIndex);
+        }
+    applyTaskFilter();
   panel.scrollIntoView({behavior:'smooth',block:'start'});
 }
 document.getElementById('resultsPanel').addEventListener('click',function(e){
-  if(e.target.closest('.res-browser-btn')){openResultsInBrowser();return;}
   var hd=e.target.closest('.res-collapsible');if(!hd)return;
   var body=hd.nextElementSibling;if(!body)return;
   var c=body.classList.toggle('collapsed');
   var t=hd.querySelector('.res-tog');if(t)t.textContent=c?'\u25b6':'\u25bc';
 });
 requestAnimationFrame(function(){requestAnimationFrame(function(){var l=document.getElementById('pageLoader');if(l)l.remove();});});
+renderTopLevelParameters();
 window.addEventListener('message',e=>{
   const d=e.data;
   if(d.command==='simulationStarted'){document.getElementById('runBtn').disabled=false;document.getElementById('termBtn').disabled=false;}
   else if(d.command==='simulationResults'){document.getElementById('runBtn').disabled=false;document.getElementById('termBtn').disabled=false;renderResults(d.results);}
-  else if(d.command==='simulationError'){document.getElementById('resultsPanel').innerHTML='';document.getElementById('statusMsg').textContent='\u26a0 '+d.error;document.getElementById('runBtn').disabled=false;document.getElementById('termBtn').disabled=false;}
+    else if(d.command==='simulationError'){document.getElementById('resultsPanel').innerHTML='';document.getElementById('statusMsg').textContent='\u26a0 '+d.error;document.getElementById('runBtn').disabled=false;document.getElementById('termBtn').disabled=false;var browserBtn=document.getElementById('browserBtn');if(browserBtn)browserBtn.style.display='none';}
 });
 <\/script>
 </body></html>`;
@@ -1370,7 +2006,9 @@ function activate(context) {
             const azureCompatible = options.azureCompatible !== undefined ? options.azureCompatible : false;
 
             const resourceLocations =
-                resourceOverrides && resourceOverrides.repositories && typeof resourceOverrides.repositories === 'object'
+                resourceOverrides &&
+                resourceOverrides.repositories &&
+                typeof resourceOverrides.repositories === 'object'
                     ? Object.fromEntries(
                           Object.entries(resourceOverrides.repositories)
                               .map(([alias, entry]) => [alias, entry && entry.location])
@@ -2515,13 +3153,14 @@ ${mermaidDiagram
         const skipSyntaxCheck = config.get('expansion.skipSyntaxCheck', false);
         const resourceOverrides = buildResourceOverridesForDocument(document);
         const rootDirectoryOverride = buildRootDirectoryOverrideForDocument(document);
-                const resourceLocations = resourceOverrides && resourceOverrides.repositories
-            ? Object.fromEntries(
-                  Object.entries(resourceOverrides.repositories)
-                                            .map(([alias, entry]) => [alias, entry && entry.location])
-                      .filter(([, loc]) => typeof loc === 'string' && loc.trim().length)
-              )
-            : undefined;
+        const resourceLocations =
+            resourceOverrides && resourceOverrides.repositories
+                ? Object.fromEntries(
+                      Object.entries(resourceOverrides.repositories)
+                          .map(([alias, entry]) => [alias, entry && entry.location])
+                          .filter(([, loc]) => typeof loc === 'string' && loc.trim().length)
+                  )
+                : undefined;
 
         const parserOptions = {
             fileName: document.fileName,
@@ -2535,12 +3174,14 @@ ${mermaidDiagram
 
         let stageTree = [];
         let expandedDoc = null;
+        let topLevelParameterDefinitions = [];
         try {
             const simParser = new AzurePipelineParser({ skipSyntax: skipSyntaxCheck });
             const { document: parsedDoc } = simParser.expandPipeline(sourceText, parserOptions);
             expandedDoc = parsedDoc;
             lastExpandedDoc = parsedDoc;
             stageTree = _extractSimulationTree(expandedDoc);
+            topLevelParameterDefinitions = _extractTopLevelParameterDefinitions(simParser, sourceText, skipSyntaxCheck);
         } catch (err) {
             const enhancedError = new Error(formatTemplateExpansionError(document.fileName, err));
             enhancedError.stack = err.stack;
@@ -2592,6 +3233,12 @@ ${mermaidDiagram
                             if (k.trim()) simArgs.push('-v', `${k.trim()}=${String(v).trim()}`);
                         }
                     }
+                    if (message.parameters && typeof message.parameters === 'object') {
+                        for (const [k, v] of Object.entries(message.parameters)) {
+                            if (!k || !k.trim()) continue;
+                            simArgs.push('-p', `${k.trim()}=${String(v).trim()}`);
+                        }
+                    }
                     if (message.libraryVariables && typeof message.libraryVariables === 'object') {
                         for (const [groupName, vars] of Object.entries(message.libraryVariables)) {
                             if (!vars || typeof vars !== 'object') continue;
@@ -2606,8 +3253,15 @@ ${mermaidDiagram
                     if (termResourceOverrides && termResourceOverrides.repositories) {
                         for (const [alias, entry] of Object.entries(termResourceOverrides.repositories)) {
                             const resolvedLocation = entry && entry.location;
-                            if (typeof alias === 'string' && alias.trim() && typeof resolvedLocation === 'string' && resolvedLocation.trim()) {
-                                const repoPath = isWindows ? resolvedLocation.trim() : _toSimulatorPath(resolvedLocation.trim());
+                            if (
+                                typeof alias === 'string' &&
+                                alias.trim() &&
+                                typeof resolvedLocation === 'string' &&
+                                resolvedLocation.trim()
+                            ) {
+                                const repoPath = isWindows
+                                    ? resolvedLocation.trim()
+                                    : _toSimulatorPath(resolvedLocation.trim());
                                 simArgs.push('--repo', `${alias.trim()}=${repoPath}`);
                             }
                         }
@@ -2628,13 +3282,19 @@ ${mermaidDiagram
                     simOutputChannel.show(true);
                     let child;
                     if (isWindows) {
-                        const cliArgs = [bundlePath, ...simArgs].map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(' ');
-                        simOutputChannel.appendLine(`[aps] Reproducing this run from PowerShell/CMD:\n  node ${cliArgs}\n`);
+                        const cliArgs = [bundlePath, ...simArgs]
+                            .map((a) => (/\s/.test(a) ? JSON.stringify(a) : a))
+                            .join(' ');
+                        simOutputChannel.appendLine(
+                            `[aps] Reproducing this run from PowerShell/CMD:\n  node ${cliArgs}\n`
+                        );
                         child = spawn('node', [bundlePath, ...simArgs], {
                             cwd: path.dirname(pipelineFile),
                         });
                     } else {
-                        const cliArgs = [bundlePath, ...simArgs].map((a) => /\s/.test(a) ? JSON.stringify(a) : a).join(' ');
+                        const cliArgs = [bundlePath, ...simArgs]
+                            .map((a) => (/\s/.test(a) ? JSON.stringify(a) : a))
+                            .join(' ');
                         simOutputChannel.appendLine(`[aps] Reproducing this run from a terminal:\n  node ${cliArgs}\n`);
                         child = spawn('node', [bundlePath, ...simArgs], {
                             shell: '/bin/bash',
@@ -2666,7 +3326,9 @@ ${mermaidDiagram
                         }
                     });
                     child.on('close', (code, signal) => {
-                        simOutputChannel.appendLine(`[aps] Simulation process exited with code=${code} signal=${signal || 'none'}`);
+                        simOutputChannel.appendLine(
+                            `[aps] Simulation process exited with code=${code} signal=${signal || 'none'}`
+                        );
                         try {
                             if (fs.existsSync(jsonReadPath)) {
                                 const results = JSON.parse(fs.readFileSync(jsonReadPath, 'utf8'));
@@ -2694,27 +3356,45 @@ ${mermaidDiagram
                 }
                 if (message.command === 'openResultsInBrowser') {
                     try {
+                        const html = String(message.html || '');
                         const os = require('os');
+                        const { spawn } = require('child_process');
                         const tempFile = path.join(os.tmpdir(), `pipeline-sim-results-${Date.now()}.html`);
-                        fs.writeFileSync(tempFile, message.html);
-                        await vscode.env.openExternal(vscode.Uri.file(tempFile));
+                        fs.writeFileSync(tempFile, html, 'utf8');
+
+                        let openedExternally = false;
+                        try {
+                            openedExternally = await vscode.env.openExternal(vscode.Uri.file(tempFile));
+                        } catch (_) {
+                            openedExternally = false;
+                        }
+
+                        if (!openedExternally) {
+                            // Fallback to OS opener when VS Code external open API fails.
+                            if (process.platform === 'win32') {
+                                spawn('cmd.exe', ['/c', 'start', '', tempFile], {
+                                    detached: true,
+                                    stdio: 'ignore',
+                                }).unref();
+                                openedExternally = true;
+                            } else if (process.platform === 'darwin') {
+                                spawn('open', [tempFile], { detached: true, stdio: 'ignore' }).unref();
+                                openedExternally = true;
+                            } else {
+                                spawn('xdg-open', [tempFile], { detached: true, stdio: 'ignore' }).unref();
+                                openedExternally = true;
+                            }
+                        }
+
+                        if (!openedExternally) {
+                            throw new Error('Unable to open results in an external browser.');
+                        }
                     } catch (err) {
                         vscode.window.showErrorMessage(`Failed to open results in browser: ${err.message}`);
                     }
                     return;
                 }
                 if (message.command !== 'runSimulation') return;
-
-                const docToSimulate = lastExpandedDoc;
-                if (!docToSimulate) {
-                    if (simulationPanel && simulationPanel.webview) {
-                        simulationPanel.webview.postMessage({
-                            command: 'simulationError',
-                            error: 'No expanded pipeline document available. Re-open the simulation view.',
-                        });
-                    }
-                    return;
-                }
 
                 const stages = Array.isArray(message.stages) && message.stages.length ? message.stages : undefined;
                 const counter = parseInt(message.buildCounter, 10);
@@ -2727,8 +3407,19 @@ ${mermaidDiagram
                     }
                 }
 
-                const libVarsFromMessage = message.libraryVariables && typeof message.libraryVariables === 'object'
-                    ? message.libraryVariables : {};
+                const libVarsFromMessage =
+                    message.libraryVariables && typeof message.libraryVariables === 'object'
+                        ? message.libraryVariables
+                        : {};
+
+                const topLevelParameterOverrides = {};
+                if (message.parameters && typeof message.parameters === 'object') {
+                    for (const [key, value] of Object.entries(message.parameters)) {
+                        const trimmedKey = String(key || '').trim();
+                        if (!trimmedKey) continue;
+                        topLevelParameterOverrides[trimmedKey] = value;
+                    }
+                }
 
                 if (simulationPanel && simulationPanel.webview) {
                     simulationPanel.webview.postMessage({ command: 'simulationStarted' });
@@ -2750,9 +3441,20 @@ ${mermaidDiagram
                         .getConfiguration('azurePipelineStudio', document.uri)
                         .get('simulation.executablePaths', {});
                     const simDistroMatch = document.fileName.match(/^\\\\wsl\.localhost\\([^\\]+)/i);
-                    const wslMountRoot = process.platform === 'win32' && simDistroMatch
-                        ? `\\\\wsl.localhost\\${simDistroMatch[1]}`
-                        : null;
+                    const wslMountRoot =
+                        process.platform === 'win32' && simDistroMatch
+                            ? `\\\\wsl.localhost\\${simDistroMatch[1]}`
+                            : null;
+
+                    const simParser = new AzurePipelineParser({ skipSyntax: skipSyntaxCheck });
+                    const simParserOptions = {
+                        ...parserOptions,
+                        ...(Object.keys(topLevelParameterOverrides).length
+                            ? { parameters: topLevelParameterOverrides }
+                            : {}),
+                    };
+                    const { document: docToSimulate } = simParser.expandPipeline(sourceText, simParserOptions);
+                    lastExpandedDoc = docToSimulate;
 
                     simOutputChannel.appendLine(`[aps] calling runPipelineSimulation...`);
                     const results = runPipelineSimulation(docToSimulate, {
@@ -2765,7 +3467,9 @@ ${mermaidDiagram
                         executablePaths: execPaths,
                         wslMountRoot,
                     });
-                    simOutputChannel.appendLine(`[aps] simulation complete — passed=${results.totalPassed} failed=${results.totalFailed} skipped=${results.totalSkipped}`);
+                    simOutputChannel.appendLine(
+                        `[aps] simulation complete — passed=${results.totalPassed} failed=${results.totalFailed} skipped=${results.totalSkipped}`
+                    );
                     if (simulationPanel && simulationPanel.webview) {
                         simulationPanel.webview.postMessage({ command: 'simulationResults', results });
                     }
@@ -2782,7 +3486,11 @@ ${mermaidDiagram
             });
         }
 
-        simulationPanel.webview.html = _generateSimulationViewHtml(stageTree, document.fileName);
+        simulationPanel.webview.html = _generateSimulationViewHtml(
+            stageTree,
+            document.fileName,
+            topLevelParameterDefinitions
+        );
     };
 
     const showSimulationViewDisposable = vscode.commands.registerCommand(
@@ -3348,6 +4056,7 @@ function runCli(args) {
         '  -o, --output <file>          Write output to file (default: in-place, only with single file)\n' +
         '  -r, --repo <alias=path>      Map repository alias to local path\n' +
         '  -v, --variables <key=value>  Set compile-time variables (e.g., Build.Reason=Manual)\n' +
+        '  -p, --parameter <name=value> Set top-level template parameter override for expansion\n' +
         '  -l, --library-variable <group.variable=value>  Set ADO library variable values for simulation\n' +
         '  -L, --library-variables-file <file>            Load ADO library variable groups from YAML file\n' +
         '  -f, --format-option <key=value>  Set format option (e.g., indent=4)\n' +
@@ -3392,6 +4101,7 @@ function runCli(args) {
             'format-recursive',
             'extension',
             'variables',
+            'parameter',
             'mock-catalog',
             'library-variable',
             'library-variables-file',
@@ -3410,6 +4120,7 @@ function runCli(args) {
             R: 'format-recursive',
             e: 'extension',
             v: 'variables',
+            p: 'parameter',
             l: 'library-variable',
             L: 'library-variables-file',
             x: 'expand-templates',
@@ -3446,6 +4157,8 @@ function runCli(args) {
         'r',
         'variables',
         'v',
+        'parameter',
+        'p',
         'format-option',
         'f',
         'format-recursive',
@@ -3509,6 +4222,7 @@ function runCli(args) {
         args.includes('-R') || args.includes('--format-recursive') || formatRecursiveRaw === true;
 
     const { map: variablesMap, errors: variableErrors } = parseKeyValue(toArray(argv.variables), 'variable');
+    const { map: parameterMap, errors: parameterErrors } = parseKeyValue(toArray(argv.parameter), 'parameter');
     const { map: repoMap, errors: repoErrors } = parseKeyValue(toArray(argv.repo), 'repository mapping');
     const { map: executablePaths } = parseKeyValue(toArray(argv.exe), 'executable path');
     const repositoryEntries = Object.entries(repoMap).map(([alias, path]) => ({ alias, path }));
@@ -3572,7 +4286,13 @@ function runCli(args) {
         .filter((entry) => !entry.includes('='))
         .map((entry) => `Invalid format option "${entry}". Expected format "key=value".`);
 
-    const allErrors = [...repoErrors, ...variableErrors, ...formatOptionErrors, ...libraryVariableErrors];
+    const allErrors = [
+        ...repoErrors,
+        ...variableErrors,
+        ...parameterErrors,
+        ...formatOptionErrors,
+        ...libraryVariableErrors,
+    ];
     if (allErrors.length) {
         allErrors.forEach((message) => console.error(message));
         failWithUsage();
@@ -3668,6 +4388,9 @@ function runCli(args) {
         }
         if (cliVariables) {
             simulateParserOptions.variables = effectiveCliVariables;
+        }
+        if (Object.keys(parameterMap).length) {
+            simulateParserOptions.parameters = parameterMap;
         }
 
         let mockCatalog = {};

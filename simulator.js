@@ -192,13 +192,32 @@ class PipelineSimulator {
         // stageDeps accumulates stageDependencies.* keys from completed stages
         // so that downstream stages can resolve $[ stageDependencies.S.J.outputs['...'] ].
         const stageDeps = {};
+        const stageResultsByName = {};
 
         for (const stageDoc of stageOrdering.ordered) {
+            const stageName = stageDoc.stage || 'Stage';
+            const stageDependencies = this._normalizeDependsOn(stageDoc.dependsOn);
+            const nonSucceededStageDependencies = stageDependencies.filter((dependencyName) => {
+                const dependencyResult = stageResultsByName[dependencyName];
+                return dependencyResult !== undefined && dependencyResult !== 'Succeeded';
+            });
+
+            if (
+                nonSucceededStageDependencies.length > 0 &&
+                !this._conditionAllowsFailedDependencies(stageDoc.condition)
+            ) {
+                const stageResult = this._buildSkippedStageResult(stageDoc);
+                results.stages.push(stageResult);
+                stageResultsByName[stageResult.stage] = stageResult.result;
+                continue;
+            }
+
             // Merge stageDeps into the base variables so each stage sees prior outputs.
             // User-supplied -v overrides (already in initialVariables) take precedence.
             const stageVars = { ...initialVariables, ...stageDeps };
             const stageResult = this._runStage(stageDoc, stageVars, options);
             results.stages.push(stageResult);
+            stageResultsByName[stageResult.stage] = stageResult.result;
 
             // Publish this stage's outputs for subsequent stages.
             const stageResultName = stageResult.stage;
@@ -342,8 +361,45 @@ class PipelineSimulator {
     _resetSimulationWorkspace(variables, workDir) {
         const simulationRoot = this._getSimulationRoot(variables, workDir);
         const jobsRoot = path.join(simulationRoot, 'workspace', 'jobs');
-        fs.rmSync(jobsRoot, { recursive: true, force: true });
+        this._removeDirectoryWithFallback(jobsRoot);
         fs.mkdirSync(jobsRoot, { recursive: true });
+    }
+
+    _removeDirectoryWithFallback(targetDirectory) {
+        let lastError = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+                fs.rmSync(targetDirectory, { recursive: true, force: true });
+                return;
+            } catch (error) {
+                lastError = error;
+                const code = error && error.code;
+                if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'ENOTEMPTY') {
+                    throw error;
+                }
+            }
+        }
+
+        // Last-resort fallback on Windows: keep the root and clear child entries.
+        try {
+            if (!fs.existsSync(targetDirectory)) {
+                return;
+            }
+
+            for (const childName of fs.readdirSync(targetDirectory)) {
+                const childPath = path.join(targetDirectory, childName);
+                fs.rmSync(childPath, { recursive: true, force: true });
+            }
+        } catch (fallbackError) {
+            const fallbackCode = fallbackError && fallbackError.code;
+            if (fallbackCode === 'EPERM' || fallbackCode === 'EBUSY') {
+                const details = lastError && lastError.message ? lastError.message : String(lastError || 'unknown');
+                throw new Error(
+                    `Unable to reset simulation workspace at ${targetDirectory}. A process is locking files in this folder. ${details}`
+                );
+            }
+            throw fallbackError;
+        }
     }
 
     _ensureSimulationDirectories(variables) {
@@ -395,8 +451,24 @@ class PipelineSimulator {
             (jobDoc) => jobDoc.dependsOn,
             'job'
         );
+        const jobResultsByName = {};
 
         for (const jobDoc of jobOrdering.ordered) {
+            const jobName = jobDoc.job || jobDoc.deployment || 'Job';
+            const jobDependencies = this._normalizeDependsOn(jobDoc.dependsOn);
+            const nonSucceededJobDependencies = jobDependencies.filter((dependencyName) => {
+                const dependencyResult = jobResultsByName[dependencyName];
+                return dependencyResult !== undefined && dependencyResult !== 'Succeeded';
+            });
+
+            if (nonSucceededJobDependencies.length > 0 && !this._conditionAllowsFailedDependencies(jobDoc.condition)) {
+                const skippedJobResult = this._buildSkippedJobResult(jobDoc);
+                stageResult.jobs.push(skippedJobResult);
+                jobResultsByName[jobName] = skippedJobResult.result;
+                stageVariables[`dependencies.${jobName}.result`] = skippedJobResult.result;
+                continue;
+            }
+
             const matrixJobs = this._expandMatrixJob(jobDoc, stageVariables);
             for (const { jobDoc: expandedJobDoc, matrixVars, matrixName } of matrixJobs) {
                 const jobVariablesWithMatrix = { ...stageVariables, ...matrixVars };
@@ -412,6 +484,7 @@ class PipelineSimulator {
                 // $[ dependencies.JobName.outputs['stepName.varName'] ].
                 const jobName = jobResult.job;
                 stageVariables[`dependencies.${jobName}.result`] = jobResult.result || 'Succeeded';
+                jobResultsByName[jobName] = jobResult.result || 'Succeeded';
                 for (const [key, value] of Object.entries(jobResult.outputVariables)) {
                     stageVariables[`dependencies.${jobName}.outputs['${key}']`] = value;
                 }
@@ -424,7 +497,60 @@ class PipelineSimulator {
             );
         }
 
+        if (stageResult.jobs.some((jobResult) => jobResult.result === 'Failed')) {
+            stageResult.result = 'Failed';
+        } else if (
+            stageResult.jobs.length > 0 &&
+            stageResult.jobs.every((jobResult) => jobResult.result === 'Skipped')
+        ) {
+            stageResult.result = 'Skipped';
+        } else {
+            stageResult.result = 'Succeeded';
+        }
+
         return stageResult;
+    }
+
+    _conditionAllowsFailedDependencies(condition) {
+        if (!condition || typeof condition !== 'string') return false;
+        const normalizedCondition = condition.toLowerCase().replace(/\s+/g, '');
+        return (
+            normalizedCondition.includes('always()') ||
+            normalizedCondition.includes('failed()') ||
+            normalizedCondition.includes('succeededorfailed()')
+        );
+    }
+
+    _buildSkippedJobResult(jobDoc) {
+        const jobName = jobDoc.job || jobDoc.deployment || 'Job';
+        const steps = Array.isArray(jobDoc.steps) ? jobDoc.steps : [];
+        return {
+            job: jobName,
+            displayName: jobDoc.displayName || jobName,
+            result: 'Skipped',
+            outputVariables: {},
+            steps: steps.map((stepDoc) => ({
+                displayName: stepDoc.displayName || 'Step',
+                stepName: stepDoc.name || null,
+                result: 'Skipped',
+                variables: {},
+                outputVariables: {},
+                stdout: '',
+                stderr: '',
+                exitCode: 0,
+            })),
+        };
+    }
+
+    _buildSkippedStageResult(stageDoc) {
+        const stageName = stageDoc.stage || 'Stage';
+        const jobs = Array.isArray(stageDoc.jobs) ? stageDoc.jobs : [];
+        return {
+            stage: stageName,
+            displayName: stageDoc.displayName || stageName,
+            result: 'Skipped',
+            jobs: jobs.map((jobDoc) => this._buildSkippedJobResult(jobDoc)),
+        };
     }
 
     _orderByDependencies(items, getName, getDependsOn, kindLabel) {
@@ -694,7 +820,13 @@ class PipelineSimulator {
             }
 
             const stepEnv = this._resolveStepEnv(stepDoc.env, variables);
+            const executionStart = Date.now();
+            console.log(`[sim-exec] START shell=${shell} step="${displayName}" cwd=${workDir}`);
             const run = this._executeScript(shell, substituted, variables, workDir, stepEnv);
+            const elapsedMs = Date.now() - executionStart;
+            console.log(
+                `[sim-exec] END shell=${shell} step="${displayName}" exit=${run.exitCode} durationMs=${elapsedMs}`
+            );
             const outputText = `${run.stdout || ''}\n${run.stderr || ''}`;
             const ignoreCoverageConversionFailure =
                 run.exitCode !== 0 &&
@@ -761,7 +893,13 @@ class PipelineSimulator {
             if (nativeShell && inputs.script !== undefined) {
                 const substituted = this._substituteVariables(String(inputs.script), variables);
                 const stepEnv = this._resolveStepEnv(stepDoc.env, variables);
+                const executionStart = Date.now();
+                console.log(`[sim-exec] START shell=${nativeShell} step="${displayName}" cwd=${workDir}`);
                 const run = this._executeScript(nativeShell, substituted, variables, workDir, stepEnv);
+                const elapsedMs = Date.now() - executionStart;
+                console.log(
+                    `[sim-exec] END shell=${nativeShell} step="${displayName}" exit=${run.exitCode} durationMs=${elapsedMs}`
+                );
                 const outputText = `${run.stdout || ''}\n${run.stderr || ''}`;
                 const ignoreCoverageConversionFailure =
                     run.exitCode !== 0 &&
@@ -1368,6 +1506,8 @@ class PipelineSimulator {
         const ext = shell === 'bash' ? '.sh' : '.ps1';
         const tmpFile = path.join(os.tmpdir(), `aps-sim-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
         let pythonApiShimDir;
+        let keepTmpFile = false;
+        let lastShellInvocation = shell;
 
         try {
             let scriptContent = script;
@@ -1436,14 +1576,39 @@ class PipelineSimulator {
                     '}',
                     '',
                     '# Prefer resolved git path over PATH lookup on Windows bash variants.',
-                    'if [ -n "${APS_TOOL_PATH_GIT_WIN:-}" ]; then',
-                    '    git() { "${APS_TOOL_PATH_GIT_WIN}" "$@"; }',
-                    'elif [ -n "${APS_TOOL_PATH_GIT:-}" ]; then',
-                    '    git() { "${APS_TOOL_PATH_GIT}" "$@"; }',
-                    'fi',
+                    'APS_GIT_BIN="${APS_TOOL_PATH_GIT_WIN:-${APS_TOOL_PATH_GIT:-}}"',
+                    'git() {',
+                    '    if [ -n "$APS_GIT_BIN" ]; then',
+                    '        "$APS_GIT_BIN" "$@"',
+                    '    else',
+                    '        command git "$@"',
+                    '    fi',
+                    '}',
                     '',
                 ].join('\n');
                 scriptContent = preamble + scriptContent;
+
+                // Safety rail: mock remote-mutating update operations so simulation never writes remotely.
+                // This avoids shell wrapper compatibility issues while still blocking commands like `git push`.
+                const remoteUpdateMockRules = [
+                    [/^(\s*)git\s+push\b.*$/gm, '$1echo "[mock-remote-update] git push skipped" >&2'],
+                    [/^(\s*)nuget\s+push\b.*$/gm, '$1echo "[mock-remote-update] nuget push skipped" >&2'],
+                    [
+                        /^(\s*)dotnet\s+nuget\s+push\b.*$/gm,
+                        '$1echo "[mock-remote-update] dotnet nuget push skipped" >&2',
+                    ],
+                    [/^(\s*)npm\s+publish\b.*$/gm, '$1echo "[mock-remote-update] npm publish skipped" >&2'],
+                    [/^(\s*)pnpm\s+publish\b.*$/gm, '$1echo "[mock-remote-update] pnpm publish skipped" >&2'],
+                    [/^(\s*)yarn\s+publish\b.*$/gm, '$1echo "[mock-remote-update] yarn publish skipped" >&2'],
+                    [/^(\s*)twine\s+upload\b.*$/gm, '$1echo "[mock-remote-update] twine upload skipped" >&2'],
+                    [
+                        /^(\s*)az\s+artifacts\s+universal\s+publish\b.*$/gm,
+                        '$1echo "[mock-remote-update] az artifacts universal publish skipped" >&2',
+                    ],
+                ];
+                for (const [pattern, replacement] of remoteUpdateMockRules) {
+                    scriptContent = scriptContent.replace(pattern, replacement);
+                }
 
                 if (this._shouldInjectPythonApiShim(scriptContent)) {
                     pythonApiShimDir = this._createPythonApiShim();
@@ -1529,17 +1694,73 @@ class PipelineSimulator {
                     : tmpFile;
 
             const configuredShell = this.executablePaths[shell];
+            const windowsGitBashCandidates =
+                shell === 'bash' && process.platform === 'win32'
+                    ? [
+                          'C:\\Program Files\\Git\\bin\\bash.exe',
+                          'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
+                          process.env.ProgramFiles
+                              ? path.join(process.env.ProgramFiles, 'Git', 'bin', 'bash.exe')
+                              : null,
+                          process.env['ProgramFiles(x86)']
+                              ? path.join(process.env['ProgramFiles(x86)'], 'Git', 'bin', 'bash.exe')
+                              : null,
+                          process.env.LOCALAPPDATA
+                              ? path.join(process.env.LOCALAPPDATA, 'Programs', 'Git', 'bin', 'bash.exe')
+                              : null,
+                      ].filter(Boolean)
+                    : [];
+            lastShellInvocation = configuredShell || shell;
 
             // tryRun uses the native Windows path by default; pass scriptArgMsys for Git Bash.
-            const tryRun = (shellName, scriptPath = scriptArg) =>
-                spawnSync(shellName, [scriptPath], {
+            const tryRun = (shellName, scriptPath = scriptArg) => {
+                lastShellInvocation = shellName;
+                return spawnSync(shellName, [scriptPath], {
                     env,
                     cwd: effectiveCwd,
                     encoding: 'utf8',
                     timeout: 60000,
                 });
+            };
 
-            let run = tryRun(configuredShell || shell);
+            let run;
+            if (shell === 'bash' && process.platform === 'win32' && !configuredShell) {
+                // Prefer full Git Bash first on Windows because some lightweight bash
+                // variants do not support process substitution (< <(...)) used by templates.
+                run = null;
+                for (const gitBash of windowsGitBashCandidates) {
+                    run = tryRun(gitBash, scriptArgMsys);
+                    if (!run.error || run.error.code !== 'ENOENT') break;
+                }
+                if (!run || (run.error && run.error.code === 'ENOENT')) {
+                    run = tryRun(shell);
+                }
+            } else {
+                run = tryRun(configuredShell || shell);
+            }
+
+            // If the selected bash cannot parse bash-specific syntax (notably process
+            // substitution `< <(...)`), retry once with Git Bash on Windows.
+            const _bashParseErrorPattern =
+                /syntax error:\s*unexpected\s+"?\(|unexpected token\s+`?"?\(|expecting\s+"fi"/i;
+
+            if (
+                shell === 'bash' &&
+                process.platform === 'win32' &&
+                run &&
+                run.status !== 0 &&
+                _bashParseErrorPattern.test(String(run.stderr || ''))
+            ) {
+                for (const gitBash of windowsGitBashCandidates) {
+                    const retried = tryRun(gitBash, scriptArgMsys);
+                    if (retried.error && retried.error.code === 'ENOENT') {
+                        continue;
+                    }
+                    run = retried;
+                    break;
+                }
+            }
+
             if (run.error && run.error.code === 'ENOENT') {
                 if (configuredShell) {
                     // Configured path not found — warn and fall through to the auto-discovery chain.
@@ -1553,20 +1774,7 @@ class PipelineSimulator {
                         if (process.platform === 'win32') {
                             // bash (BusyBox symlink) was already tried above. Fall back to Git Bash
                             // for machines that don't have BusyBox installed.
-                            const gitBashCandidates = [
-                                'C:\\Program Files\\Git\\bin\\bash.exe',
-                                'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
-                                process.env.ProgramFiles
-                                    ? path.join(process.env.ProgramFiles, 'Git', 'bin', 'bash.exe')
-                                    : null,
-                                process.env['ProgramFiles(x86)']
-                                    ? path.join(process.env['ProgramFiles(x86)'], 'Git', 'bin', 'bash.exe')
-                                    : null,
-                                process.env.LOCALAPPDATA
-                                    ? path.join(process.env.LOCALAPPDATA, 'Programs', 'Git', 'bin', 'bash.exe')
-                                    : null,
-                            ].filter(Boolean);
-                            for (const gitBash of gitBashCandidates) {
+                            for (const gitBash of windowsGitBashCandidates) {
                                 run = tryRun(gitBash, scriptArgMsys);
                                 if (!run.error || run.error.code !== 'ENOENT') break;
                             }
@@ -1629,6 +1837,37 @@ class PipelineSimulator {
                 _scriptContent: scriptContent,
             };
             const _exitCode = _result.exitCode;
+            const _lineMatch = /line (\d+):/i.exec(_result.stderr || '');
+            const _isShellParseError = _exitCode !== 0 && _bashParseErrorPattern.test(_result.stderr || '');
+
+            if (_isShellParseError) {
+                keepTmpFile = true;
+                process.stderr.write(
+                    `[aps-parse-error] shell=${lastShellInvocation} tmp=${tmpFile} cwd=${effectiveCwd} configuredShell=${configuredShell || ''}\n`
+                );
+                if (windowsGitBashCandidates.length) {
+                    process.stderr.write(
+                        `[aps-parse-error] gitBashCandidates=${windowsGitBashCandidates.join(' | ')}\n`
+                    );
+                }
+                if (_lineMatch) {
+                    const _errLine = parseInt(_lineMatch[1], 10);
+                    const _scriptLines = scriptContent.split('\n');
+                    const _start = Math.max(0, _errLine - 6);
+                    const _end = Math.min(_scriptLines.length, _errLine + 4);
+                    const _context = _scriptLines
+                        .slice(_start, _end)
+                        .map((line, index) => {
+                            const lineNumber = _start + index + 1;
+                            return `  ${lineNumber}${lineNumber === _errLine ? ' >>>' : '    '} ${line}`;
+                        })
+                        .join('\n');
+                    process.stderr.write(`[aps-parse-error] script around line ${_errLine}:\n${_context}\n`);
+                } else {
+                    process.stderr.write('[aps-parse-error] full script follows:\n' + scriptContent + '\n');
+                }
+            }
+
             if (_debugEnabled) {
                 process.stderr.write(
                     `[aps-debug][_executeScript] exit=${_exitCode} stdout-bytes=${(_result.stdout || '').length} stderr-bytes=${(_result.stderr || '').length}\n`
@@ -1638,7 +1877,6 @@ class PipelineSimulator {
                     process.stderr.write('[aps-debug] stdout(last 20):\n' + _tail(_result.stdout, 20) + '\n');
                     process.stderr.write('[aps-debug] stderr(last 20):\n' + _tail(_result.stderr, 20) + '\n');
                     // Extract line number from error (e.g. "line 16: syntax error") and show that line
-                    const _lineMatch = /line (\d+):/i.exec(_result.stderr || '');
                     if (_lineMatch) {
                         const _errLine = parseInt(_lineMatch[1], 10);
                         const _scriptLines = scriptContent.split('\n');
@@ -1657,9 +1895,11 @@ class PipelineSimulator {
             }
             return _result;
         } finally {
-            try {
-                fs.unlinkSync(tmpFile);
-            } catch (_) {}
+            if (!keepTmpFile) {
+                try {
+                    fs.unlinkSync(tmpFile);
+                } catch (_) {}
+            }
             if (pythonApiShimDir) {
                 try {
                     fs.rmSync(pythonApiShimDir, { recursive: true, force: true });
