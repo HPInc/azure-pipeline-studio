@@ -1536,7 +1536,14 @@ class PipelineSimulator {
                         return '${' + shellName + '}';
                     }
                     // Keep unresolved macros as a literal token (no command substitution).
-                    return `\\$(${trimmed})`;
+                    // Only escape names containing a dot — those are ADO macro references
+                    // (e.g. $(Build.SourcesDirectory)) and are never valid bash commands.
+                    // Names without a dot (e.g. $(pwd), $(date)) may be intentional bash
+                    // command substitutions; Azure leaves them verbatim so bash executes them.
+                    if (trimmed.includes('.')) {
+                        return `\\$(${trimmed})`;
+                    }
+                    return match;
                 });
 
                 // Rewrite bash 5.1+ parameter transformations that BusyBox ash does not support.

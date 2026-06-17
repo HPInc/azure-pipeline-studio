@@ -185,12 +185,15 @@
           "description": "Enable verbose script debugging during pipeline simulation. Logs the script content, exit code, stdout, and stderr for each bash/pwsh step to the Output panel.",
           "type": "boolean"
         },
-        "azurePipelineStudio.simulation.executablePaths": {
+        "azurePipelineStudio.simulation.toolPaths": {
           "additionalProperties": {
-            "type": "string"
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
           },
           "default": {},
-          "description": "Override paths to executables used during pipeline simulation. Keys are tool names (e.g. \"bash\", \"pwsh\") and values are absolute paths to the executable. Example: { \"bash\": \"C:\\\\Users\\\\me\\\\PortableGit\\\\git-bash.exe\" }",
+          "description": "Override paths to executables used during pipeline simulation, keyed by OS. Use a 'windows' or 'linux' sub-object containing tool name \u2192 path entries. Only the block matching the simulation's execution platform is applied. Example: { \"windows\": { \"git\": \"C:\\\\PortableGit\\\\bin\\\\git.exe\" }, \"linux\": { \"pwsh\": \"/usr/bin/pwsh\" } }",
           "type": "object"
         }
       },
@@ -282,5 +285,5 @@
     "test:module": "node tests/test-azure-expressions-module.js"
   },
   "type": "commonjs",
-  "version": "1.3.1"
+  "version": "1.4.0"
 }

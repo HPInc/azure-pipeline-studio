@@ -25,6 +25,9 @@ let activeDependenciesPanel;
 let activeSimulationPanel;
 let lastExpandedDoc = null;
 let simOutputChannel = null;
+let lastSimDocument = null;
+let lastSimSourceText = null;
+let lastSimParserOptions = null;
 let extensionRuntimeGeneration = 0;
 
 const DEFAULT_COMPILE_TIME_VARIABLES = Object.freeze({
@@ -220,6 +223,69 @@ function _extractTopLevelParameterDefinitions(parser, sourceText, skipSyntaxChec
 }
 
 /**
+ * Resolves executable path overrides for the current simulation OS context.
+ * Merges base-level entries with the appropriate OS sub-object ('windows' or 'linux'),
+ * where the OS sub-object takes precedence. Entries under the other OS key are ignored.
+ *
+ * @param {Object} rawPaths - Raw value of simulation.toolPaths setting
+ * @param {boolean} isLinuxContext - true when simulation scripts will run on Linux/WSL
+ * @returns {Object} flat map of tool name → resolved path
+ */
+function _resolveExecPaths(rawPaths, isLinuxContext) {
+    if (!rawPaths || typeof rawPaths !== 'object') return {};
+    const osKey = isLinuxContext ? 'linux' : 'windows';
+    const osSpecific = rawPaths[osKey];
+    if (!osSpecific || typeof osSpecific !== 'object') return {};
+    const result = {};
+    for (const [key, value] of Object.entries(osSpecific)) {
+        if (typeof value === 'string') result[key] = value;
+    }
+    return result;
+}
+
+/**
+ * Returns true when simulation scripts will execute in a Linux/WSL environment.
+ * On a Windows host this is the case whenever the pipeline file lives inside WSL.
+ *
+ * @param {string} documentFileName
+ */
+function _isLinuxSimulationContext(documentFileName) {
+    if (process.platform !== 'win32') return true;
+    return /^\\\\wsl\.localhost\\/i.test(documentFileName || '');
+}
+
+/**
+ * Extracts simple variable definitions and library group references from the
+ * top-level variables: section of a parsed pipeline document.
+ */
+function _extractPipelineVariables(parsedDoc) {
+    const simple = [];
+    const groups = [];
+    if (!parsedDoc || typeof parsedDoc !== 'object') return { simple, groups };
+    const vars = parsedDoc.variables;
+    if (Array.isArray(vars)) {
+        for (const entry of vars) {
+            if (!entry || typeof entry !== 'object') continue;
+            if (typeof entry.group === 'string' && entry.group.trim()) {
+                groups.push(entry.group.trim());
+            } else if (typeof entry.name === 'string' && entry.name.trim()) {
+                simple.push({
+                    name: entry.name.trim(),
+                    value: entry.value !== undefined ? String(entry.value) : '',
+                });
+            }
+        }
+    } else if (vars && typeof vars === 'object') {
+        for (const [name, value] of Object.entries(vars)) {
+            if (name && name.trim()) {
+                simple.push({ name: name.trim(), value: value !== undefined ? String(value) : '' });
+            }
+        }
+    }
+    return { simple, groups };
+}
+
+/**
  * Builds the standard default simulation variables from resolved paths.
  * Both the CLI and UI share this baseline variable set.
  *
@@ -329,7 +395,14 @@ function runPipelineSimulation(
     return simulator.simulate(parsedDoc, simOptions);
 }
 
-function _generateSimulationViewHtml(stageTree, fileName, topLevelParameterDefinitions = []) {
+function _generateSimulationViewHtml(
+    stageTree,
+    fileName,
+    topLevelParameterDefinitions = [],
+    nonce = '',
+    knownVarsJson = '{"azure":[],"pipeline":[],"groups":[]}',
+    savedVarsJson = '{"overrides":{},"libData":[]}'
+) {
     const esc = _escHtml;
     const topLevelParametersJson = JSON.stringify(topLevelParameterDefinitions || []).replace(/</g, '\\u003c');
     const STEP_ICONS = {
@@ -376,7 +449,7 @@ function _generateSimulationViewHtml(stageTree, fileName, topLevelParameterDefin
                         return (
                             `<div class="sidebar-job-item">` +
                             `<div class="sidebar-job-header" onclick="toggleSidebarJob(event,'ssjt-${si}-${ji}','ssjto-${si}-${ji}')">` +
-                            `<span class="toggle sidebar-toggle" id="ssjto-${si}-${ji}">&#9658;</span>` +
+                            `<span class="sidebar-toggle" id="ssjto-${si}-${ji}"></span>` +
                             `<span class="sidebar-result" id="ssr-job-${si}-${ji}">•</span>` +
                             `<span class="sidebar-job-name">${esc(job.displayName)}</span>` +
                             `<span class="count-badge">${job.steps.length}</span>` +
@@ -390,7 +463,7 @@ function _generateSimulationViewHtml(stageTree, fileName, topLevelParameterDefin
             return (
                 `<div class="sidebar-stage ${si === 0 ? 'active' : ''}" data-stage-index="${si}">` +
                 `<div class="sidebar-stage-header" onclick="toggleSidebarStage(event,${si})">` +
-                `<span class="toggle sidebar-toggle" id="sst-${si}">&#9658;</span>` +
+                `<span class="sidebar-toggle" id="sst-${si}"></span>` +
                 `<span class="sidebar-result" id="ssr-stage-${si}">•</span>` +
                 `<span class="stage-checkbox-wrap" onclick="event.stopPropagation()"><input type="checkbox" class="stage-cb" data-name="${esc(stage.name)}" checked onchange="onStageSelectionChange()"></span>` +
                 `<span class="stage-indicator"></span>` +
@@ -445,10 +518,10 @@ function _generateSimulationViewHtml(stageTree, fileName, topLevelParameterDefin
     /* eslint-disable prettier/prettier */
     return `<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Pipeline Simulation</title>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Pipeline Simulation</title><!-- nonce:${nonce} -->
 <style id="mainStyle">
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#1e1e1e;color:#cccccc;height:100vh;display:flex;flex-direction:column;line-height:1.4}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;background:#1e1e1e;color:#cccccc;height:100vh;display:flex;flex-direction:column;line-height:1.4}
 .main-container{display:flex;flex:1;overflow:hidden}
 .header{background:#2d2d30;padding:14px 20px;border-bottom:2px solid #555;flex-shrink:0}
 .header h1{color:#e8e8e8;font-size:1.2em;display:flex;align-items:center;gap:10px;font-weight:600}
@@ -486,7 +559,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .sidebar-task-name{font-size:.82em;color:#a0a0a0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
 .sidebar-task-row:hover .sidebar-task-name{color:#d8d8d8}
 .sidebar-task-row.active .sidebar-task-name{color:#e8e8e8}
-.sidebar-toggle{width:12px}
 .main-content{flex:1;display:flex;flex-direction:column;overflow:hidden}
 .settings-panel{background:#2a2a2c;border-bottom:1px solid #444;padding:12px 20px;overflow-y:auto;max-height:none;flex:1}
 .settings-panel.collapsed{max-height:36px;flex:0 0 auto;overflow:hidden}
@@ -498,7 +570,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .stage-content-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:12px;border-bottom:2px solid #0078d4}
 .stage-content-header h2{color:#fff;font-size:1.2em;margin:0}
 .stage-checkbox-wrap{display:flex;align-items:center}
-.section-title{color:#b0b0b0;font-size:.78em;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin:12px 0 8px}
+.section-title{color:#cccccc;font-size:.85em;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin:12px 0 8px}
 .options-row{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:4px}
 .field-group{display:flex;align-items:center;gap:8px}
 .param-section{margin-top:12px}
@@ -513,13 +585,37 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .field-input:focus{outline:none;border-color:#0078d4}
 .field-select{background:#2d2d30;border:1px solid #3e3e42;color:#e0e0e0;padding:4px 8px;border-radius:3px;font-size:.82em;cursor:pointer}
 .field-select:focus{outline:none;border-color:#0078d4}
-.vars-table{width:100%;border-collapse:collapse;margin-top:4px;font-size:.8em}
-.vars-table td{padding:2px 3px}
-.var-key,.var-val{background:#2d2d30;border:1px solid #3e3e42;color:#e0e0e0;padding:4px 8px;border-radius:3px;width:100%}
+.vars-table{width:100%;border-collapse:collapse;margin-top:4px;font-size:.85em}
+.vars-table td{padding:3px 5px}
+.vars-ref-table td{vertical-align:middle}
+.varth{color:#ccc;font-weight:700;font-size:.8em;padding:4px 5px;text-align:left}
+.var-group-label{font-size:.82em;color:#c8c8c8;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-top:10px;margin-bottom:4px;padding:3px 2px;display:flex;align-items:center;gap:6px}
+.var-group-label.var-toggle{cursor:pointer}
+.var-group-label.var-toggle:hover{color:#ccc}
+.var-group-sublabel{font-size:.95em;color:#ccc;font-weight:600;margin-top:8px;margin-bottom:3px;padding:2px 4px;display:flex;align-items:center;gap:8px}
+.varref-group{margin-bottom:8px}
+.varref-group-title{font-size:.74em;color:#777;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;border-bottom:1px solid #2a2a2a;padding-bottom:2px}
+.varref-item{display:flex;align-items:center;gap:6px;padding:2px 0;font-size:.79em}
+.varref-name{font-family:monospace;color:#9cdcfe;word-break:break-word}
+.varref-val{color:#aaa;font-family:monospace;font-size:.92em;word-break:break-word}
+.varref-add{background:none;border:1px solid #3e3e42;color:#666;padding:1px 5px;border-radius:3px;cursor:pointer;font-size:.74em;line-height:1.5;flex-shrink:0}
+.varref-add:hover{border-color:#0078d4;color:#9cdcfe}
+.varref-toggle{font-size:.8em;color:#777;cursor:pointer;user-select:none;padding:3px 0;display:inline-block}
+.varref-toggle:hover{color:#ccc}
+#variablesContent.collapsed{display:none}
+#pipelineVarsBody .vars-table,#azureVarsBody .vars-table{font-size:.98em}
+#libVarsBody .vars-table{font-size:.98em}
+#libVarsBody .var-key,#libVarsBody .var-val{font-size:.98em}
+#libVarsBody .lib-name{color:#9cdcfe;font-family:monospace}
+#toolPathsPanelBody .vars-table{font-size:.98em}
+#toolPathsPanelBody .tool-name{color:#9cdcfe;font-family:monospace}#toolPathsPanelBody .tool-name,#toolPathsPanelBody .tool-path{font-size:.98em}
+.var-key,.var-val{background:#2d2d30;border:1px solid #3e3e42;color:#e0e0e0;padding:4px 8px;border-radius:3px;width:100%}.var-key{font-weight:600}
 .var-key:focus,.var-val:focus{outline:none;border-color:#0078d4}
-.add-var-btn{background:none;border:1px dashed #444;color:#666;padding:4px 10px;border-radius:3px;cursor:pointer;font-size:.78em;margin-top:6px}
+.add-var-btn{background:none;border:1px dashed #555;color:#777;padding:2px 8px;border-radius:3px;cursor:pointer;font-size:.8em;font-weight:600;line-height:1.4}
 .add-var-btn:hover{border-color:#0078d4;color:#ccc}
-.remove-var-btn{background:none;border:none;color:#555;cursor:pointer;font-size:.9em;padding:0 4px;line-height:1}
+.save-lib-btn{background:#3a3a3d;border:1px solid #666;color:#ddd;padding:3px 9px;border-radius:3px;cursor:pointer;font-size:.8em;line-height:1.4}
+.save-lib-btn:hover{border-color:#0078d4;color:#fff}
+.remove-var-btn{background:none;border:none;color:#b8b8b8;cursor:pointer;font-size:1.05em;padding:0 4px;line-height:1}
 .remove-var-btn:hover{color:#fc8181}
 .toolbar{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}
 .toolbar-btn{background:#2d2d30;border:1px solid #3e3e42;color:#aaa;padding:4px 8px;border-radius:3px;cursor:pointer;font-size:.74em}
@@ -530,6 +626,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .job-header:hover{background:#333333}
 .toggle{display:inline-block;font-size:.72em;color:#888;transition:transform .15s;cursor:pointer;width:14px;flex-shrink:0;text-align:center;user-select:none}
 .toggle.open{transform:rotate(90deg);color:#ccc}
+.sidebar-toggle{display:inline-block;width:7px;height:7px;border-right:2px solid #b8b8b8;border-bottom:2px solid #b8b8b8;transform:rotate(-45deg);transition:transform .15s,border-color .15s;flex-shrink:0;font-size:0;vertical-align:middle;margin-bottom:1px;cursor:pointer}
+.sidebar-toggle.open{transform:rotate(45deg);border-color:#ffffff}
 .job-badge{font-size:.62em;font-weight:700;padding:2px 6px;border-radius:2px;background:#0078d4;color:#fff;flex-shrink:0}
 .job-badge.deploy{background:#6b46c1}
 .job-name{font-size:.85em;color:#ccc;flex:1}
@@ -564,7 +662,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .sim-loading{display:flex;align-items:center;gap:10px;padding:24px 0;color:#888;font-size:.9em}
 .sim-spinner{width:20px;height:20px;border:2px solid #3e3e42;border-top-color:#569cd6;border-radius:50%;animation:aps-spin .8s linear infinite;flex-shrink:0}
 .sec-title-row{display:flex;align-items:center;gap:8px}
-.sec-collapse-btn{margin-left:auto;background:#333335;border:1px solid #555;color:#bbb;padding:2px 10px;border-radius:3px;cursor:pointer;font-size:.76em;font-weight:600}
+.sec-collapse-btn{margin-left:auto;background:#3a3a3d;border:1px solid #666;color:#ddd;padding:3px 11px;border-radius:3px;cursor:pointer;font-size:.8em;font-weight:600}
+.sec-save-btn{background:#2e2e31;border:1px solid #555;color:#ccc;padding:2px 7px;border-radius:3px;cursor:pointer;font-size:.75em}.var-group-actions{display:flex;align-items:center;gap:4px;flex-shrink:0;margin-left:6px}
+.sec-save-btn:hover{border-color:#888;color:#fff}
 .sec-collapse-btn:hover{border-color:#888;color:#fff;background:#3d3d3f}
 .res-stage-hd{cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between}
 .res-stage-hd:hover{color:#fff}
@@ -585,7 +685,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 </style></head>
 <body>
 <div id="pageLoader"><div class="pl-spinner"></div><div class="pl-text">Loading…</div></div>
-<div class="header"><h1>&#9889; Pipeline Simulation Run</h1><div class="filename">${esc(baseName)}</div></div>
+<div class="header"><h1>&#9889; Pipeline Simulation</h1><div class="filename">${esc(baseName)}</div><div class="filename" style="font-size:.7em;color:#555;margin-left:auto">${new Date().toLocaleTimeString()}</div></div>
 <div class="main-container">
   <div class="sidebar">
     <div class="sidebar-header"><span>Stages</span><span class="sidebar-header-controls"><input type="checkbox" id="selectAllStages" checked onchange="toggleAllStages(this.checked)"><label for="selectAllStages">All</label></span></div>
@@ -595,24 +695,31 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="settings-panel" id="settingsPanel">
       <div class="section-title sec-title-row" style="margin-top:0">Settings<button class="sec-collapse-btn" id="settingsToggle" onclick="toggleSettingsPanel()">&#9650; Collapse</button></div>
       <div id="settingsContent">
-        <div class="section-title">Pipeline Variables</div>
-        <div class="options-row">
-          <div class="field-group"><label class="field-label" for="buildCounter">Build Counter</label>
-            <input class="field-input" type="number" id="buildCounter" value="1" min="1" step="1"></div>
-          <div class="field-group"><label class="field-label" for="buildReason">Build Reason</label>
-            <select class="field-select" id="buildReason"><option value="Manual">Manual</option><option value="IndividualCI">IndividualCI</option><option value="BatchedCI">BatchedCI</option><option value="Schedule">Schedule</option><option value="PullRequest">PullRequest</option><option value="BuildCompletion">BuildCompletion</option><option value="ResourceTrigger">ResourceTrigger</option></select></div>
-          <div class="field-group"><label class="field-label" for="sourceBranch">Source Branch</label>
-            <input class="field-input" list="sourceBranchList" id="sourceBranch" value="refs/heads/main" style="width:170px">
-            <datalist id="sourceBranchList"><option value="refs/heads/main"><option value="refs/heads/master"><option value="refs/heads/develop"><option value="refs/heads/release"><option value="refs/pull/1/merge"></datalist></div>
-          <div class="field-group"><input type="checkbox" id="debugMode" style="cursor:pointer;accent-color:#0078d4;width:14px;height:14px"><label class="field-label" for="debugMode" style="cursor:pointer">Enable Debug</label></div>
+        <div class="section-title sec-title-row" onclick="toggleToolPaths()" style="margin-top:0;cursor:pointer"><span class="sidebar-toggle" id="toolPathsToggle"></span>Tool Paths</div>
+        <div id="toolPathsContent" style="display:none">
+          <div id="toolPathsPanelBody"></div>
+        </div>
+        <div class="section-title sec-title-row" onclick="toggleVariables()" style="margin-top:12px;cursor:pointer"><span class="sidebar-toggle" id="variablesToggle"></span>Variables</div>
+        <div id="variablesContent" style="display:none">
+          <div id="variablesPanelBody"></div>
         </div>
                 <div id="topLevelParamsSection" class="param-section" style="display:none">
                     <div class="section-title">Top-Level Parameters</div>
                     <div id="topLevelParamsRows" class="param-grid"></div>
                 </div>
+        <div class="options-row" style="margin-top:12px">
+          <div class="field-group"><label class="field-label" for="buildCounter">Build Counter</label>
+            <input class="field-input" type="number" id="buildCounter" value="1" min="1" step="1"></div>
+          <div class="field-group"><label class="field-label" for="buildReason">Build Reason</label>
+            <select class="field-select" id="buildReason" onchange="syncSpecialVarToPanel()"><option value="Manual">Manual</option><option value="IndividualCI">IndividualCI</option><option value="BatchedCI">BatchedCI</option><option value="Schedule">Schedule</option><option value="PullRequest">PullRequest</option><option value="BuildCompletion">BuildCompletion</option><option value="ResourceTrigger">ResourceTrigger</option></select></div>
+          <div class="field-group"><label class="field-label" for="sourceBranch">Source Branch</label>
+            <input class="field-input" list="sourceBranchList" id="sourceBranch" value="refs/heads/main" style="width:170px" oninput="syncSpecialVarToPanel()">
+            <datalist id="sourceBranchList"><option value="refs/heads/main"><option value="refs/heads/master"><option value="refs/heads/develop"><option value="refs/heads/release"><option value="refs/pull/1/merge"></datalist></div>
+          <div class="field-group"><input type="checkbox" id="debugMode" style="cursor:pointer;accent-color:#0078d4;width:14px;height:14px" onchange="syncSpecialVarToPanel()"><label class="field-label" for="debugMode" style="cursor:pointer">Enable Debug</label></div>
+        </div>
         <div style="display:flex;gap:10px;margin-top:12px">
           <button class="run-btn" id="runBtn" onclick="runSimulation()">&#9654; Run Simulation</button>
-          <button class="term-btn" id="termBtn" onclick="runInTerminal()">&#10095;_ Run in Terminal</button>
+
           <button class="back-btn" id="backBtn" onclick="showSettings()" style="display:none">&#9881; Settings</button>
           <span class="status-msg" id="statusMsg"></span>
         </div>
@@ -630,6 +737,8 @@ window.onerror=function(msg,src,line,col,err){var l=document.getElementById('pag
 window.addEventListener('unhandledrejection',function(e){var l=document.getElementById('pageLoader');if(l){l.innerHTML='<div style="color:#f47174;padding:20px;font-family:monospace;font-size:13px"><b>Unhandled Promise Rejection:</b><br>'+String(e.reason)+'</div>';}});
 const vscode=acquireVsCodeApi();let varCount=0;let libVarCount=0;let taskFilter=null;
 const topLevelParameterDefinitions=${topLevelParametersJson};
+const knownVars=${knownVarsJson};
+const savedVars=${savedVarsJson};
 function _normParamType(t){return String(t||'string').trim().toLowerCase();}
 function _asBool(v){if(typeof v==='boolean')return v;var s=String(v||'').trim().toLowerCase();return s==='true'||s==='1'||s==='yes';}
 function _stringifyParamValue(v){if(v===undefined||v===null)return '';if(typeof v==='object'){try{return JSON.stringify(v);}catch(_){return String(v);}}return String(v);}
@@ -771,7 +880,6 @@ function toggleAllStages(checked){
     syncSelectAllStages();
 }
 function selectStage(index){
-    window.addEventListener('load',function(){try{renderTopLevelParameters();}catch(e){console.error('[aps] renderTopLevelParameters failed',e);}setTimeout(function(){var l=document.getElementById('pageLoader');if(l)l.style.display='none';var tbtn=document.getElementById('termBtn');if(tbtn)tbtn.style.display='inline-block';expandAll(false);selectStage(0);addVar();addLibVar();syncSelectAllStages();},50);});
     taskFilter=null;
     document.querySelectorAll('.sidebar-task-row').forEach(el=>el.classList.remove('active'));
     document.querySelectorAll('.sidebar-stage').forEach((el,i)=>{el.classList.toggle('active',i===index);});
@@ -901,23 +1009,111 @@ function applyTaskFilter(){
 }
 function toggleSteps(id){const el=document.getElementById(id);if(!el)return;el.classList.toggle('collapsed');}
 function toggleSettingsPanel(){var s=document.getElementById('settingsContent');var p=document.getElementById('settingsPanel');var btn=document.getElementById('settingsToggle');if(!s||!p)return;var c=s.classList.toggle('collapsed');p.classList.toggle('collapsed');btn.textContent=c?'▼ Settings':'▲ Collapse';}
-function showSettings(){var s=document.getElementById('settingsContent');var p=document.getElementById('settingsPanel');var btn=document.getElementById('settingsToggle');if(s)s.classList.remove('collapsed');if(p)p.classList.remove('collapsed');if(btn)btn.textContent='▲ Collapse';}
-function toggleCollapse(id,tid){const el=document.getElementById(id);const t=document.getElementById(tid);if(!el)return;const c=el.classList.toggle('collapsed');if(t)t.classList.toggle('open',!c);}
-function expandAll(v){document.querySelectorAll('.steps-list').forEach(el=>el.classList.toggle('collapsed',!v));document.querySelectorAll('.toggle').forEach(t=>t.classList.toggle('open',v));}
-function addVar(){var id='vr'+(varCount++);var tr=document.createElement('tr');tr.id=id;tr.innerHTML='<td style="width:42%"><input class="var-key" placeholder="key"></td><td style="width:4%;text-align:center;color:#555;font-size:.8em">=</td><td style="width:49%"><input class="var-val" placeholder="value"></td><td><button class="remove-var-btn">&times;</button></td>';tr.querySelector('.remove-var-btn').onclick=function(){document.getElementById(id).remove();};var tb=document.getElementById('varRows');if(!tb){tb=document.createElement('tbody');tb.id='varRows';document.querySelector('.vars-table')?.appendChild(tb);}tb.appendChild(tr);}
-function addLibVar(){var id='lv'+(libVarCount++);var tr=document.createElement('tr');tr.id=id;tr.innerHTML='<td style="width:30%"><input class="var-key lib-group" placeholder="group"></td><td style="width:30%"><input class="var-key lib-name" placeholder="variable"></td><td style="width:4%;text-align:center;color:#555;font-size:.8em">=</td><td style="width:31%"><input class="var-val lib-val" placeholder="value"></td><td><button class="remove-var-btn">&times;</button></td>';tr.querySelector('.remove-var-btn').onclick=function(){document.getElementById(id).remove();};var tb=document.getElementById('libVarRows');if(!tb){tb=document.createElement('tbody');tb.id='libVarRows';document.querySelector('.vars-table:nth-of-type(2)')?.appendChild(tb);}tb.appendChild(tr);}
+function _varRefAdd(btn){var name=btn.getAttribute('data-name');var kind=btn.getAttribute('data-kind');if(kind==='group')addLibVarWithGroup(name);else addVarWithKey(name);}
+function _btnClick(e,fn){e.stopPropagation();fn(e.currentTarget||e.target);}
+function _btnFeedback(btn,text,color){if(!btn)return;var orig=btn.textContent;btn.textContent=text;btn.style.color=color;btn.disabled=true;setTimeout(function(){btn.textContent=orig;btn.style.color='';btn.disabled=false;},1500);}
+function _collectAzureOverrides(){
+    var overrides={};
+    document.querySelectorAll('.var-override-input').forEach(function(inp){
+        var name=inp.getAttribute('data-varname');
+        if(name&&inp.value.trim())overrides[name]=inp.value.trim();
+    });
+    return overrides;
+}
+function _collectLibData(){
+    var libData=[];
+    knownVars.groups.forEach(function(g,gi){
+        var tb=document.getElementById('libvars-'+gi);
+        var vars=[];
+        if(tb)tb.querySelectorAll('tr[data-group]').forEach(function(row){
+            var n=row.querySelector('.lib-name');
+            var v=row.querySelector('.lib-val');
+            if(n&&n.value.trim())vars.push({name:n.value.trim(),value:v?v.value.trim():''});
+        });
+        libData.push({group:g,vars:vars});
+    });
+    return libData;
+}
+function saveAzureVars(btn){vscode.postMessage({command:'saveAzureVars',data:{overrides:_collectAzureOverrides()}});_btnFeedback(btn,'Saved \u2713','#4ec9b0');}
+function saveLibVars(btn){vscode.postMessage({command:'saveLibVars',data:{libData:_collectLibData()}});_btnFeedback(btn,'Saved \u2713','#4ec9b0');}
+function saveVars(){vscode.postMessage({command:'saveVars',data:{overrides:_collectAzureOverrides(),libData:_collectLibData()}});}
+function clearAzureVars(btn){
+    document.querySelectorAll('#azureVarsBody .var-override-input').forEach(function(inp){inp.value='';});
+    syncSpecialVarToPanel();
+    vscode.postMessage({command:'clearAzureVars'});
+    _btnFeedback(btn,'Cleared','#ce9178');
+}
+function clearLibVars(btn){
+    knownVars.groups.forEach(function(g,gi){var tb=document.getElementById('libvars-'+gi);if(tb)tb.innerHTML='';});
+    vscode.postMessage({command:'clearLibVars'});
+    _btnFeedback(btn,'Cleared','#ce9178');
+}
+function addToolPath(){var tb=document.getElementById('toolPathsRows');if(!tb)return;var tr=document.createElement('tr');tr.innerHTML='<td style="width:48%"><input class="var-key tool-name" placeholder="tool (e.g. bash)"></td><td><input class="var-val tool-path" placeholder="path"></td><td><button class="remove-var-btn">&times;</button></td>';tr.querySelector('.remove-var-btn').onclick=function(){tr.remove();};tb.appendChild(tr);var inp=tr.querySelector('.tool-name');if(inp)inp.focus();}
+function _collectToolPaths(){var paths={};document.querySelectorAll('#toolPathsRows tr').forEach(function(row){var n=row.querySelector('.tool-name');var p=row.querySelector('.tool-path');if(n&&p&&n.value.trim()&&p.value.trim())paths[n.value.trim()]=p.value.trim();});return paths;}
+function saveToolPaths(btn){vscode.postMessage({command:'saveToolPaths',data:{toolPaths:_collectToolPaths()}});_btnFeedback(btn,'Saved \u2713','#4ec9b0');}
+function clearToolPaths(btn){var tb=document.getElementById('toolPathsRows');if(tb)tb.innerHTML='';vscode.postMessage({command:'clearToolPaths'});_btnFeedback(btn,'Cleared','#ce9178');}
+function clearVars(){clearAzureVars();clearLibVars();vscode.postMessage({command:'clearVars'});}
+function toggleVariables(){var c=document.getElementById('variablesContent');var btn=document.getElementById('variablesToggle');if(!c)return;var hidden=c.style.display==='none';c.style.display=hidden?'':'none';if(btn)btn.classList.toggle('open',hidden);}
+function toggleToolPaths(){var c=document.getElementById('toolPathsContent');var btn=document.getElementById('toolPathsToggle');if(!c)return;var hidden=c.style.display==='none';c.style.display=hidden?'':'none';if(btn)btn.classList.toggle('open',hidden);}
+function _renderToolPathsPanel(){var body=document.getElementById('toolPathsPanelBody');if(!body)return;var html='<div class="var-group-sublabel" style="margin-top:0"><button class="add-var-btn" onclick="addToolPath()" title="Add Tool Path">+ Add Tool Path</button><span style="margin-left:auto;display:flex;gap:4px"><button class="sec-save-btn" onclick="_btnClick(event,saveToolPaths)" title="Save Tool Paths">Save</button><button class="sec-save-btn" onclick="_btnClick(event,clearToolPaths)" title="Clear Tool Paths">Clear</button></span></div><table class="vars-table"><thead><tr><th class="varth" style="width:48%">Tool</th><th class="varth">Path</th><th style="width:5%"></th></tr></thead><tbody id="toolPathsRows"></tbody></table>';body.innerHTML=html;}
+function toggleVarSubSection(hdr){var id=hdr.getAttribute('data-target');var el=document.getElementById(id);if(!el)return;var hidden=el.style.display==='none';el.style.display=hidden?'':'none';var tog=hdr.querySelector('.sidebar-toggle');if(tog)tog.classList.toggle('open',hidden);}
+function syncSpecialVarToPanel(){var set=function(name,val){var inp=document.querySelector('.var-override-input[data-varname="'+name+'"]');if(inp)inp.value=val;};var dbg=document.getElementById('debugMode');var br=document.getElementById('buildReason');var sb=document.getElementById('sourceBranch');if(dbg)set('System.Debug',dbg.checked?'true':'');if(br&&br.value)set('Build.Reason',br.value);if(sb){var sval=sb.value.trim();set('Build.SourceBranch',sval);if(sval){var sbn=sval.replace(/^refs\\/heads\\//,'');set('Build.SourceBranchName',sbn!==sval?sbn:sval.split('/').pop()||sval);}else{set('Build.SourceBranchName','');}}}
+function _collectAllVars(){var vars={};document.querySelectorAll('.var-override-input').forEach(function(inp){var name=inp.getAttribute('data-varname');if(name&&inp.value.trim())vars[name]=inp.value.trim();});return vars;}
+function addVarWithKey(name,defaultVal){var id='vr'+(varCount++);var tr=document.createElement('tr');tr.id=id;var enc=String(name||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');var phenc=String(defaultVal||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');tr.innerHTML='<td style="width:42%"><input class="var-key" placeholder="key" value="'+enc+'"></td><td style="width:49%"><input class="var-val" placeholder="'+(phenc||'value')+'" title="default: '+(phenc||'(none)')+'"></td><td><button class="remove-var-btn">&times;</button></td>';tr.querySelector('.remove-var-btn').onclick=function(){tr.remove();};var tb=document.getElementById('varRows');if(tb){tb.appendChild(tr);if(!name){var inp=tr.querySelector('.var-val');if(inp)inp.focus();}}}
+function addLibVarUnder(btn){var group=btn.getAttribute('data-group');var tbid=btn.getAttribute('data-tbody');var tb=document.getElementById(tbid);if(!tb)return;var tr=document.createElement('tr');tr.setAttribute('data-group',group||'');tr.innerHTML='<td style="width:48%"><input class="var-key lib-name" placeholder="variable"></td><td><input class="var-val lib-val" placeholder="value"></td><td><button class="remove-var-btn">&times;</button></td>';tr.querySelector('.remove-var-btn').onclick=function(){tr.remove();};tb.appendChild(tr);var inp=tr.querySelector('.lib-name');if(inp)inp.focus();}
+
+
+
+function _collectLibVars(){var m={};document.querySelectorAll('tr[data-group]').forEach(function(row){var g=row.getAttribute('data-group');var n=row.querySelector('.lib-name');var v=row.querySelector('.lib-val');if(g&&n&&v&&g.trim()&&n.value.trim()){var gk=g.trim();if(!m[gk])m[gk]={};m[gk][n.value.trim()]=v.value.trim();}});return m;}
+
+function _renderVariablesPanel(){var body=document.getElementById('variablesPanelBody');if(!body)return;var e=escHtml;var html='';html+='<div class="var-group-label var-toggle" data-target="azureVarsBody" onclick="toggleVarSubSection(this)"><span class="sidebar-toggle"></span>Azure System Variables<button class="sec-save-btn" onclick="_btnClick(event,saveVars)" title="Save">Save</button><button class="sec-save-btn" onclick="_btnClick(event,clearAzureVars)" title="Clear">Clear</button></div><div id="azureVarsBody" style="display:none"><table class="vars-table vars-ref-table"><thead><tr><th class="varth" style="width:38%">Variable</th><th class="varth" style="width:22%">Description</th><th class="varth">Override</th></tr></thead><tbody>';knownVars.azure.forEach(function(v){var en=e(v.name);var ed=e(v.desc||'');html+='<tr><td class="varref-name">'+en+'</td><td class="varref-val">'+ed+'</td><td><input class="var-override-input var-val" data-varname="'+en+'" placeholder="(auto)" style="width:100%"></td></tr>';});html+='</tbody></table></div>';if(knownVars.groups&&knownVars.groups.length){html+='<div class="var-group-label var-toggle" data-target="libVarsBody" onclick="toggleVarSubSection(this)" style="margin-top:8px"><span class="sidebar-toggle"></span>Library Variables<button class="sec-save-btn" onclick="_btnClick(event,saveVars)" title="Save">Save</button><button class="sec-save-btn" onclick="_btnClick(event,clearLibVars)" title="Clear">Clear</button></div><div id="libVarsBody" style="display:none">';knownVars.groups.forEach(function(g,gi){var eg=e(g);var tbid='libvars-'+gi;html+='<div class="var-group-sublabel"><span>'+eg+'</span><button class="add-var-btn" data-group="'+eg+'" data-tbody="'+tbid+'" onclick="addLibVarUnder(this)" title="Add variable">+</button></div><table class="vars-table"><thead><tr><th class="varth" style="width:48%">Variable</th><th class="varth">Value</th><th style="width:5%"></th></tr></thead><tbody id="'+tbid+'"></tbody></table>';});html+='</div>';}body.innerHTML=html;}
+
+function addLibVarToFirstGroup(){
+    if(!knownVars.groups||!knownVars.groups.length)return;
+    var btn=document.querySelector('#libVarsBody .add-var-btn');
+    if(btn)addLibVarUnder(btn);
+}
+
+function _renderVariablesPanel(){
+    var body=document.getElementById('variablesPanelBody');
+    if(!body)return;
+    var e=escHtml;
+    var html='';
+    html+='<div class="var-group-label var-toggle" data-target="azureVarsBody" onclick="toggleVarSubSection(this)"><span class="sidebar-toggle"></span>Azure System Variables</div>';
+    html+='<div id="azureVarsBody" style="display:none"><div class="var-group-actions" style="margin:4px 0 6px 0"><button class="sec-save-btn" onclick="_btnClick(event,saveAzureVars)" title="Save Azure System Variables">Save</button><button class="sec-save-btn" onclick="_btnClick(event,clearAzureVars)" title="Clear Azure System Variables">Clear</button></div><table class="vars-table vars-ref-table"><thead><tr><th class="varth" style="width:38%">Variable</th><th class="varth" style="width:22%">Description</th><th class="varth">Override</th></tr></thead><tbody>';
+    knownVars.azure.forEach(function(v){
+        var en=e(v.name);
+        var ed=e(v.desc||'');
+        html+='<tr><td class="varref-name">'+en+'</td><td class="varref-val">'+ed+'</td><td><input class="var-override-input var-val" data-varname="'+en+'" placeholder="(auto)" style="width:100%"></td></tr>';
+    });
+    html+='</tbody></table></div>';
+    if(knownVars.groups&&knownVars.groups.length){
+        html+='<div class="var-group-label var-toggle" data-target="libVarsBody" onclick="toggleVarSubSection(this)" style="margin-top:8px"><span class="sidebar-toggle"></span>Library Variables</div>';
+        html+='<div id="libVarsBody" style="display:none"><div class="var-group-actions" style="margin:4px 0 6px 0"><button class="sec-save-btn" onclick="_btnClick(event,saveLibVars)" title="Save Library Variables">Save</button><button class="sec-save-btn" onclick="_btnClick(event,clearLibVars)" title="Clear Library Variables">Clear</button></div>';
+        knownVars.groups.forEach(function(g,gi){
+            var eg=e(g);
+            var tbid='libvars-'+gi;
+            html+='<div class="var-group-sublabel"><span>'+eg+'</span><button class="add-var-btn" data-group="'+eg+'" data-tbody="'+tbid+'" onclick="addLibVarUnder(this)" title="Add Variable">+ Add Variable</button></div>';
+            html+='<table class="vars-table"><thead><tr><th class="varth" style="width:48%">Variable</th><th class="varth">Value</th><th style="width:5%"></th></tr></thead><tbody id="'+tbid+'"></tbody></table>';
+        });
+        html+='</div>';
+    }
+    body.innerHTML=html;
+}
+
+function addVar(){var id='vr'+(varCount++);var tr=document.createElement('tr');tr.id=id;tr.innerHTML='<td style="width:46%"><input class="var-key" placeholder="key"></td><td style="width:49%"><input class="var-val" placeholder="value"></td><td><button class="remove-var-btn">&times;</button></td>';tr.querySelector('.remove-var-btn').onclick=function(){document.getElementById(id).remove();};var tb=document.getElementById('varRows');if(!tb){tb=document.createElement('tbody');tb.id='varRows';document.querySelector('.vars-table')?.appendChild(tb);}tb.appendChild(tr);}
+function addLibVar(){var id='lv'+(libVarCount++);var tr=document.createElement('tr');tr.id=id;tr.innerHTML='<td style="width:30%"><input class="var-key lib-group" placeholder="group"></td><td style="width:30%"><input class="var-key lib-name" placeholder="variable"></td><td style="width:35%"><input class="var-val lib-val" placeholder="value"></td><td><button class="remove-var-btn">&times;</button></td>';tr.querySelector('.remove-var-btn').onclick=function(){document.getElementById(id).remove();};var tb=document.getElementById('libVarRows');if(!tb){tb=document.createElement('tbody');tb.id='libVarRows';document.querySelector('.vars-table:nth-of-type(2)')?.appendChild(tb);}tb.appendChild(tr);}
 function _collectLibVars(){var m={};document.querySelectorAll('#libVarRows tr').forEach(function(row){var g=row.querySelector('.lib-group');var n=row.querySelector('.lib-name');var v=row.querySelector('.lib-val');if(g&&n&&v&&g.value.trim()&&n.value.trim()){var gk=g.value.trim();if(!m[gk])m[gk]={};m[gk][n.value.trim()]=v.value.trim();}});return m;}
 function runSimulation(){
   try{
     const stages=_collectSelectedStages();
   const buildCounter=document.getElementById('buildCounter').value;
-  const variables={};
-  var tb=document.getElementById('varRows');if(tb){tb.querySelectorAll('tr').forEach(row=>{const k=row.querySelector('.var-key');const v=row.querySelector('.var-val');if(k&&v&&k.value.trim()&&v.value.trim())variables[k.value.trim()]=v.value.trim();});}
+  const variables=_collectAllVars();
   if(document.getElementById('debugMode').checked)variables['System.Debug']='true';
   const buildReason=document.getElementById('buildReason').value;if(buildReason)variables['Build.Reason']=buildReason;
   const sourceBranch=document.getElementById('sourceBranch').value.trim();if(sourceBranch){variables['Build.SourceBranch']=sourceBranch;const sbn=sourceBranch.replace(/^refs\\/heads\\//,'');variables['Build.SourceBranchName']=sbn!==sourceBranch?sbn:sourceBranch.split('/').pop()||sourceBranch;}
   document.getElementById('runBtn').disabled=true;
-  document.getElementById('termBtn').disabled=true;
+  
   document.getElementById('statusMsg').textContent='';
     var ob=document.getElementById('browserBtn');if(ob)ob.style.display='none';
     resetSidebarResults();
@@ -927,27 +1123,8 @@ function runSimulation(){
   var bb=document.getElementById('backBtn');if(bb)bb.style.display='inline-block';
   const libVars=_collectLibVars();
     const parameters=_collectTopLevelParameters();
-    vscode.postMessage({command:'runSimulation',stages,buildCounter,variables,libraryVariables:libVars,parameters});
-  }catch(e){console.error('[aps] runSimulation error',e);document.getElementById('resultsPanel').innerHTML='';document.getElementById('statusMsg').textContent='⚠ JS error: '+String(e);document.getElementById('runBtn').disabled=false;document.getElementById('termBtn').disabled=false;}
-}
-function runInTerminal(){
-    const stages=_collectSelectedStages();
-  const buildCounter=document.getElementById('buildCounter').value;
-  const variables={};
-  var tb=document.getElementById('varRows');if(tb){tb.querySelectorAll('tr').forEach(row=>{const k=row.querySelector('.var-key');const v=row.querySelector('.var-val');if(k&&v&&k.value.trim()&&v.value.trim())variables[k.value.trim()]=v.value.trim();});}
-  if(document.getElementById('debugMode').checked)variables['System.Debug']='true';
-  const buildReason2=document.getElementById('buildReason').value;if(buildReason2)variables['Build.Reason']=buildReason2;
-  const sourceBranch2=document.getElementById('sourceBranch').value.trim();if(sourceBranch2){variables['Build.SourceBranch']=sourceBranch2;const sbn2=sourceBranch2.replace(/^refs\\/heads\\//,'');variables['Build.SourceBranchName']=sbn2!==sourceBranch2?sbn2:sourceBranch2.split('/').pop()||sourceBranch2;}
-  document.getElementById('runBtn').disabled=true;
-  document.getElementById('termBtn').disabled=true;
-  document.getElementById('statusMsg').textContent='';
-    var ob2=document.getElementById('browserBtn');if(ob2)ob2.style.display='none';
-    resetSidebarResults();
-  document.getElementById('resultsPanel').innerHTML='<div class="sim-loading"><div class="sim-spinner"></div><span>Running in terminal…</span></div>';
-    var rb2=document.getElementById('renderBody');if(rb2)rb2.classList.remove('hidden');
-  var s=document.getElementById('settingsContent');if(s){s.classList.add('collapsed');document.getElementById('settingsPanel').classList.add('collapsed');var btn=document.getElementById('settingsToggle');if(btn)btn.innerHTML='&#9660; Settings';}
-    const parameters=_collectTopLevelParameters();
-    vscode.postMessage({command:'runInTerminal',stages,buildCounter,variables,libraryVariables:_collectLibVars(),parameters});
+    vscode.postMessage({command:'runSimulation',stages,buildCounter,variables,libraryVariables:libVars,parameters,toolPaths:_collectToolPaths()});
+  }catch(e){console.error('[aps] runSimulation error',e);document.getElementById('resultsPanel').innerHTML='';document.getElementById('statusMsg').textContent='⚠ JS error: '+String(e);document.getElementById('runBtn').disabled=false;}
 }
 function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function toggleRes(hd){var body=hd.nextElementSibling;if(!body)return;var c=body.classList.toggle('collapsed');var t=hd.querySelector('.res-tog');if(t)t.textContent=c?'\u25b6':'\u25bc';}
@@ -1163,11 +1340,13 @@ document.getElementById('resultsPanel').addEventListener('click',function(e){
 });
 requestAnimationFrame(function(){requestAnimationFrame(function(){var l=document.getElementById('pageLoader');if(l)l.remove();});});
 renderTopLevelParameters();
+function _syncOverrideToSettings(vn,val){if(vn==='Build.SourceBranch'){var sb=document.getElementById('sourceBranch');if(sb)sb.value=val;}else if(vn==='Build.SourceBranchName'){/* skip */}else if(vn==='Build.Reason'){var br=document.getElementById('buildReason');if(br)br.value=val;}else if(vn==='System.Debug'){var dbg=document.getElementById('debugMode');if(dbg)dbg.checked=val==='true'||val==='1';}else if(vn==='Build.BuildNumber'||vn==='Build.BuildId'){var bc=document.getElementById('buildCounter');if(bc&&vn==='Build.BuildNumber')bc.value=val;}}function _applyVarsLoaded(data){if(!data)return;var o=data.overrides||{};document.querySelectorAll('.var-override-input').forEach(function(inp){var name=inp.getAttribute('data-varname');if(o[name]!==undefined)inp.value=o[name];});if(Array.isArray(data.libData)){data.libData.forEach(function(entry){var gi=knownVars.groups.indexOf(entry.group);if(gi<0)return;var tb=document.getElementById('libvars-'+gi);if(!tb)return;tb.innerHTML='';if(!Array.isArray(entry.vars))return;entry.vars.forEach(function(v){var tr=document.createElement('tr');tr.setAttribute('data-group',entry.group);var en=escHtml(v.name||'');var ev=escHtml(v.value||'');tr.innerHTML='<td style="width:48%"><input class="var-key lib-name" placeholder="variable" value="'+en+'"></td><td><input class="var-val lib-val" placeholder="value" value="'+ev+'"></td><td><button class="remove-var-btn">&times;</button></td>';tr.querySelector('.remove-var-btn').onclick=function(){tr.remove();};tb.appendChild(tr);});});}if(data.toolPaths&&typeof data.toolPaths==='object'){var ttp=document.getElementById('toolPathsRows');if(ttp){ttp.innerHTML='';Object.entries(data.toolPaths).forEach(function(kv){var tr=document.createElement('tr');var en=escHtml(kv[0]||'');var ev=escHtml(kv[1]||'');tr.innerHTML='<td style="width:48%"><input class="var-key tool-name" placeholder="tool (e.g. bash)" value="'+en+'"></td><td><input class="var-val tool-path" placeholder="path" value="'+ev+'"></td><td><button class="remove-var-btn">&times;</button></td>';tr.querySelector('.remove-var-btn').onclick=function(){tr.remove();};ttp.appendChild(tr);});}}try{syncSpecialVarToPanel();}catch(e){}}window.addEventListener('load',function(){_renderVariablesPanel();_renderToolPathsPanel();_applyVarsLoaded(savedVars);setTimeout(function(){expandAll(false);selectStage(0);syncSpecialVarToPanel();syncSelectAllStages();var pb=document.getElementById('variablesPanelBody');if(pb)pb.addEventListener('input',function(e){var inp=e.target;if(!inp.classList.contains('var-override-input'))return;_syncOverrideToSettings(inp.getAttribute('data-varname'),inp.value);});vscode.postMessage({command:'loadVars'});},50);});
 window.addEventListener('message',e=>{
   const d=e.data;
-  if(d.command==='simulationStarted'){document.getElementById('runBtn').disabled=false;document.getElementById('termBtn').disabled=false;}
-  else if(d.command==='simulationResults'){document.getElementById('runBtn').disabled=false;document.getElementById('termBtn').disabled=false;renderResults(d.results);}
-    else if(d.command==='simulationError'){document.getElementById('resultsPanel').innerHTML='';document.getElementById('statusMsg').textContent='\u26a0 '+d.error;document.getElementById('runBtn').disabled=false;document.getElementById('termBtn').disabled=false;var browserBtn=document.getElementById('browserBtn');if(browserBtn)browserBtn.style.display='none';}
+  if(d.command==='simulationStarted'){document.getElementById('runBtn').disabled=false;}
+  else if(d.command==='simulationResults'){document.getElementById('runBtn').disabled=false;renderResults(d.results);}
+    else if(d.command==='simulationError'){document.getElementById('resultsPanel').innerHTML='';document.getElementById('statusMsg').textContent='\u26a0 '+d.error;document.getElementById('runBtn').disabled=false;var browserBtn=document.getElementById('browserBtn');if(browserBtn)browserBtn.style.display='none';}
+  else if(d.command==='varsLoaded'){_applyVarsLoaded(d.data);}
 });
 <\/script>
 </body></html>`;
@@ -3189,6 +3368,39 @@ ${mermaidDiagram
             return;
         }
 
+        const { simple: pipelineSimpleVars, groups: pipelineVarGroups } = _extractPipelineVariables(expandedDoc);
+        const azureSystemVars = [
+            { name: 'Build.SourcesDirectory', desc: 'Repository sources directory' },
+            { name: 'Build.Repository.LocalPath', desc: 'Local repository path' },
+            { name: 'System.DefaultWorkingDirectory', desc: 'Default working directory' },
+            { name: 'Build.ArtifactStagingDirectory', desc: 'Artifact staging directory' },
+            { name: 'Build.StagingDirectory', desc: 'Staging directory' },
+            { name: 'Build.BinariesDirectory', desc: 'Binaries output directory' },
+            { name: 'Pipeline.Workspace', desc: 'Pipeline workspace root' },
+            { name: 'Agent.TempDirectory', desc: 'Agent temp directory' },
+            { name: 'Agent.BuildDirectory', desc: 'Agent build directory' },
+            { name: 'Agent.WorkFolder', desc: 'Agent work folder' },
+            { name: 'Agent.ToolsDirectory', desc: 'Agent tools directory' },
+            { name: 'Agent.HomeDirectory', desc: 'Agent home directory' },
+            { name: 'Build.BuildNumber', desc: 'Build number (= counter)' },
+            { name: 'Build.BuildId', desc: 'Build ID' },
+            { name: 'Build.Reason', desc: 'Build trigger reason' },
+            { name: 'Build.SourceBranch', desc: 'Full branch ref (refs/heads/\u2026)' },
+            { name: 'Build.SourceBranchName', desc: 'Short branch name' },
+            { name: 'System.TeamProject', desc: 'Team project name' },
+            { name: 'System.Debug', desc: 'Debug mode (true/false)' },
+            { name: 'Agent.OS', desc: 'Agent OS' },
+        ];
+        const knownVarsJson = JSON.stringify({
+            azure: azureSystemVars,
+            pipeline: pipelineSimpleVars,
+            groups: pipelineVarGroups,
+        }).replace(/</g, '\\u003c');
+
+        lastSimDocument = document;
+        lastSimSourceText = sourceText;
+        lastSimParserOptions = parserOptions;
+
         if (simulationPanel) {
             simulationPanel.reveal(vscode.ViewColumn.Two, true);
         } else {
@@ -3208,6 +3420,9 @@ ${mermaidDiagram
                 if (!simOutputChannel) {
                     simOutputChannel = vscode.window.createOutputChannel('Pipeline Simulation');
                 }
+                const document = lastSimDocument;
+                const sourceText = lastSimSourceText;
+                const parserOptions = lastSimParserOptions;
                 if (message.command === 'runInTerminal') {
                     const { spawn } = require('child_process');
                     const os = require('os');
@@ -3266,9 +3481,13 @@ ${mermaidDiagram
                             }
                         }
                     }
-                    const termExecPaths = vscode.workspace
+                    const termExecPathsRaw = vscode.workspace
                         .getConfiguration('azurePipelineStudio', document.uri)
-                        .get('simulation.executablePaths', {});
+                        .get('simulation.toolPaths', {});
+                    const termExecPaths = _resolveExecPaths(
+                        termExecPathsRaw,
+                        _isLinuxSimulationContext(document.fileName)
+                    );
                     for (const [exeName, exePath] of Object.entries(termExecPaths)) {
                         const rawExePath = String(exePath || '').trim();
                         if (!rawExePath) continue;
@@ -3394,6 +3613,104 @@ ${mermaidDiagram
                     }
                     return;
                 }
+                if (message.command === 'saveVars') {
+                    context.workspaceState.update('aps.vars', message.data || {});
+                    return;
+                }
+                if (message.command === 'saveAzureVars') {
+                    const legacy = context.workspaceState.get('aps.vars', null) || {};
+                    const existingLibData = Array.isArray(legacy.libData)
+                        ? legacy.libData
+                        : context.workspaceState.get('aps.libVars', []);
+                    const nextAzure =
+                        message.data && typeof message.data.overrides === 'object' ? message.data.overrides : {};
+                    await context.workspaceState.update('aps.azureVars', { overrides: nextAzure });
+                    await context.workspaceState.update('aps.vars', { overrides: nextAzure, libData: existingLibData });
+                    return;
+                }
+                if (message.command === 'saveLibVars') {
+                    const legacy = context.workspaceState.get('aps.vars', null) || {};
+                    const existingOverrides =
+                        legacy.overrides && typeof legacy.overrides === 'object'
+                            ? legacy.overrides
+                            : (context.workspaceState.get('aps.azureVars', { overrides: {} }) || {}).overrides || {};
+                    const nextLibData = message.data && Array.isArray(message.data.libData) ? message.data.libData : [];
+                    await context.workspaceState.update('aps.libVars', nextLibData);
+                    await context.workspaceState.update('aps.vars', {
+                        overrides: existingOverrides,
+                        libData: nextLibData,
+                    });
+                    return;
+                }
+                if (message.command === 'loadVars') {
+                    const legacy = context.workspaceState.get('aps.vars', null) || {};
+                    const savedAzure = context.workspaceState.get('aps.azureVars', null);
+                    const savedLib = context.workspaceState.get('aps.libVars', null);
+                    const savedToolPathsForLoad = context.workspaceState.get('aps.toolPaths', null);
+                    const execPathsRawForLoad = vscode.workspace
+                        .getConfiguration('azurePipelineStudio', document.uri)
+                        .get('simulation.toolPaths', {});
+                    const execPathsBaseForLoad = _resolveExecPaths(
+                        execPathsRawForLoad,
+                        _isLinuxSimulationContext(document.fileName)
+                    );
+                    const mergedToolPathsForLoad = Object.assign(
+                        {},
+                        execPathsBaseForLoad,
+                        savedToolPathsForLoad && typeof savedToolPathsForLoad === 'object' ? savedToolPathsForLoad : {}
+                    );
+                    const merged = {
+                        overrides:
+                            savedAzure && typeof savedAzure.overrides === 'object'
+                                ? savedAzure.overrides
+                                : legacy.overrides || {},
+                        libData: Array.isArray(savedLib)
+                            ? savedLib
+                            : Array.isArray(legacy.libData)
+                              ? legacy.libData
+                              : [],
+                        toolPaths: mergedToolPathsForLoad,
+                    };
+                    if (simulationPanel && simulationPanel.webview) {
+                        simulationPanel.webview.postMessage({ command: 'varsLoaded', data: merged });
+                    }
+                    return;
+                }
+                if (message.command === 'clearAzureVars') {
+                    const legacy = context.workspaceState.get('aps.vars', null) || {};
+                    const existingLibData = Array.isArray(legacy.libData)
+                        ? legacy.libData
+                        : context.workspaceState.get('aps.libVars', []);
+                    context.workspaceState.update('aps.azureVars', { overrides: {} });
+                    context.workspaceState.update('aps.vars', { overrides: {}, libData: existingLibData });
+                    return;
+                }
+                if (message.command === 'clearLibVars') {
+                    const legacy = context.workspaceState.get('aps.vars', null) || {};
+                    const existingOverrides =
+                        legacy.overrides && typeof legacy.overrides === 'object'
+                            ? legacy.overrides
+                            : (context.workspaceState.get('aps.azureVars', { overrides: {} }) || {}).overrides || {};
+                    context.workspaceState.update('aps.libVars', []);
+                    context.workspaceState.update('aps.vars', { overrides: existingOverrides, libData: [] });
+                    return;
+                }
+                if (message.command === 'clearVars') {
+                    context.workspaceState.update('aps.vars', undefined);
+                    context.workspaceState.update('aps.azureVars', undefined);
+                    context.workspaceState.update('aps.libVars', undefined);
+                    return;
+                }
+                if (message.command === 'saveToolPaths') {
+                    const nextToolPaths =
+                        message.data && typeof message.data.toolPaths === 'object' ? message.data.toolPaths : {};
+                    await context.workspaceState.update('aps.toolPaths', nextToolPaths);
+                    return;
+                }
+                if (message.command === 'clearToolPaths') {
+                    await context.workspaceState.update('aps.toolPaths', {});
+                    return;
+                }
                 if (message.command !== 'runSimulation') return;
 
                 const stages = Array.isArray(message.stages) && message.stages.length ? message.stages : undefined;
@@ -3437,9 +3754,13 @@ ${mermaidDiagram
                     const simWorkDir = _toSimulatorPath(path.dirname(document.fileName));
                     const simOutRoot = simWorkDir.replace(/[/\\]$/, '') + '/simulation';
                     simOutputChannel.appendLine(`[aps] workDir=${simWorkDir}`);
-                    const execPaths = vscode.workspace
+                    const execPathsRaw = vscode.workspace
                         .getConfiguration('azurePipelineStudio', document.uri)
-                        .get('simulation.executablePaths', {});
+                        .get('simulation.toolPaths', {});
+                    const execPathsBase = _resolveExecPaths(execPathsRaw, _isLinuxSimulationContext(document.fileName));
+                    const panelToolPaths =
+                        message.toolPaths && typeof message.toolPaths === 'object' ? message.toolPaths : {};
+                    const execPaths = { ...execPathsBase, ...panelToolPaths };
                     const simDistroMatch = document.fileName.match(/^\\\\wsl\.localhost\\([^\\]+)/i);
                     const wslMountRoot =
                         process.platform === 'win32' && simDistroMatch
@@ -3486,10 +3807,41 @@ ${mermaidDiagram
             });
         }
 
+        const _savedAzure = context.workspaceState.get('aps.azureVars', null);
+        const _savedLib = context.workspaceState.get('aps.libVars', null);
+        const _legacyVars = context.workspaceState.get('aps.vars', null) || {};
+        const _savedToolPaths = context.workspaceState.get('aps.toolPaths', null);
+        const _settingsExecPathsRaw = vscode.workspace
+            .getConfiguration('azurePipelineStudio', document.uri)
+            .get('simulation.toolPaths', {});
+        const _settingsExecPaths = _resolveExecPaths(
+            _settingsExecPathsRaw,
+            _isLinuxSimulationContext(document.fileName)
+        );
+        const _mergedToolPaths = Object.assign(
+            {},
+            _settingsExecPaths,
+            _savedToolPaths && typeof _savedToolPaths === 'object' ? _savedToolPaths : {}
+        );
+        const savedVarsJson = JSON.stringify({
+            overrides:
+                _savedAzure && typeof _savedAzure.overrides === 'object'
+                    ? _savedAzure.overrides
+                    : _legacyVars.overrides || {},
+            libData: Array.isArray(_savedLib)
+                ? _savedLib
+                : Array.isArray(_legacyVars.libData)
+                  ? _legacyVars.libData
+                  : [],
+            toolPaths: _mergedToolPaths,
+        }).replace(/</g, '\\u003c');
         simulationPanel.webview.html = _generateSimulationViewHtml(
             stageTree,
             document.fileName,
-            topLevelParameterDefinitions
+            topLevelParameterDefinitions,
+            String(Date.now()),
+            knownVarsJson,
+            savedVarsJson
         );
     };
 

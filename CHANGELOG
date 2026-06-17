@@ -5,6 +5,15 @@ All notable changes to Azure Pipeline Studio will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-06-19
+
+> **Simulation UI — Alpha release.** First release of the pipeline simulation UI. Functionality is working but subject to change as the feature matures.
+
+### Added
+- **Simulation UI** *(Alpha)*: New webview panel for running pipeline simulations directly from VS Code, with configurable variables, tool paths, build options, and collapsible sections.
+
+[1.4.0]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.4.0
+
 ## [1.3.1] - 2026-05-15
 
 ### Changed
