@@ -8,7 +8,8 @@
     "onCommand:azurePipelineStudio.configureRootDirectory",
     "onCommand:azurePipelineStudio.configureResourceLocations",
     "onCommand:azurePipelineStudio.formatOriginalYaml",
-    "onCommand:azurePipelineStudio.showDependencies"
+    "onCommand:azurePipelineStudio.showDependencies",
+    "onCommand:azurePipelineStudio.showSimulationView"
   ],
   "bin": {
     "azure-pipeline-formatter": "./extension-bundle.js"
@@ -42,6 +43,10 @@
       {
         "command": "azurePipelineStudio.showDependencies",
         "title": "Pipeline Diagram"
+      },
+      {
+        "command": "azurePipelineStudio.showSimulationView",
+        "title": "Simulate Pipeline Run"
       }
     ],
     "configuration": {
@@ -174,6 +179,22 @@
             "type": "object"
           },
           "type": "array"
+        },
+        "azurePipelineStudio.simulation.debugScript": {
+          "default": false,
+          "description": "Enable verbose script debugging during pipeline simulation. Logs the script content, exit code, stdout, and stderr for each bash/pwsh step to the Output panel.",
+          "type": "boolean"
+        },
+        "azurePipelineStudio.simulation.toolPaths": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "default": {},
+          "description": "Override paths to executables used during pipeline simulation, keyed by OS. Use a 'windows' or 'linux' sub-object containing tool name \u2192 path entries. Only the block matching the simulation's execution platform is applied. Example: { \"windows\": { \"git\": \"C:\\\\PortableGit\\\\bin\\\\git.exe\" }, \"linux\": { \"pwsh\": \"/usr/bin/pwsh\" } }",
+          "type": "object"
         }
       },
       "title": "Azure Pipeline Studio"
@@ -195,6 +216,10 @@
         {
           "command": "azurePipelineStudio.showDependencies",
           "group": "2_render@3"
+        },
+        {
+          "command": "azurePipelineStudio.showSimulationView",
+          "group": "2_render@4"
         },
         {
           "command": "azurePipelineStudio.configureResourceLocations",
@@ -260,5 +285,5 @@
     "test:module": "node tests/test-azure-expressions-module.js"
   },
   "type": "commonjs",
-  "version": "1.3.1"
+  "version": "1.4.0"
 }

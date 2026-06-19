@@ -32,6 +32,7 @@ const AZURE_DEFAULTS = Object.freeze({
     'Build.StagingDirectory': '/tmp/aps-sim-staging',
     'Build.BinariesDirectory': '/tmp/aps-sim-binaries',
     'Build.SourcesDirectory': process.cwd(),
+    'System.DefaultWorkingDirectory': process.cwd(),
     'Build.DefinitionName': 'local-pipeline',
     'Build.DefinitionId': '0',
     'Build.BuildId': '0',
@@ -87,6 +88,11 @@ class PipelineSimulator {
     constructor(options = {}) {
         this.outputRoot = options.outputRoot || '';
         this.mockCatalog = options.mockCatalog || {};
+        this.executablePaths = options.executablePaths || {};
+        this.wslMountRoot = options.wslMountRoot || null;
+        this.debugScript = options.debugScript || false;
+        // e.g. "\\\\wsl.localhost\\Ubuntu-22.04" — Windows UNC prefix used to
+        // convert Linux working directories to Windows-accessible paths for Git Bash.
         // Tools to shim when they are not present on the local machine.
         // Each entry: { name, exitCode, stdout }. exitCode defaults to 0.
         this.mockTools = options.mockTools || [
@@ -95,9 +101,9 @@ class PipelineSimulator {
             { name: 'MSBuild' },
             { name: 'vstest.console' },
             { name: 'signtool' },
-            { name: '7z' },
             { name: 'curl' },
             { name: 'unzip' },
+            { name: '7z' },
             { name: 'zip' },
             { name: 'aws' },
             { name: 'java', emitToStderr: false },
@@ -106,6 +112,7 @@ class PipelineSimulator {
             { name: 'file' },
             { name: 'yq', stdout: 'mock-version' },
             { name: 'cygpath', stdout: '/mock-path' },
+            { name: 'git', onlyIfMissing: true },
         ];
         this._shimDir = null;
         this._publishedArtifacts = [];
@@ -113,6 +120,7 @@ class PipelineSimulator {
         this._releaseStageNugetFeed = null;
         this._downloadedArtifactTargets = new Map();
         this._jobRunCounter = 0;
+        this._resolvedToolsPaths = null;
     }
 
     /**
@@ -153,30 +161,71 @@ class PipelineSimulator {
             ...(options.variables || {}),
         };
 
+        this._printSimulationContext(initialVariables, pipelineVars, options, resolvedWorkDir);
+
         this._ensureSimulationDirectories(initialVariables);
         this._resetSimulationWorkspace(initialVariables, resolvedWorkDir);
 
         // Extract Release stage NuGet feed identifier for use in fallback publishing
         this._releaseStageNugetFeed = this._extractReleaseStageNugetFeed(stages);
 
+        // Build a case-insensitive set of stage names to run, if the caller restricted them.
+        const stageFilter =
+            Array.isArray(options.stages) && options.stages.length
+                ? new Set(options.stages.map((s) => String(s).toLowerCase()))
+                : null;
+
+        const selectedStages = stageFilter
+            ? stages.filter((stageDoc) => {
+                  const stageName = stageDoc.stage || 'Stage';
+                  return stageFilter.has(stageName.toLowerCase());
+              })
+            : stages;
+
+        const stageOrdering = this._orderByDependencies(
+            selectedStages,
+            (stageDoc) => stageDoc.stage || 'Stage',
+            (stageDoc) => stageDoc.dependsOn,
+            'stage'
+        );
+
         // stageDeps accumulates stageDependencies.* keys from completed stages
         // so that downstream stages can resolve $[ stageDependencies.S.J.outputs['...'] ].
         const stageDeps = {};
+        const stageResultsByName = {};
 
-        for (const stageDoc of stages) {
+        for (const stageDoc of stageOrdering.ordered) {
+            const stageName = stageDoc.stage || 'Stage';
+            const stageDependencies = this._normalizeDependsOn(stageDoc.dependsOn);
+            const nonSucceededStageDependencies = stageDependencies.filter((dependencyName) => {
+                const dependencyResult = stageResultsByName[dependencyName];
+                return dependencyResult !== undefined && dependencyResult !== 'Succeeded';
+            });
+
+            if (
+                nonSucceededStageDependencies.length > 0 &&
+                !this._conditionAllowsFailedDependencies(stageDoc.condition)
+            ) {
+                const stageResult = this._buildSkippedStageResult(stageDoc);
+                results.stages.push(stageResult);
+                stageResultsByName[stageResult.stage] = stageResult.result;
+                continue;
+            }
+
             // Merge stageDeps into the base variables so each stage sees prior outputs.
             // User-supplied -v overrides (already in initialVariables) take precedence.
             const stageVars = { ...initialVariables, ...stageDeps };
             const stageResult = this._runStage(stageDoc, stageVars, options);
             results.stages.push(stageResult);
+            stageResultsByName[stageResult.stage] = stageResult.result;
 
             // Publish this stage's outputs for subsequent stages.
-            const stageName = stageResult.stage;
+            const stageResultName = stageResult.stage;
             for (const jobResult of stageResult.jobs) {
                 const jobName = jobResult.job;
-                stageDeps[`stageDependencies.${stageName}.${jobName}.result`] = jobResult.result || 'Succeeded';
+                stageDeps[`stageDependencies.${stageResultName}.${jobName}.result`] = jobResult.result || 'Succeeded';
                 for (const [key, value] of Object.entries(jobResult.outputVariables)) {
-                    stageDeps[`stageDependencies.${stageName}.${jobName}.outputs['${key}']`] = value;
+                    stageDeps[`stageDependencies.${stageResultName}.${jobName}.outputs['${key}']`] = value;
                 }
             }
 
@@ -187,6 +236,13 @@ class PipelineSimulator {
                     else results.totalSkipped++;
                 }
             }
+        }
+
+        if (stageOrdering.skipped.length > 0) {
+            console.warn(
+                '[sim-deps] Skipped stages due to unresolved/cyclic dependencies:',
+                stageOrdering.skipped.join(', ')
+            );
         }
 
         // Always materialize publish roots so callers can inspect expected paths
@@ -201,11 +257,149 @@ class PipelineSimulator {
         return results;
     }
 
+    _printSimulationContext(initialVariables, pipelineVars, options, resolvedWorkDir) {
+        const simulationRoot = this._getSimulationRoot(initialVariables, resolvedWorkDir);
+        const shimDir = this._getShimDir();
+        const toolsPaths = this._getResolvedToolsPaths();
+
+        const context = {
+            platform: process.platform,
+            nodeVersion: process.version,
+            processCwd: process.cwd(),
+            workingDirectory: this._formatContextPath(resolvedWorkDir),
+            simulationRoot: this._formatContextPath(simulationRoot),
+            outputRoot: this.outputRoot ? this._formatContextPath(this.outputRoot) : null,
+            wslMountRoot: this.wslMountRoot || null,
+            stageFilter: Array.isArray(options.stages) ? options.stages : null,
+            debugFlags: {
+                debugScript: this.debugScript,
+                apsDebugScript: process.env.APS_DEBUG_SCRIPT === 'true',
+                debugLibVars: process.env.DEBUG_LIB_VARS === 'true',
+            },
+            shimToolPath: this._formatContextPath(shimDir),
+            toolsPaths: { ...this.executablePaths },
+            resolvedToolsPaths: toolsPaths,
+            variableSummary: {
+                pipelineVariableCount: Object.keys(pipelineVars || {}).length,
+                totalVariableCount: Object.keys(initialVariables || {}).length,
+            },
+            variables: this._formatContextVariables(initialVariables),
+        };
+
+        console.log('[sim-context]', JSON.stringify(context, null, 2));
+    }
+
+    _resolveCommandPath(commandName) {
+        const configuredPath = this.executablePaths && this.executablePaths[commandName];
+        if (configuredPath) {
+            return path.normalize(String(configuredPath));
+        }
+
+        const lookupCommand = process.platform === 'win32' ? 'where' : 'which';
+        const lookup = spawnSync(lookupCommand, [commandName], { encoding: 'utf8' });
+        if (lookup.status === 0) {
+            const firstLine = String(lookup.stdout || '')
+                .split(/\r?\n/)
+                .map((line) => line.trim())
+                .find((line) => line);
+            return firstLine ? path.normalize(firstLine) : '';
+        }
+        return '';
+    }
+
+    _getResolvedToolsPaths() {
+        if (this._resolvedToolsPaths) {
+            return { ...this._resolvedToolsPaths };
+        }
+
+        const toolNames = ['bash', 'pwsh', 'git', 'dotnet', 'node', 'nuget', 'msbuild'];
+        const resolved = {};
+        for (const name of toolNames) {
+            resolved[name] = this._resolveCommandPath(name);
+        }
+        this._resolvedToolsPaths = resolved;
+        return { ...resolved };
+    }
+
+    _formatContextPath(rawPath) {
+        if (rawPath === null || rawPath === undefined) return rawPath;
+        const input = String(rawPath).trim();
+        if (!input) return input;
+        const resolved = this._resolveHostPath(input);
+        return String(resolved).replace(/\\/g, '/');
+    }
+
+    _formatContextVariables(variables) {
+        const formatted = { ...(variables || {}) };
+        const pathVariableKeys = [
+            'Build.Repository.LocalPath',
+            'Build.ArtifactStagingDirectory',
+            'Build.StagingDirectory',
+            'Build.BinariesDirectory',
+            'Build.SourcesDirectory',
+            'System.DefaultWorkingDirectory',
+            'Agent.WorkFolder',
+            'Agent.BuildDirectory',
+            'Agent.TempDirectory',
+            'Agent.ToolsDirectory',
+            'Agent.HomeDirectory',
+            'Pipeline.Workspace',
+            'Simulator.OutputRoot',
+            'Simulator.RepositoryRoot',
+        ];
+
+        for (const variableKey of pathVariableKeys) {
+            if (!Object.prototype.hasOwnProperty.call(formatted, variableKey)) {
+                continue;
+            }
+            formatted[variableKey] = this._formatContextPath(formatted[variableKey]);
+        }
+
+        return formatted;
+    }
+
     _resetSimulationWorkspace(variables, workDir) {
         const simulationRoot = this._getSimulationRoot(variables, workDir);
         const jobsRoot = path.join(simulationRoot, 'workspace', 'jobs');
-        fs.rmSync(jobsRoot, { recursive: true, force: true });
+        this._removeDirectoryWithFallback(jobsRoot);
         fs.mkdirSync(jobsRoot, { recursive: true });
+    }
+
+    _removeDirectoryWithFallback(targetDirectory) {
+        let lastError = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+                fs.rmSync(targetDirectory, { recursive: true, force: true });
+                return;
+            } catch (error) {
+                lastError = error;
+                const code = error && error.code;
+                if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'ENOTEMPTY') {
+                    throw error;
+                }
+            }
+        }
+
+        // Last-resort fallback on Windows: keep the root and clear child entries.
+        try {
+            if (!fs.existsSync(targetDirectory)) {
+                return;
+            }
+
+            for (const childName of fs.readdirSync(targetDirectory)) {
+                const childPath = path.join(targetDirectory, childName);
+                fs.rmSync(childPath, { recursive: true, force: true });
+            }
+        } catch (fallbackError) {
+            const fallbackCode = fallbackError && fallbackError.code;
+            if (fallbackCode === 'EPERM' || fallbackCode === 'EBUSY') {
+                const details = lastError && lastError.message ? lastError.message : String(lastError || 'unknown');
+                throw new Error(
+                    `Unable to reset simulation workspace at ${targetDirectory}. A process is locking files in this folder. ${details}`
+                );
+            }
+            throw fallbackError;
+        }
     }
 
     _ensureSimulationDirectories(variables) {
@@ -243,12 +437,38 @@ class PipelineSimulator {
 
         const jobs = Array.isArray(stageDoc.jobs) ? stageDoc.jobs : [];
         // Merge stage-level variables on top of the pipeline-level ones.
+        // Re-apply userOverrides last so that YAML counter() expressions cannot
+        // overwrite explicit user-supplied values (e.g. --build-counter / -v flags).
         const stageVariables = {
             ...variables,
             ...this._extractVariablesFromDoc(stageDoc, variables, options.libraryVariables || {}),
+            ...(options.userOverrides || {}),
         };
 
-        for (const jobDoc of jobs) {
+        const jobOrdering = this._orderByDependencies(
+            jobs,
+            (jobDoc) => jobDoc.job || jobDoc.deployment || 'Job',
+            (jobDoc) => jobDoc.dependsOn,
+            'job'
+        );
+        const jobResultsByName = {};
+
+        for (const jobDoc of jobOrdering.ordered) {
+            const jobName = jobDoc.job || jobDoc.deployment || 'Job';
+            const jobDependencies = this._normalizeDependsOn(jobDoc.dependsOn);
+            const nonSucceededJobDependencies = jobDependencies.filter((dependencyName) => {
+                const dependencyResult = jobResultsByName[dependencyName];
+                return dependencyResult !== undefined && dependencyResult !== 'Succeeded';
+            });
+
+            if (nonSucceededJobDependencies.length > 0 && !this._conditionAllowsFailedDependencies(jobDoc.condition)) {
+                const skippedJobResult = this._buildSkippedJobResult(jobDoc);
+                stageResult.jobs.push(skippedJobResult);
+                jobResultsByName[jobName] = skippedJobResult.result;
+                stageVariables[`dependencies.${jobName}.result`] = skippedJobResult.result;
+                continue;
+            }
+
             const matrixJobs = this._expandMatrixJob(jobDoc, stageVariables);
             for (const { jobDoc: expandedJobDoc, matrixVars, matrixName } of matrixJobs) {
                 const jobVariablesWithMatrix = { ...stageVariables, ...matrixVars };
@@ -264,13 +484,115 @@ class PipelineSimulator {
                 // $[ dependencies.JobName.outputs['stepName.varName'] ].
                 const jobName = jobResult.job;
                 stageVariables[`dependencies.${jobName}.result`] = jobResult.result || 'Succeeded';
+                jobResultsByName[jobName] = jobResult.result || 'Succeeded';
                 for (const [key, value] of Object.entries(jobResult.outputVariables)) {
                     stageVariables[`dependencies.${jobName}.outputs['${key}']`] = value;
                 }
             }
         }
 
+        if (jobOrdering.skipped.length > 0) {
+            console.warn(
+                `[sim-deps] Stage ${stageName}: skipped jobs due to unresolved/cyclic dependencies: ${jobOrdering.skipped.join(', ')}`
+            );
+        }
+
+        if (stageResult.jobs.some((jobResult) => jobResult.result === 'Failed')) {
+            stageResult.result = 'Failed';
+        } else if (
+            stageResult.jobs.length > 0 &&
+            stageResult.jobs.every((jobResult) => jobResult.result === 'Skipped')
+        ) {
+            stageResult.result = 'Skipped';
+        } else {
+            stageResult.result = 'Succeeded';
+        }
+
         return stageResult;
+    }
+
+    _conditionAllowsFailedDependencies(condition) {
+        if (!condition || typeof condition !== 'string') return false;
+        const normalizedCondition = condition.toLowerCase().replace(/\s+/g, '');
+        return (
+            normalizedCondition.includes('always()') ||
+            normalizedCondition.includes('failed()') ||
+            normalizedCondition.includes('succeededorfailed()')
+        );
+    }
+
+    _buildSkippedJobResult(jobDoc) {
+        const jobName = jobDoc.job || jobDoc.deployment || 'Job';
+        const steps = Array.isArray(jobDoc.steps) ? jobDoc.steps : [];
+        return {
+            job: jobName,
+            displayName: jobDoc.displayName || jobName,
+            result: 'Skipped',
+            outputVariables: {},
+            steps: steps.map((stepDoc) => ({
+                displayName: stepDoc.displayName || 'Step',
+                stepName: stepDoc.name || null,
+                result: 'Skipped',
+                variables: {},
+                outputVariables: {},
+                stdout: '',
+                stderr: '',
+                exitCode: 0,
+            })),
+        };
+    }
+
+    _buildSkippedStageResult(stageDoc) {
+        const stageName = stageDoc.stage || 'Stage';
+        const jobs = Array.isArray(stageDoc.jobs) ? stageDoc.jobs : [];
+        return {
+            stage: stageName,
+            displayName: stageDoc.displayName || stageName,
+            result: 'Skipped',
+            jobs: jobs.map((jobDoc) => this._buildSkippedJobResult(jobDoc)),
+        };
+    }
+
+    _orderByDependencies(items, getName, getDependsOn, kindLabel) {
+        const pending = [...(items || [])];
+        const ordered = [];
+        const completed = new Set();
+        const inScopeNames = new Set(pending.map((item) => String(getName(item) || '')));
+
+        let madeProgress = true;
+        while (pending.length > 0 && madeProgress) {
+            madeProgress = false;
+
+            for (let idx = 0; idx < pending.length; idx++) {
+                const item = pending[idx];
+                const dependencies = this._normalizeDependsOn(getDependsOn(item));
+                const inScopeDependencies = dependencies.filter((dependencyName) => inScopeNames.has(dependencyName));
+                const ready = inScopeDependencies.every((dependencyName) => completed.has(dependencyName));
+                if (!ready) {
+                    continue;
+                }
+
+                const itemName = String(getName(item) || '');
+                ordered.push(item);
+                completed.add(itemName);
+                pending.splice(idx, 1);
+                idx -= 1;
+                madeProgress = true;
+            }
+        }
+
+        const skipped = pending.map((item) => String(getName(item) || kindLabel || 'item'));
+        return { ordered, skipped };
+    }
+
+    _normalizeDependsOn(dependsOn) {
+        if (Array.isArray(dependsOn)) {
+            return dependsOn.map((dependencyName) => String(dependencyName).trim()).filter(Boolean);
+        }
+        if (typeof dependsOn === 'string' && dependsOn.trim()) {
+            return [dependsOn.trim()];
+        }
+        return [];
     }
 
     /**
@@ -312,10 +634,13 @@ class PipelineSimulator {
             ...jobWorkspaceVariables,
         };
         // Merge job-level variables on top of the inherited ones.
+        // Re-apply userOverrides last so that YAML counter() expressions cannot
+        // overwrite explicit user-supplied values (e.g. --build-counter / -v flags).
         const jobVariables = {
             ...variables,
             ...jobWorkspaceVariables,
             ...this._extractVariablesFromDoc(jobDoc, jobVariableContext, options.libraryVariables || {}),
+            ...(options.userOverrides || {}),
         };
         const stepOptions = {
             ...options,
@@ -325,7 +650,25 @@ class PipelineSimulator {
             repositoryRoot: options.workingDirectory || process.cwd(),
         };
 
-        for (const stepDoc of steps) {
+        let jobFailed = false;
+        for (let stepIdx = 0; stepIdx < steps.length; stepIdx++) {
+            const stepDoc = steps[stepIdx];
+
+            // Steps after a job failure are not started (emit as Skipped so they appear in output).
+            if (jobFailed) {
+                jobResult.steps.push({
+                    displayName: stepDoc.displayName || 'Step',
+                    stepName: stepDoc.name || null,
+                    result: 'Skipped',
+                    variables: {},
+                    outputVariables: {},
+                    stdout: '',
+                    stderr: '',
+                    exitCode: 0,
+                });
+                continue;
+            }
+
             if (!this._shouldRunStep(stepDoc, jobVariables)) {
                 jobResult.steps.push({
                     displayName: stepDoc.displayName || 'Step',
@@ -357,7 +700,7 @@ class PipelineSimulator {
             }
 
             if (stepResult.result === 'Failed' && !stepDoc.continueOnError) {
-                break;
+                jobFailed = true;
             }
         }
 
@@ -383,6 +726,7 @@ class PipelineSimulator {
 
         return {
             'Build.SourcesDirectory': sourcesDirectory,
+            'System.DefaultWorkingDirectory': sourcesDirectory,
             'Build.Repository.LocalPath': sourcesDirectory,
             'Agent.TempDirectory': tempDirectory,
             'Simulator.JobSourcesRoot': sourcesDirectory,
@@ -441,8 +785,48 @@ class PipelineSimulator {
                 ? this._substituteVariables(rawWorkDir, variables) || process.cwd()
                 : process.cwd();
 
+            const debugEnabled = this.debugScript || !!process.env.APS_DEBUG_SCRIPT;
+            if (debugEnabled) {
+                process.stderr.write(
+                    `[aps-debug][_runStep] "${displayName}" shell=${shell} scriptKey=${scriptKey} workDir=${workDir}\n`
+                );
+            }
+
+            const simulatedNugetPack = this._simulateTemplateNuGetPackStep(
+                displayName,
+                substituted,
+                variables,
+                workDir
+            );
+            if (simulatedNugetPack) {
+                stepResult.stdout = simulatedNugetPack.stdout;
+                stepResult.stderr = '';
+                stepResult.exitCode = 0;
+                stepResult.result = 'Succeeded';
+                stepResult.variables = { ...(simulatedNugetPack.variables || {}) };
+                stepResult.outputVariables = {};
+                return stepResult;
+            }
+
+            const simulatedNugetPush = this._simulateTemplateNuGetPushStep(displayName, variables, workDir);
+            if (simulatedNugetPush) {
+                stepResult.stdout = simulatedNugetPush.stdout;
+                stepResult.stderr = '';
+                stepResult.exitCode = 0;
+                stepResult.result = 'Succeeded';
+                stepResult.variables = { ...(simulatedNugetPush.variables || {}) };
+                stepResult.outputVariables = {};
+                return stepResult;
+            }
+
             const stepEnv = this._resolveStepEnv(stepDoc.env, variables);
+            const executionStart = Date.now();
+            console.log(`[sim-exec] START shell=${shell} step="${displayName}" cwd=${workDir}`);
             const run = this._executeScript(shell, substituted, variables, workDir, stepEnv);
+            const elapsedMs = Date.now() - executionStart;
+            console.log(
+                `[sim-exec] END shell=${shell} step="${displayName}" exit=${run.exitCode} durationMs=${elapsedMs}`
+            );
             const outputText = `${run.stdout || ''}\n${run.stderr || ''}`;
             const ignoreCoverageConversionFailure =
                 run.exitCode !== 0 &&
@@ -456,6 +840,35 @@ class PipelineSimulator {
             stepResult.result = run.exitCode === 0 ? 'Succeeded' : 'Failed';
             if (ignoreFailure) {
                 stepResult.result = 'Succeeded';
+            }
+            if (run.exitCode !== 0 && !ignoreFailure) {
+                // Build a diagnostic block visible in the simulation panel
+                const _scriptLines = run._scriptContent ? run._scriptContent.split('\n') : [];
+                const _lineMatch = /line (\d+):/i.exec(run.stderr || '');
+                let _scriptContext = '';
+                if (_lineMatch && _scriptLines.length) {
+                    const _errLine = parseInt(_lineMatch[1], 10);
+                    const _s = Math.max(0, _errLine - 4);
+                    const _e = Math.min(_scriptLines.length, _errLine + 3);
+                    _scriptContext =
+                        '\n--- script context ---\n' +
+                        _scriptLines
+                            .slice(_s, _e)
+                            .map((l, i) => `${_s + i + 1}${_s + i + 1 === _errLine ? ' >>>' : '    '} ${l}`)
+                            .join('\n');
+                }
+                const _debugBlock =
+                    `\n--- aps-debug: "${displayName}" exit=${run.exitCode} shell=${shell} ---` +
+                    `\nworkDir: ${workDir}` +
+                    `\nscript (substituted):\n${substituted}` +
+                    _scriptContext;
+                stepResult.stderr = (run.stderr || '') + _debugBlock;
+                const debugEnabled = this.debugScript || !!process.env.APS_DEBUG_SCRIPT;
+                if (debugEnabled) {
+                    process.stderr.write(
+                        '[aps-debug][_runStep] "' + displayName + '" FAILED exit=' + run.exitCode + '\n'
+                    );
+                }
             }
             applyDirectives(this._parseVsoDirectives(run.stdout));
         } else if (stepDoc.task) {
@@ -480,7 +893,13 @@ class PipelineSimulator {
             if (nativeShell && inputs.script !== undefined) {
                 const substituted = this._substituteVariables(String(inputs.script), variables);
                 const stepEnv = this._resolveStepEnv(stepDoc.env, variables);
+                const executionStart = Date.now();
+                console.log(`[sim-exec] START shell=${nativeShell} step="${displayName}" cwd=${workDir}`);
                 const run = this._executeScript(nativeShell, substituted, variables, workDir, stepEnv);
+                const elapsedMs = Date.now() - executionStart;
+                console.log(
+                    `[sim-exec] END shell=${nativeShell} step="${displayName}" exit=${run.exitCode} durationMs=${elapsedMs}`
+                );
                 const outputText = `${run.stdout || ''}\n${run.stderr || ''}`;
                 const ignoreCoverageConversionFailure =
                     run.exitCode !== 0 &&
@@ -920,6 +1339,17 @@ class PipelineSimulator {
             .replace(/\s*\]$/, '')
             .trim();
 
+        // $[ coalesce(arg1, arg2, ...) ] → return first non-empty resolved argument.
+        const coalesceMatch = /^coalesce\((.+)\)$/i.exec(inner);
+        if (coalesceMatch) {
+            const args = this._splitExpressionArgs(coalesceMatch[1]);
+            for (const arg of args) {
+                const resolved = this._resolveExpressionArg(arg.trim(), variables);
+                if (resolved !== undefined && resolved !== '') return resolved;
+            }
+            return '';
+        }
+
         // $[ variables.x ] → look up 'x' directly in the variables map.
         const varsPrefixMatch = /^variables\.(.+)$/i.exec(inner);
         if (varsPrefixMatch) {
@@ -934,6 +1364,66 @@ class PipelineSimulator {
         }
 
         return ''; // Unresolved runtime expression → empty string
+    }
+
+    /**
+     * Split a comma-separated expression argument list, respecting brackets and quotes.
+     * e.g. "stageDependencies.A.B.outputs['x.y'], '0.0.0'" → two args
+     */
+    _splitExpressionArgs(str) {
+        const args = [];
+        let depth = 0;
+        let current = '';
+        let inQuote = false;
+        let quoteChar = '';
+        for (const ch of str) {
+            if (inQuote) {
+                current += ch;
+                if (ch === quoteChar) inQuote = false;
+            } else if (ch === "'" || ch === '"') {
+                inQuote = true;
+                quoteChar = ch;
+                current += ch;
+            } else if (ch === '(' || ch === '[') {
+                depth++;
+                current += ch;
+            } else if (ch === ')' || ch === ']') {
+                depth--;
+                current += ch;
+            } else if (ch === ',' && depth === 0) {
+                args.push(current.trim());
+                current = '';
+            } else {
+                current += ch;
+            }
+        }
+        if (current.trim()) args.push(current.trim());
+        return args;
+    }
+
+    /**
+     * Resolve a single expression argument (used by coalesce and similar functions).
+     * Handles string literals ('value'), variables.x references, and direct variable lookups.
+     */
+    _resolveExpressionArg(arg, variables) {
+        // String literal: 'value' or "value"
+        const literalMatch = /^['"](.*)['"]$/.exec(arg);
+        if (literalMatch) return literalMatch[1];
+
+        // variables.x reference
+        const varsPrefixMatch = /^variables\.(.+)$/i.exec(arg);
+        if (varsPrefixMatch) {
+            const resolvedKey = varsPrefixMatch[1].trim();
+            const resolvedValue = variables[resolvedKey];
+            return resolvedValue !== undefined && resolvedValue !== null ? resolvedValue : '';
+        }
+
+        // Direct lookup: stageDependencies.S.J.outputs['key'], etc.
+        if (Object.prototype.hasOwnProperty.call(variables, arg)) {
+            return variables[arg];
+        }
+
+        return '';
     }
 
     /**
@@ -1016,6 +1506,8 @@ class PipelineSimulator {
         const ext = shell === 'bash' ? '.sh' : '.ps1';
         const tmpFile = path.join(os.tmpdir(), `aps-sim-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
         let pythonApiShimDir;
+        let keepTmpFile = false;
+        let lastShellInvocation = shell;
 
         try {
             let scriptContent = script;
@@ -1026,40 +1518,118 @@ class PipelineSimulator {
                 // try to run Agent.TempDirectory as a command ("command not found"). With it,
                 // variables exported earlier in the same script via ##vso[task.setvariable]
                 // are accessible to subsequent lines.
+                // Build a case-insensitive lookup map for variables so that ADO references
+                // like $(version) correctly resolve even when the stored key is VERSION.
+                const variablesLower = Object.create(null);
+                for (const k of Object.keys(variables)) {
+                    variablesLower[k.toLowerCase()] = k;
+                }
                 scriptContent = scriptContent.replace(/\$\(([A-Za-z_][A-Za-z0-9_.]*)\)/g, (match, varName) => {
                     const trimmed = varName.trim();
+                    const shellName = trimmed.toUpperCase().replace(/[^A-Z0-9_]/g, '_');
+                    // Exact match: materialize to bash env-var reference.
                     if (Object.prototype.hasOwnProperty.call(variables, trimmed)) {
-                        const shellName = trimmed.toUpperCase().replace(/[^A-Z0-9_]/g, '_');
                         return '${' + shellName + '}';
                     }
-                    if (/[A-Z.]/.test(trimmed)) {
-                        const shellName = trimmed.toUpperCase().replace(/[^A-Z0-9_]/g, '_');
+                    // Case-insensitive match: $(version) → ${VERSION} when VERSION is a variable.
+                    if (Object.prototype.hasOwnProperty.call(variablesLower, trimmed.toLowerCase())) {
                         return '${' + shellName + '}';
                     }
-                    if (/^[A-Z_][A-Z0-9_]*$/.test(trimmed)) {
-                        return '${' + trimmed + '}';
+                    // Keep unresolved macros as a literal token (no command substitution).
+                    // Only escape names containing a dot — those are ADO macro references
+                    // (e.g. $(Build.SourcesDirectory)) and are never valid bash commands.
+                    // Names without a dot (e.g. $(pwd), $(date)) may be intentional bash
+                    // command substitutions; Azure leaves them verbatim so bash executes them.
+                    if (trimmed.includes('.')) {
+                        return `\\$(${trimmed})`;
                     }
                     return match;
                 });
+
+                // Rewrite bash 5.1+ parameter transformations that BusyBox ash does not support.
+                //   ${VAR@L}  → $(printf '%s' "${VAR}" | tr '[:upper:]' '[:lower:]')
+                //   ${VAR@U}  → $(printf '%s' "${VAR}" | tr '[:lower:]' '[:upper:]')
+                //   ${VAR@u}  → first-char uppercase (approximated via sed)
+                //   ${VAR@Q}  → "${VAR}"  (quoted — approximation sufficient for simulation)
+                //   ${VAR@E}  → "${VAR}"  (expand-escapes — approximation)
+                //   ${VAR@A}  → "${VAR}"  (assignment form — approximation)
+                scriptContent = scriptContent.replace(
+                    /\$\{([A-Za-z_][A-Za-z0-9_]*)@([LUuQEA])\}/g,
+                    (match, varName, op) => {
+                        const ref = `"\${${varName}}"`;
+                        if (op === 'L') return `$(printf '%s' ${ref} | tr '[:upper:]' '[:lower:]')`;
+                        if (op === 'U') return `$(printf '%s' ${ref} | tr '[:lower:]' '[:upper:]')`;
+                        if (op === 'u') return `$(printf '%s' ${ref} | sed 's/^./\\u&/')`;
+                        // Q, E, A — just emit the value; adequate for simulation
+                        return ref;
+                    }
+                );
 
                 // Inject a preamble that intercepts each echo "##vso[task.setvariable...]"
                 // call and exports the variable as a real bash variable. This makes
                 // ##vso-set variables available to later lines in the same script.
                 const preamble = [
-                    '# APS Simulator preamble: export ##vso[task.setvariable] variables as bash variables',
+                    '# APS Simulator preamble: intercept ##vso[task.setvariable] and export as shell variables',
+                    '_aps_trace_pause() {',
+                    '    case "$-" in',
+                    '        *x*) _APS_TRACE_WAS_ON=1; set +x ;;',
+                    '        *) _APS_TRACE_WAS_ON=0 ;;',
+                    '    esac',
+                    '}',
+                    '_aps_trace_resume() {',
+                    '    [ "${_APS_TRACE_WAS_ON:-0}" = "1" ] && set -x || true',
+                    '}',
+                    '',
                     'echo() {',
+                    '    _aps_trace_pause',
                     '    command echo "$@"',
                     '    local _aps_line="$*" _aps_var _aps_val',
-                    "    if [[ \"$_aps_line\" =~ ^'##vso[task.setvariable'[^]]*'variable='([A-Za-z_][A-Za-z0-9_]*)[^]]*']'(.*) ]]; then",
-                    '        _aps_var="${BASH_REMATCH[1]}"',
-                    '        _aps_val="${BASH_REMATCH[2]}"',
-                    '        declare -g "$_aps_var=$_aps_val" 2>/dev/null || true',
-                    '        export "$_aps_var" 2>/dev/null || true',
+                    '    case "$_aps_line" in',
+                    "        '##vso[task.setvariable'*)",
+                    "            _aps_var=$(printf '%s' \"$_aps_line\" | sed -n 's/.*variable=\\([A-Za-z_][A-Za-z0-9_]*\\)[^]]*\\].*/\\1/p') || true",
+                    "            _aps_val=$(printf '%s' \"$_aps_line\" | sed -n 's/^[^]]*\\]//p') || true",
+                    '            [ -n "$_aps_var" ] && export "$_aps_var=$_aps_val" 2>/dev/null || true',
+                    '            ;;',
+                    '    esac',
+                    '    _aps_trace_resume',
+                    '}',
+                    '',
+                    '# Prefer resolved git path over PATH lookup on Windows bash variants.',
+                    'APS_GIT_BIN="${APS_TOOL_PATH_GIT_WIN:-${APS_TOOL_PATH_GIT:-}}"',
+                    'git() {',
+                    '    _aps_trace_pause',
+                    '    if [ -n "$APS_GIT_BIN" ]; then',
+                    '        "$APS_GIT_BIN" "$@"',
+                    '    else',
+                    '        command git "$@"',
                     '    fi',
+                    '    _aps_trace_resume',
                     '}',
                     '',
                 ].join('\n');
                 scriptContent = preamble + scriptContent;
+
+                // Safety rail: mock remote-mutating update operations so simulation never writes remotely.
+                // This avoids shell wrapper compatibility issues while still blocking commands like `git push`.
+                const remoteUpdateMockRules = [
+                    [/^(\s*)git\s+push\b.*$/gm, '$1echo "[mock-remote-update] git push skipped" >&2'],
+                    [/^(\s*)nuget\s+push\b.*$/gm, '$1echo "[mock-remote-update] nuget push skipped" >&2'],
+                    [
+                        /^(\s*)dotnet\s+nuget\s+push\b.*$/gm,
+                        '$1echo "[mock-remote-update] dotnet nuget push skipped" >&2',
+                    ],
+                    [/^(\s*)npm\s+publish\b.*$/gm, '$1echo "[mock-remote-update] npm publish skipped" >&2'],
+                    [/^(\s*)pnpm\s+publish\b.*$/gm, '$1echo "[mock-remote-update] pnpm publish skipped" >&2'],
+                    [/^(\s*)yarn\s+publish\b.*$/gm, '$1echo "[mock-remote-update] yarn publish skipped" >&2'],
+                    [/^(\s*)twine\s+upload\b.*$/gm, '$1echo "[mock-remote-update] twine upload skipped" >&2'],
+                    [
+                        /^(\s*)az\s+artifacts\s+universal\s+publish\b.*$/gm,
+                        '$1echo "[mock-remote-update] az artifacts universal publish skipped" >&2',
+                    ],
+                ];
+                for (const [pattern, replacement] of remoteUpdateMockRules) {
+                    scriptContent = scriptContent.replace(pattern, replacement);
+                }
 
                 if (this._shouldInjectPythonApiShim(scriptContent)) {
                     pythonApiShimDir = this._createPythonApiShim();
@@ -1081,76 +1651,276 @@ class PipelineSimulator {
             }
             // Prepend shim dir so mock tools shadow any missing real tools
             env.PATH = shimDir + path.delimiter + (env.PATH || '');
+            if (shell === 'bash' && process.platform === 'win32') {
+                // BusyBox/Git Bash command lookup is more reliable with a POSIX-style
+                // shim path in front of PATH. Also add directories of all resolved tools
+                // so that e.g. git from PortableGit is visible inside the bash script.
+                const bashShimDir = this._toBashPath(shimDir);
+                const resolvedForPath = this._getResolvedToolsPaths();
+                const toolDirs = [
+                    ...new Set(
+                        Object.values(resolvedForPath)
+                            .filter(Boolean)
+                            .map((p) => this._toBashPath(path.dirname(p)))
+                            .filter(Boolean)
+                    ),
+                ];
+                const extraDirs = toolDirs.length ? toolDirs.join(':') + ':' : '';
+                env.PATH = `${bashShimDir}:${extraDirs}${env.PATH || ''}`;
+            }
             if (pythonApiShimDir) {
                 env.PYTHONPATH = pythonApiShimDir + path.delimiter + (env.PYTHONPATH || '');
             }
-
-            const resolvedCwd = workingDirectory
-                ? path.resolve(String(workingDirectory).replace(/\\/g, '/'))
-                : process.cwd();
-
-            const tryRun = (shellName) =>
-                spawnSync(shellName, [tmpFile], {
-                    env,
-                    cwd: resolvedCwd,
-                    encoding: 'utf8',
-                    timeout: 60000,
-                });
-
-            let run = tryRun(shell);
-            if (run.error && run.error.code === 'ENOENT') {
-                if (shell === 'bash') {
-                    // Some hosts expose bash only via /bin/bash or sh.
-                    run = tryRun('/bin/bash');
-                    if (run.error && run.error.code === 'ENOENT') {
-                        run = tryRun('sh');
-                        if (run.error && run.error.code === 'ENOENT') {
-                            return {
-                                stdout: '[mock] bash/sh not available locally; step simulated.',
-                                stderr: '',
-                                exitCode: 0,
-                            };
-                        }
+            if (shell === 'bash') {
+                const resolvedToolsPaths = this._getResolvedToolsPaths();
+                env.APS_RESOLVED_TOOLS_PATHS = JSON.stringify(resolvedToolsPaths);
+                for (const [toolName, toolPath] of Object.entries(resolvedToolsPaths)) {
+                    const safeToolName = String(toolName)
+                        .toUpperCase()
+                        .replace(/[^A-Z0-9_]/g, '_');
+                    const pathValue =
+                        process.platform === 'win32' ? this._toBashPath(toolPath) : String(toolPath || '');
+                    env[`APS_TOOL_PATH_${safeToolName}`] = pathValue;
+                    if (process.platform === 'win32') {
+                        env[`APS_TOOL_PATH_${safeToolName}_WIN`] = String(toolPath || '').replace(/\\/g, '/');
                     }
-                } else if (shell === 'pwsh') {
-                    if (/\b(msbuild|dotnet\s+build|dotnet\s+test|devenv)\b/i.test(script) && resolvedCwd) {
-                        this._materializeMockBuildOutputs(resolvedCwd);
-                    }
-                    if (/signatures\.json/i.test(script) && workingDirectory) {
-                        const signatureCandidates = new Set([
-                            path.join(resolvedCwd, 'signatures.json'),
-                            path.join(resolvedCwd, 'signature-validation', 'signatures.json'),
-                            path.join(
-                                String(variables['Build.SourcesDirectory'] || resolvedCwd),
-                                'signature-validation',
-                                'signatures.json'
-                            ),
-                        ]);
-                        for (const signaturesPath of signatureCandidates) {
-                            fs.mkdirSync(path.dirname(signaturesPath), { recursive: true });
-                            if (!fs.existsSync(signaturesPath)) {
-                                fs.writeFileSync(signaturesPath, '[]\n', 'utf8');
-                            }
-                        }
-                    }
-                    // Keep simulation moving when pwsh is unavailable locally.
-                    return {
-                        stdout: '[mock] pwsh not available locally; step simulated.',
-                        stderr: '',
-                        exitCode: 0,
-                    };
                 }
             }
 
-            return {
+            const resolvedCwd = workingDirectory
+                ? this._resolveHostPath(String(workingDirectory).replace(/\\/g, '/'))
+                : process.cwd();
+
+            // Debug: log which shell + script will be run
+            const _debugEnabled = this.debugScript || !!process.env.APS_DEBUG_SCRIPT;
+            if (_debugEnabled) {
+                process.stderr.write(`[aps-debug][_executeScript] shell=${shell} tmp=${tmpFile} cwd=${resolvedCwd}\n`);
+                if (shell === 'bash') {
+                    process.stderr.write('[aps-debug] bash env:\n' + JSON.stringify(env, null, 2) + '\n');
+                }
+            }
+            if (_debugEnabled) {
+                process.stderr.write('[aps-debug] script content:\n' + scriptContent.slice(0, 2000) + '\n');
+            }
+
+            const effectiveCwd = resolvedCwd;
+
+            // Git Bash (MSYS2) requires the script path in MSYS format (/c/Users/... not C:\Users\...).
+            // BusyBox and other native Windows shells expect the plain Windows path.
+            // Compute both and choose per-shell.
+            const scriptArg = tmpFile;
+            const scriptArgMsys =
+                process.platform === 'win32'
+                    ? tmpFile.replace(/^([A-Za-z]):\\/, (_, d) => `/${d.toLowerCase()}/`).replace(/\\/g, '/')
+                    : tmpFile;
+
+            const configuredShell = this.executablePaths[shell];
+            const windowsGitBashCandidates =
+                shell === 'bash' && process.platform === 'win32'
+                    ? [
+                          'C:\\Program Files\\Git\\bin\\bash.exe',
+                          'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
+                          process.env.ProgramFiles
+                              ? path.join(process.env.ProgramFiles, 'Git', 'bin', 'bash.exe')
+                              : null,
+                          process.env['ProgramFiles(x86)']
+                              ? path.join(process.env['ProgramFiles(x86)'], 'Git', 'bin', 'bash.exe')
+                              : null,
+                          process.env.LOCALAPPDATA
+                              ? path.join(process.env.LOCALAPPDATA, 'Programs', 'Git', 'bin', 'bash.exe')
+                              : null,
+                      ].filter(Boolean)
+                    : [];
+            lastShellInvocation = configuredShell || shell;
+
+            // tryRun uses the native Windows path by default; pass scriptArgMsys for Git Bash.
+            const tryRun = (shellName, scriptPath = scriptArg) => {
+                lastShellInvocation = shellName;
+                return spawnSync(shellName, [scriptPath], {
+                    env,
+                    cwd: effectiveCwd,
+                    encoding: 'utf8',
+                    timeout: 60000,
+                });
+            };
+
+            let run;
+            if (shell === 'bash' && process.platform === 'win32' && !configuredShell) {
+                // Prefer full Git Bash first on Windows because some lightweight bash
+                // variants do not support process substitution (< <(...)) used by templates.
+                run = null;
+                for (const gitBash of windowsGitBashCandidates) {
+                    run = tryRun(gitBash, scriptArgMsys);
+                    if (!run.error || run.error.code !== 'ENOENT') break;
+                }
+                if (!run || (run.error && run.error.code === 'ENOENT')) {
+                    run = tryRun(shell);
+                }
+            } else {
+                run = tryRun(configuredShell || shell);
+            }
+
+            // If the selected bash cannot parse bash-specific syntax (notably process
+            // substitution `< <(...)`), retry once with Git Bash on Windows.
+            const _bashParseErrorPattern =
+                /syntax error:\s*unexpected\s+"?\(|unexpected token\s+`?"?\(|expecting\s+"fi"/i;
+
+            if (
+                shell === 'bash' &&
+                process.platform === 'win32' &&
+                run &&
+                run.status !== 0 &&
+                _bashParseErrorPattern.test(String(run.stderr || ''))
+            ) {
+                for (const gitBash of windowsGitBashCandidates) {
+                    const retried = tryRun(gitBash, scriptArgMsys);
+                    if (retried.error && retried.error.code === 'ENOENT') {
+                        continue;
+                    }
+                    run = retried;
+                    break;
+                }
+            }
+
+            if (run.error && run.error.code === 'ENOENT') {
+                if (configuredShell) {
+                    // Configured path not found — warn and fall through to the auto-discovery chain.
+                    process.stderr.write(
+                        `[bash-lookup] configured path not found: ${configuredShell}; falling back to auto-discovery\n`
+                    );
+                    run = tryRun(shell);
+                }
+                if (run.error && run.error.code === 'ENOENT') {
+                    if (shell === 'bash') {
+                        if (process.platform === 'win32') {
+                            // bash (BusyBox symlink) was already tried above. Fall back to Git Bash
+                            // for machines that don't have BusyBox installed.
+                            for (const gitBash of windowsGitBashCandidates) {
+                                run = tryRun(gitBash, scriptArgMsys);
+                                if (!run.error || run.error.code !== 'ENOENT') break;
+                            }
+                            if (run.error && run.error.code === 'ENOENT') {
+                                return {
+                                    stdout: '[mock] bash not available locally; step simulated.',
+                                    stderr: '',
+                                    exitCode: 0,
+                                };
+                            }
+                        } else {
+                            // Non-Windows: bash already tried; fall back to sh.
+                            run = tryRun('/bin/bash');
+                            if (run.error && run.error.code === 'ENOENT') {
+                                run = tryRun('sh');
+                            }
+                            if (run.error && run.error.code === 'ENOENT') {
+                                return {
+                                    stdout: '[mock] bash/sh not available locally; step simulated.',
+                                    stderr: '',
+                                    exitCode: 0,
+                                };
+                            }
+                        }
+                    } else if (shell === 'pwsh') {
+                        if (/\b(msbuild|dotnet\s+build|dotnet\s+test|devenv)\b/i.test(script) && resolvedCwd) {
+                            this._materializeMockBuildOutputs(resolvedCwd);
+                        }
+                        if (/signatures\.json/i.test(script) && workingDirectory) {
+                            const signatureCandidates = new Set([
+                                path.join(resolvedCwd, 'signatures.json'),
+                                path.join(resolvedCwd, 'signature-validation', 'signatures.json'),
+                                path.join(
+                                    String(variables['Build.SourcesDirectory'] || resolvedCwd),
+                                    'signature-validation',
+                                    'signatures.json'
+                                ),
+                            ]);
+                            for (const signaturesPath of signatureCandidates) {
+                                fs.mkdirSync(path.dirname(signaturesPath), { recursive: true });
+                                if (!fs.existsSync(signaturesPath)) {
+                                    fs.writeFileSync(signaturesPath, '[]\n', 'utf8');
+                                }
+                            }
+                        }
+                        // Keep simulation moving when pwsh is unavailable locally.
+                        return {
+                            stdout: '[mock] pwsh not available locally; step simulated.',
+                            stderr: '',
+                            exitCode: 0,
+                        };
+                    }
+                } // end: if (run.error && run.error.code === 'ENOENT') after configured-shell fallback
+            }
+
+            const _result = {
                 stdout: run.stdout || '',
                 stderr: run.stderr || (run.error ? run.error.message : ''),
                 exitCode: run.status !== null ? run.status : 1,
+                _scriptContent: scriptContent,
             };
+            const _exitCode = _result.exitCode;
+            const _lineMatch = /line (\d+):/i.exec(_result.stderr || '');
+            const _isShellParseError = _exitCode !== 0 && _bashParseErrorPattern.test(_result.stderr || '');
+
+            if (_isShellParseError) {
+                keepTmpFile = true;
+                process.stderr.write(
+                    `[aps-parse-error] shell=${lastShellInvocation} tmp=${tmpFile} cwd=${effectiveCwd} configuredShell=${configuredShell || ''}\n`
+                );
+                if (windowsGitBashCandidates.length) {
+                    process.stderr.write(
+                        `[aps-parse-error] gitBashCandidates=${windowsGitBashCandidates.join(' | ')}\n`
+                    );
+                }
+                if (_lineMatch) {
+                    const _errLine = parseInt(_lineMatch[1], 10);
+                    const _scriptLines = scriptContent.split('\n');
+                    const _start = Math.max(0, _errLine - 6);
+                    const _end = Math.min(_scriptLines.length, _errLine + 4);
+                    const _context = _scriptLines
+                        .slice(_start, _end)
+                        .map((line, index) => {
+                            const lineNumber = _start + index + 1;
+                            return `  ${lineNumber}${lineNumber === _errLine ? ' >>>' : '    '} ${line}`;
+                        })
+                        .join('\n');
+                    process.stderr.write(`[aps-parse-error] script around line ${_errLine}:\n${_context}\n`);
+                } else {
+                    process.stderr.write('[aps-parse-error] full script follows:\n' + scriptContent + '\n');
+                }
+            }
+
+            if (_debugEnabled) {
+                process.stderr.write(
+                    `[aps-debug][_executeScript] exit=${_exitCode} stdout-bytes=${(_result.stdout || '').length} stderr-bytes=${(_result.stderr || '').length}\n`
+                );
+                if (_exitCode !== 0) {
+                    const _tail = (s, n) => (s ? s.split('\n').slice(-n).join('\n') : '');
+                    process.stderr.write('[aps-debug] stdout(last 20):\n' + _tail(_result.stdout, 20) + '\n');
+                    process.stderr.write('[aps-debug] stderr(last 20):\n' + _tail(_result.stderr, 20) + '\n');
+                    // Extract line number from error (e.g. "line 16: syntax error") and show that line
+                    if (_lineMatch) {
+                        const _errLine = parseInt(_lineMatch[1], 10);
+                        const _scriptLines = scriptContent.split('\n');
+                        const _start = Math.max(0, _errLine - 4);
+                        const _end = Math.min(_scriptLines.length, _errLine + 2);
+                        const _context = _scriptLines
+                            .slice(_start, _end)
+                            .map((l, i) => `  ${_start + i + 1}${_start + i + 1 === _errLine ? ' >>>' : '    '} ${l}`)
+                            .join('\n');
+                        process.stderr.write(`[aps-debug] script around line ${_errLine}:\n${_context}\n`);
+                    }
+                } else {
+                    const _tail = (s, n) => (s ? s.split('\n').slice(-n).join('\n') : '');
+                    process.stderr.write('[aps-debug] stdout(last 10):\n' + _tail(_result.stdout, 10) + '\n');
+                }
+            }
+            return _result;
         } finally {
-            try {
-                fs.unlinkSync(tmpFile);
-            } catch (_) {}
+            if (!keepTmpFile) {
+                try {
+                    fs.unlinkSync(tmpFile);
+                } catch (_) {}
+            }
             if (pythonApiShimDir) {
                 try {
                     fs.rmSync(pythonApiShimDir, { recursive: true, force: true });
@@ -1223,6 +1993,28 @@ class PipelineSimulator {
      * Lazily create (once per simulator instance) a temp directory of no-op
      * shim scripts for tools listed in this.mockTools that aren't on the PATH.
      */
+    _isToolOnPath(name) {
+        // On Windows, check accessibility from the bash context that will actually run scripts,
+        // since the Windows PATH (used by `where`) differs from what bash sees.
+        if (process.platform === 'win32') {
+            const configuredBash = this.executablePaths && this.executablePaths['bash'];
+            const bashCandidates = [
+                configuredBash,
+                'bash',
+                'C:\\Program Files\\Git\\bin\\bash.exe',
+                process.env.ProgramFiles ? `${process.env.ProgramFiles}\\Git\\bin\\bash.exe` : null,
+            ].filter(Boolean);
+            for (const bash of bashCandidates) {
+                const result = spawnSync(bash, ['-c', `command -v ${name}`], { encoding: 'utf8' });
+                if (result.status === 0) return true;
+                if (!result.error || result.error.code !== 'ENOENT') break;
+            }
+            return false;
+        }
+        const result = spawnSync('which', [name], { encoding: 'utf8' });
+        return result.status === 0;
+    }
+
     _getShimDir() {
         if (this._shimDir) return this._shimDir;
 
@@ -1230,6 +2022,7 @@ class PipelineSimulator {
         this._shimDir = dir;
 
         for (const tool of this.mockTools) {
+            if (tool.onlyIfMissing && this._isToolOnPath(tool.name)) continue;
             const toolPath = path.join(dir, tool.name);
             const exitCode = tool.exitCode !== undefined ? tool.exitCode : 0;
             const stdout = tool.stdout || '';
@@ -1384,6 +2177,40 @@ case "$target" in
         ;;
 esac
 exit 0
+`;
+            } else if (tool.name === 'git') {
+                shimContent = `#!/usr/bin/env bash
+# Mock shim for git used by simulator offline mode
+cmd="\${1:-}"
+case "\$cmd" in
+    config)
+        if [[ "\$2" == "--get"* || "\$2" == "--list" ]]; then
+            exit 0
+        fi
+        exit 0
+        ;;
+    rev-parse)
+        echo "0000000000000000000000000000000000000000"
+        exit 0
+        ;;
+    log)
+        echo "0000000 [mock] simulated commit"
+        exit 0
+        ;;
+    status)
+        echo "On branch main"
+        echo "nothing to commit, working tree clean"
+        exit 0
+        ;;
+    clone|fetch|pull|push|checkout|submodule|remote|tag|branch|merge|rebase|stash|reset|clean|init|add|commit|show|diff|describe|ls-files|ls-remote)
+        echo ${JSON.stringify('[mock-tool] git $*')} >&2
+        exit 0
+        ;;
+    *)
+        echo ${JSON.stringify('[mock-tool] git $*')} >&2
+        exit 0
+        ;;
+esac
 `;
             } else if (tool.name === 'cygpath') {
                 shimContent = `#!/usr/bin/env bash
@@ -1641,20 +2468,67 @@ exit 0
     _getSimulationRoot(variables, workDir) {
         const configuredRoot = this.outputRoot || variables['Simulator.OutputRoot'];
         if (configuredRoot) {
-            const resolved = path.resolve(String(configuredRoot));
+            const resolved = this._resolveHostPath(String(configuredRoot));
             fs.mkdirSync(resolved, { recursive: true });
             return resolved;
         }
         const workspaceRoot = variables['Pipeline.Workspace'] || workDir || process.cwd();
-        return path.resolve(workspaceRoot);
+        return this._resolveHostPath(workspaceRoot);
+    }
+
+    /**
+     * Resolve a path to something the host OS can use for fs/spawn operations.
+     * On Windows, Linux absolute paths (e.g. /root/workspace/...) are prefixed
+     * with wslMountRoot (e.g. \\wsl.localhost\Ubuntu-22.04) if available,
+     * otherwise path.resolve() would produce a wrong C:\root\... path.
+     */
+    _resolveHostPath(p) {
+        const s = String(p || '').trim();
+        if (process.platform === 'win32') {
+            // Already a UNC WSL path (\\wsl.localhost\Distro\...) → keep as-is.
+            if (/^\\\\wsl\.localhost\\[^\\]+\\/i.test(s)) {
+                return path.normalize(s);
+            }
+
+            // UNC-like WSL path expressed with forward slashes (//wsl.localhost/Distro/...)
+            // should be normalized, not prefixed with wslMountRoot again.
+            if (/^\/\/wsl\.localhost\/[^/]+\//i.test(s)) {
+                return path.normalize(s.replace(/\//g, '\\'));
+            }
+
+            // Linux absolute path inside WSL (/root/...): map to configured UNC mount root.
+            if (this.wslMountRoot && s.startsWith('/')) {
+                return path.normalize(this.wslMountRoot + s.replace(/\//g, '\\'));
+            }
+        }
+        return path.resolve(s);
+    }
+
+    _toBashPath(rawPath) {
+        const s = String(rawPath || '').trim();
+        if (!s) return '';
+        if (process.platform !== 'win32') return s;
+
+        // C:\foo\bar -> /c/foo/bar
+        const driveMatch = /^([A-Za-z]):[\\/](.*)$/.exec(s);
+        if (driveMatch) {
+            return `/${driveMatch[1].toLowerCase()}/${driveMatch[2].replace(/[\\/]+/g, '/')}`;
+        }
+
+        // \\wsl.localhost\Distro\path -> //wsl.localhost/Distro/path
+        if (/^\\\\wsl\.localhost\\/i.test(s)) {
+            return s.replace(/\\/g, '/');
+        }
+
+        return s.replace(/\\/g, '/');
     }
 
     _resolvePath(rawPath, variables, workDir) {
         const substituted = this._substituteTaskInputVariables(String(rawPath), variables).replace(/\\/g, '/');
         if (path.isAbsolute(substituted)) {
-            return path.resolve(substituted);
+            return this._resolveHostPath(substituted);
         }
-        return path.resolve(workDir || process.cwd(), substituted);
+        return this._resolveHostPath(path.posix.join((workDir || process.cwd()).replace(/\\/g, '/'), substituted));
     }
 
     _recordDownloadTarget(targetPath) {
@@ -1884,7 +2758,8 @@ exit 0
         }
         // Auto-publish packages to feed-publishes if not already published by Release stage
         // This ensures packages are available for publishing even if Release stage didn't run
-        if (this._feedPublishes.length === 0 && hasPackages) {
+        const hasNugetFeedPublish = this._feedPublishes.some((p) => p.type === 'nuget');
+        if (!hasNugetFeedPublish && hasPackages) {
             const packageFiles = fs
                 .readdirSync(packagesDir)
                 .filter((name) => /\.(snupkg|nupkg)$/i.test(name))
@@ -2029,6 +2904,144 @@ exit 0
             JSON.stringify(this._feedPublishes, null, 2),
             'utf8'
         );
+    }
+
+    _simulateTemplateNuGetPushStep(displayName, variables, workDir) {
+        const match = /^Publish NuGet Packages\((.+)\)$/.exec(String(displayName || '').trim());
+        if (!match) {
+            return null;
+        }
+
+        const feedIdentifier = match[1].trim() || 'local-nuget-feed';
+        const resolvedWorkDir = workDir ? path.resolve(workDir) : process.cwd();
+        fs.mkdirSync(resolvedWorkDir, { recursive: true });
+
+        let packageFiles = this._collectPackageFiles(['*.nupkg', '*.snupkg'], resolvedWorkDir, ['.nupkg', '.snupkg']);
+        if (packageFiles.length === 0) {
+            const buildNumber = String(variables['Build.BuildNumber'] || '0.0.0');
+            const fallbackPackageName = `dummy.${buildNumber}.nupkg`;
+            const fallbackPackagePath = path.join(resolvedWorkDir, fallbackPackageName);
+            fs.writeFileSync(fallbackPackagePath, '[sim] dummy package generated for NuGet publish step\n', 'utf8');
+            packageFiles = [fallbackPackagePath];
+        }
+
+        const feedRoot = path.join(
+            this._getFeedPublishRoot(variables, resolvedWorkDir),
+            'nuget',
+            this._sanitizePathSegment(feedIdentifier)
+        );
+        fs.mkdirSync(feedRoot, { recursive: true });
+
+        const published = [];
+        for (const pkgFile of packageFiles) {
+            const destinationPath = path.join(feedRoot, path.basename(pkgFile));
+            if (fs.existsSync(pkgFile)) {
+                fs.copyFileSync(pkgFile, destinationPath);
+            } else {
+                fs.writeFileSync(destinationPath, `[sim] stub NuGet package: ${path.basename(pkgFile)}\n`, 'utf8');
+            }
+            published.push(path.basename(pkgFile));
+        }
+
+        const feedEndpoint = `https://pkgs.dev.azure.com/local/${feedIdentifier}/nuget/v3/index.json`;
+        this._feedPublishes.push({
+            type: 'nuget',
+            feedType: 'internal',
+            feedIdentifier,
+            packages: published,
+            feedPath: feedRoot,
+            source: 'template-bash-publish',
+            createdAt: new Date().toISOString(),
+        });
+        this._writeFeedPublishesIndex(this._getFeedPublishRoot(variables, resolvedWorkDir));
+
+        return {
+            stdout: [
+                `Created NuGet.config for ${feedEndpoint}`,
+                '[var] NUGET_PUSH_LOG_CHANNEL=notifications',
+                `[sim] nuget-push: ${published.length} package(s) -> ${feedRoot}`,
+            ].join('\n'),
+            variables: {
+                NUGET_PUSH_LOG_CHANNEL: 'notifications',
+            },
+        };
+    }
+
+    _simulateTemplateNuGetPackStep(displayName, scriptContent, variables, workDir) {
+        if (String(displayName || '').trim() !== 'Create Nuget Packages') {
+            return null;
+        }
+
+        const resolvedWorkDir = workDir ? path.resolve(workDir) : process.cwd();
+        const packageDirMatch = /pkg_dir="([^"]+)"/.exec(scriptContent);
+        const packageDirRaw = packageDirMatch ? packageDirMatch[1] : 'Packages';
+        const packageDir = this._resolvePath(packageDirRaw, variables, resolvedWorkDir);
+        fs.mkdirSync(packageDir, { recursive: true });
+
+        const nuspecListMatch = /nuspec_files=\(([^)]*)\)/.exec(scriptContent);
+        const nuspecFiles = nuspecListMatch
+            ? nuspecListMatch[1]
+                  .split(/\s+/)
+                  .map((entry) => entry.trim())
+                  .filter(Boolean)
+            : ['package.nuspec'];
+
+        const versionMatch = /version="([^"]+)"/.exec(scriptContent);
+        const resolvedVersion =
+            (versionMatch && versionMatch[1]) ||
+            String(variables.version || variables.VERSION || variables['Build.BuildNumber'] || '0.0.0');
+        const enableSymbols = /enable_symbols="true"/i.test(scriptContent);
+
+        const packageContentRoots = [path.join(resolvedWorkDir, 'All'), resolvedWorkDir];
+        const packageContentFiles = [];
+        for (const root of packageContentRoots) {
+            if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
+                continue;
+            }
+            for (const filePath of this._collectPackageFiles(['**/*'], root, ['.dll', '.pdb', '.json', '.cfg'])) {
+                packageContentFiles.push(path.relative(root, filePath).replace(/\\/g, '/'));
+            }
+            if (packageContentFiles.length > 0) {
+                break;
+            }
+        }
+
+        const createdPackages = [];
+        for (const nuspecFile of nuspecFiles) {
+            const packageId = path.basename(nuspecFile, path.extname(nuspecFile)) || 'package';
+            const nupkgName = `${packageId}.${resolvedVersion}.nupkg`;
+            const nupkgPath = path.join(packageDir, nupkgName);
+            const packageManifest = {
+                packageId,
+                version: resolvedVersion,
+                nuspec: nuspecFile,
+                files: packageContentFiles.length > 0 ? packageContentFiles : ['artifact-placeholder.txt'],
+                generatedBy: 'azure-pipeline-studio-simulator',
+            };
+            fs.writeFileSync(nupkgPath, `${JSON.stringify(packageManifest, null, 2)}\n`, 'utf8');
+            createdPackages.push(nupkgName);
+
+            if (enableSymbols) {
+                const snupkgName = `${packageId}.${resolvedVersion}.snupkg`;
+                const snupkgPath = path.join(packageDir, snupkgName);
+                fs.writeFileSync(
+                    snupkgPath,
+                    `${JSON.stringify({ ...packageManifest, symbolPackage: true }, null, 2)}\n`,
+                    'utf8'
+                );
+                createdPackages.push(snupkgName);
+            }
+        }
+
+        return {
+            stdout: [
+                `[sim] nuget-pack(template): ${createdPackages.length} package file(s) -> ${packageDir}`,
+                ...createdPackages.map((name) => `[sim] created ${name}`),
+            ].join('\n'),
+            variables: {
+                NUGET_PACK_ERROR: 'false',
+            },
+        };
     }
 
     /**
@@ -2322,6 +3335,68 @@ function printSimulationResults(results) {
     const RESET = '\x1b[0m';
     const BOLD = '\x1b[1m';
     const DIM = '\x1b[2m';
+    const YELLOW = '\x1b[33m';
+    const RED = '\x1b[31m';
+
+    const normalizeLogLine = (line) =>
+        String(line || '')
+            .replace(/\x1b\[[0-9;]*m/g, '')
+            .replace(/^\s*\[stderr\]\s*/i, '')
+            .trim();
+
+    const extractVsoFromTraceEcho = (line) => {
+        const raw = normalizeLogLine(line);
+        const m = /^\+{1,3}\s+echo\s+['\"](##vso\[[^\]]+\][\s\S]*)['\"]$/.exec(raw);
+        return m ? m[1] : '';
+    };
+
+    const formatLogLine = (line, isStderr = false) => {
+        const tracedVso = extractVsoFromTraceEcho(line);
+        const raw = tracedVso || String(line || '');
+        if (/^##\s*\[debug\]/i.test(raw)) {
+            return `${YELLOW}${raw}${RESET}`;
+        }
+        if (/^##\s*\[error\]/i.test(raw)) {
+            return `${RED}${raw}${RESET}`;
+        }
+        if (/^##vso\[task\.debug\]/i.test(raw)) {
+            return `${YELLOW}${raw}${RESET}`;
+        }
+        if (/^##vso\[task\.logissue\s+type=error[^\]]*\]/i.test(raw)) {
+            return `${RED}${raw}${RESET}`;
+        }
+        if (/^##vso\[task\.logissue\s+type=warning[^\]]*\]/i.test(raw)) {
+            return `${YELLOW}${raw}${RESET}`;
+        }
+        if (isStderr) {
+            return `${DIM}[stderr]${RESET} ${raw}`;
+        }
+        return raw;
+    };
+
+    const isHiddenTraceNoise = (line) => {
+        const raw = normalizeLogLine(line);
+        return (
+            /^\+{1,3}\s+_aps_trace_pause\b/.test(raw) ||
+            /^\+{1,3}\s+_aps_trace_resume\b/.test(raw) ||
+            /^\+{1,3}\s+case\s+"\$-"\s+in\b/.test(raw) ||
+            /^\+{1,3}\s+_APS_TRACE_WAS_ON=/.test(raw) ||
+            /^\+{1,3}\s+set\s+\+x\b/.test(raw) ||
+            /^\+{1,3}\s+set\s+-x\b/.test(raw) ||
+            /^\+{1,3}\s+exit\s+1$/.test(raw)
+        );
+    };
+
+    const shouldShowStdoutLine = (line) => {
+        const raw = String(line || '');
+        if (!raw.trim()) return false;
+        if (/^##vso\[/i.test(raw)) {
+            return (
+                /^##vso\[task\.logissue\s+type=(error|warning)[^\]]*\]/i.test(raw) || /^##vso\[task\.debug\]/i.test(raw)
+            );
+        }
+        return true;
+    };
 
     for (const stageResult of results.stages) {
         console.log();
@@ -2345,14 +3420,14 @@ function printSimulationResults(results) {
                 if (stepResult.stdout) {
                     stepResult.stdout
                         .split('\n')
-                        .filter((l) => l.trim() && !l.startsWith('##vso['))
-                        .forEach((l) => console.log(`      ${l}`));
+                        .filter((l) => shouldShowStdoutLine(l))
+                        .forEach((l) => console.log(`      ${formatLogLine(l)}`));
                 }
                 if (stepResult.stderr) {
                     stepResult.stderr
                         .split('\n')
-                        .filter((l) => l.trim())
-                        .forEach((l) => console.error(`      ${DIM}[stderr]${RESET} ${l}`));
+                        .filter((l) => l.trim() && !isHiddenTraceNoise(l))
+                        .forEach((l) => console.error(`      ${formatLogLine(l, true)}`));
                 }
                 const localVars = Object.entries(stepResult.variables).filter(
                     ([k]) => !Object.prototype.hasOwnProperty.call(stepResult.outputVariables, k)
