@@ -886,6 +886,21 @@ function selectStage(index){
     document.querySelectorAll('.stage-content').forEach((el,i)=>{el.classList.toggle('active',i===index);});
     applyTaskFilter();
 }
+function toggleCollapse(bodyId,toggleId){
+    var body=document.getElementById(bodyId);
+    var toggle=document.getElementById(toggleId);
+    if(!body)return;
+    var collapsed=body.classList.toggle('collapsed');
+    if(toggle)toggle.classList.toggle('open',!collapsed);
+}
+function expandAll(expand){
+    document.querySelectorAll('.sidebar-stage-jobs,.sidebar-job-steps').forEach(function(el){
+        el.classList.toggle('collapsed',!expand);
+    });
+    document.querySelectorAll('.sidebar-stage-header .sidebar-toggle,.sidebar-job-header .sidebar-toggle').forEach(function(el){
+        el.classList.toggle('open',expand);
+    });
+}
 function toggleSidebarStage(event,index){
     if(event)event.stopPropagation();
     selectStage(index);
@@ -1103,7 +1118,6 @@ function _renderVariablesPanel(){
 
 function addVar(){var id='vr'+(varCount++);var tr=document.createElement('tr');tr.id=id;tr.innerHTML='<td style="width:46%"><input class="var-key" placeholder="key"></td><td style="width:49%"><input class="var-val" placeholder="value"></td><td><button class="remove-var-btn">&times;</button></td>';tr.querySelector('.remove-var-btn').onclick=function(){document.getElementById(id).remove();};var tb=document.getElementById('varRows');if(!tb){tb=document.createElement('tbody');tb.id='varRows';document.querySelector('.vars-table')?.appendChild(tb);}tb.appendChild(tr);}
 function addLibVar(){var id='lv'+(libVarCount++);var tr=document.createElement('tr');tr.id=id;tr.innerHTML='<td style="width:30%"><input class="var-key lib-group" placeholder="group"></td><td style="width:30%"><input class="var-key lib-name" placeholder="variable"></td><td style="width:35%"><input class="var-val lib-val" placeholder="value"></td><td><button class="remove-var-btn">&times;</button></td>';tr.querySelector('.remove-var-btn').onclick=function(){document.getElementById(id).remove();};var tb=document.getElementById('libVarRows');if(!tb){tb=document.createElement('tbody');tb.id='libVarRows';document.querySelector('.vars-table:nth-of-type(2)')?.appendChild(tb);}tb.appendChild(tr);}
-function _collectLibVars(){var m={};document.querySelectorAll('#libVarRows tr').forEach(function(row){var g=row.querySelector('.lib-group');var n=row.querySelector('.lib-name');var v=row.querySelector('.lib-val');if(g&&n&&v&&g.value.trim()&&n.value.trim()){var gk=g.value.trim();if(!m[gk])m[gk]={};m[gk][n.value.trim()]=v.value.trim();}});return m;}
 function runSimulation(){
   try{
     const stages=_collectSelectedStages();
@@ -1281,6 +1295,42 @@ function renderResults(r){
   const panel=document.getElementById('resultsPanel');
   const ICON={Succeeded:'\u2714',Failed:'\u2716',Skipped:'\u29d8'};
   const COL={Succeeded:'#4ec94e',Failed:'#f47174',Skipped:'#c8a84b'};
+    const WARN='#c8a84b';
+    const ERR='#f47174';
+    const normalizeLogLine=(line)=>String(line||'').replace(/\\x1b\\[[0-9;]*m/g,'').replace(/^\\s*\\[stderr\\]\\s*/i,'').trim();
+    const extractVsoFromTraceEcho=(line)=>{
+        const raw=normalizeLogLine(line);
+        const m=/^\\+{1,3}\\s+echo\\s+['\\"](##vso\\[[^\\]]+\\][\\s\\S]*)['\\"]$/.exec(raw);
+        return m?m[1]:'';
+    };
+    const isHiddenTraceNoise=(line)=>{
+        const raw=normalizeLogLine(line);
+        return /^\\+{1,3}\\s+_aps_trace_pause\\b/.test(raw)||
+            /^\\+{1,3}\\s+_aps_trace_resume\\b/.test(raw)||
+            /^\\+{1,3}\\s+case\\s+"\\$-"\\s+in\\b/.test(raw)||
+            /^\\+{1,3}\\s+_APS_TRACE_WAS_ON=/.test(raw)||
+            /^\\+{1,3}\\s+set\\s+\\+x\\b/.test(raw)||
+            /^\\+{1,3}\\s+set\\s+-x\\b/.test(raw)||
+            /^\\+{1,3}\\s+exit\\s+1$/.test(raw);
+    };
+    const shouldShowStdoutLine=(line)=>{
+        const raw=normalizeLogLine(line);
+        if(!raw)return false;
+        if(/^##vso\\[/i.test(raw)){
+            return /^##vso\\[task\\.logissue\\s+type=(error|warning)[^\\]]*\\]/i.test(raw)||/^##vso\\[task\\.debug\\]/i.test(raw);
+        }
+        return true;
+    };
+    const formatRenderedLine=(line,isStderr)=>{
+        const tracedVso=extractVsoFromTraceEcho(line);
+        const raw=tracedVso||normalizeLogLine(line);
+        let color='';
+        if(/^##\\s*\\[debug\\]/i.test(raw)||/^##vso\\[task\\.debug\\]/i.test(raw)||/^##vso\\[task\\.logissue\\s+type=warning[^\\]]*\\]/i.test(raw)) color=WARN;
+        if(/^##\\s*\\[error\\]/i.test(raw)||/^##vso\\[task\\.logissue\\s+type=error[^\\]]*\\]/i.test(raw)) color=ERR;
+        const prefix=isStderr?'<span class="res-vk">[stderr]</span> ':'';
+        const content=escHtml(raw);
+        return color?'<div>'+prefix+'<span style="color:'+color+'">'+content+'</span></div>':'<div>'+prefix+content+'</div>';
+    };
     let html='<div class="res-wrap">';
     for(let si=0;si<r.stages.length;si++){
         const stage=r.stages[si];
@@ -1297,11 +1347,11 @@ function renderResults(r){
         const col=COL[res]||'#888';
                 html+='<div class="res-step" data-stage-index="'+si+'" data-job-index="'+ji+'" data-step-index="'+ti+'"><span class="res-icon" style="color:'+col+'">'+icon+'</span><span class="res-step-name">'+escHtml(step.displayName||'')+'</span>';
         if(step.stdout&&step.stdout.trim()){
-          const lines=step.stdout.split('\\n').filter(l=>l.trim()&&!l.startsWith('##vso[')).map(l=>'<div>'+escHtml(l)+'</div>').join('');
+                    const lines=step.stdout.split('\\n').filter(l=>shouldShowStdoutLine(l)).map(l=>formatRenderedLine(l,false)).join('');
           html+='<div class="res-out">'+lines+'</div>';
         }
                 if(step.stderr&&step.stderr.trim()){
-                    const errLines=step.stderr.split('\\n').filter(l=>l.trim()).map(l=>'<div><span class="res-vk">[stderr]</span> '+escHtml(l)+'</div>').join('');
+                                        const errLines=step.stderr.split('\\n').filter(l=>normalizeLogLine(l)&&!isHiddenTraceNoise(l)).map(l=>formatRenderedLine(l,true)).join('');
                     html+='<div class="res-out">'+errLines+'</div>';
                 }
         const ov=Object.entries(step.outputVariables||{});

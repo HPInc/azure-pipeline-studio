@@ -1570,7 +1570,18 @@ class PipelineSimulator {
                 // ##vso-set variables available to later lines in the same script.
                 const preamble = [
                     '# APS Simulator preamble: intercept ##vso[task.setvariable] and export as shell variables',
+                    '_aps_trace_pause() {',
+                    '    case "$-" in',
+                    '        *x*) _APS_TRACE_WAS_ON=1; set +x ;;',
+                    '        *) _APS_TRACE_WAS_ON=0 ;;',
+                    '    esac',
+                    '}',
+                    '_aps_trace_resume() {',
+                    '    [ "${_APS_TRACE_WAS_ON:-0}" = "1" ] && set -x || true',
+                    '}',
+                    '',
                     'echo() {',
+                    '    _aps_trace_pause',
                     '    command echo "$@"',
                     '    local _aps_line="$*" _aps_var _aps_val',
                     '    case "$_aps_line" in',
@@ -1580,16 +1591,19 @@ class PipelineSimulator {
                     '            [ -n "$_aps_var" ] && export "$_aps_var=$_aps_val" 2>/dev/null || true',
                     '            ;;',
                     '    esac',
+                    '    _aps_trace_resume',
                     '}',
                     '',
                     '# Prefer resolved git path over PATH lookup on Windows bash variants.',
                     'APS_GIT_BIN="${APS_TOOL_PATH_GIT_WIN:-${APS_TOOL_PATH_GIT:-}}"',
                     'git() {',
+                    '    _aps_trace_pause',
                     '    if [ -n "$APS_GIT_BIN" ]; then',
                     '        "$APS_GIT_BIN" "$@"',
                     '    else',
                     '        command git "$@"',
                     '    fi',
+                    '    _aps_trace_resume',
                     '}',
                     '',
                 ].join('\n');
@@ -3321,6 +3335,68 @@ function printSimulationResults(results) {
     const RESET = '\x1b[0m';
     const BOLD = '\x1b[1m';
     const DIM = '\x1b[2m';
+    const YELLOW = '\x1b[33m';
+    const RED = '\x1b[31m';
+
+    const normalizeLogLine = (line) =>
+        String(line || '')
+            .replace(/\x1b\[[0-9;]*m/g, '')
+            .replace(/^\s*\[stderr\]\s*/i, '')
+            .trim();
+
+    const extractVsoFromTraceEcho = (line) => {
+        const raw = normalizeLogLine(line);
+        const m = /^\+{1,3}\s+echo\s+['\"](##vso\[[^\]]+\][\s\S]*)['\"]$/.exec(raw);
+        return m ? m[1] : '';
+    };
+
+    const formatLogLine = (line, isStderr = false) => {
+        const tracedVso = extractVsoFromTraceEcho(line);
+        const raw = tracedVso || String(line || '');
+        if (/^##\s*\[debug\]/i.test(raw)) {
+            return `${YELLOW}${raw}${RESET}`;
+        }
+        if (/^##\s*\[error\]/i.test(raw)) {
+            return `${RED}${raw}${RESET}`;
+        }
+        if (/^##vso\[task\.debug\]/i.test(raw)) {
+            return `${YELLOW}${raw}${RESET}`;
+        }
+        if (/^##vso\[task\.logissue\s+type=error[^\]]*\]/i.test(raw)) {
+            return `${RED}${raw}${RESET}`;
+        }
+        if (/^##vso\[task\.logissue\s+type=warning[^\]]*\]/i.test(raw)) {
+            return `${YELLOW}${raw}${RESET}`;
+        }
+        if (isStderr) {
+            return `${DIM}[stderr]${RESET} ${raw}`;
+        }
+        return raw;
+    };
+
+    const isHiddenTraceNoise = (line) => {
+        const raw = normalizeLogLine(line);
+        return (
+            /^\+{1,3}\s+_aps_trace_pause\b/.test(raw) ||
+            /^\+{1,3}\s+_aps_trace_resume\b/.test(raw) ||
+            /^\+{1,3}\s+case\s+"\$-"\s+in\b/.test(raw) ||
+            /^\+{1,3}\s+_APS_TRACE_WAS_ON=/.test(raw) ||
+            /^\+{1,3}\s+set\s+\+x\b/.test(raw) ||
+            /^\+{1,3}\s+set\s+-x\b/.test(raw) ||
+            /^\+{1,3}\s+exit\s+1$/.test(raw)
+        );
+    };
+
+    const shouldShowStdoutLine = (line) => {
+        const raw = String(line || '');
+        if (!raw.trim()) return false;
+        if (/^##vso\[/i.test(raw)) {
+            return (
+                /^##vso\[task\.logissue\s+type=(error|warning)[^\]]*\]/i.test(raw) || /^##vso\[task\.debug\]/i.test(raw)
+            );
+        }
+        return true;
+    };
 
     for (const stageResult of results.stages) {
         console.log();
@@ -3344,14 +3420,14 @@ function printSimulationResults(results) {
                 if (stepResult.stdout) {
                     stepResult.stdout
                         .split('\n')
-                        .filter((l) => l.trim() && !l.startsWith('##vso['))
-                        .forEach((l) => console.log(`      ${l}`));
+                        .filter((l) => shouldShowStdoutLine(l))
+                        .forEach((l) => console.log(`      ${formatLogLine(l)}`));
                 }
                 if (stepResult.stderr) {
                     stepResult.stderr
                         .split('\n')
-                        .filter((l) => l.trim())
-                        .forEach((l) => console.error(`      ${DIM}[stderr]${RESET} ${l}`));
+                        .filter((l) => l.trim() && !isHiddenTraceNoise(l))
+                        .forEach((l) => console.error(`      ${formatLogLine(l, true)}`));
                 }
                 const localVars = Object.entries(stepResult.variables).filter(
                     ([k]) => !Object.prototype.hasOwnProperty.call(stepResult.outputVariables, k)
