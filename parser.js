@@ -386,6 +386,28 @@ class AzurePipelineParser {
                         node.value = node.source;
                     }
                 },
+                Map(_key, node) {
+                    // Consolidate duplicate ${{ insert }} keys into a single key with an array value.
+                    // toJSON() only keeps the last duplicate key, so we must combine them here
+                    // before conversion to preserve all insert directives.
+                    const insertItems = node.items.filter(
+                        (pair) =>
+                            pair.key &&
+                            typeof pair.key.value === 'string' &&
+                            /^\$\{\{\s*insert\s*\}\}$/.test(pair.key.value.trim())
+                    );
+                    if (insertItems.length > 1) {
+                        const firstItem = insertItems[0];
+                        const seq = new YAML.YAMLSeq();
+                        insertItems.forEach((pair) => seq.add(pair.value));
+                        firstItem.value = seq;
+                        // Remove the extra duplicate items, keep only the first
+                        for (let idx = insertItems.length - 1; idx >= 1; idx--) {
+                            const pos = node.items.indexOf(insertItems[idx]);
+                            if (pos !== -1) node.items.splice(pos, 1);
+                        }
+                    }
+                },
             });
             const jsonDoc = yamlDoc.toJSON() || {};
             return { yamlDoc, jsonDoc };
@@ -1901,24 +1923,29 @@ class AzurePipelineParser {
                 index = conditional.nextIndex;
                 continue;
             } else if (this.isInsertDirective(rawKey)) {
-                const expandedValue = this.expandNodePreservingTemplates(value, context);
-                if (this.isNonArrayObject(expandedValue)) {
-                    const duplicateKeys = Object.keys(expandedValue).filter((k) =>
-                        Object.prototype.hasOwnProperty.call(result, k)
-                    );
-                    if (duplicateKeys.length > 0 && context && context.errors) {
-                        for (const dupKey of duplicateKeys) {
-                            context.errors.push({
-                                message: this.formatErrorWithStack(
-                                    "Duplicate key '" +
-                                        dupKey +
-                                        "' introduced by ${{ insert }} expansion conflicts with an existing key.",
-                                    context
-                                ),
-                            });
+                // Value may be an array when multiple ${{ insert }} directives were present
+                // (consolidated before YAML toJSON to avoid duplicate key loss)
+                const insertValues = Array.isArray(value) ? value : [value];
+                for (const insertVal of insertValues) {
+                    const expandedValue = this.expandNodePreservingTemplates(insertVal, context);
+                    if (this.isNonArrayObject(expandedValue)) {
+                        const duplicateKeys = Object.keys(expandedValue).filter((k) =>
+                            Object.prototype.hasOwnProperty.call(result, k)
+                        );
+                        if (duplicateKeys.length > 0 && context && context.errors) {
+                            for (const dupKey of duplicateKeys) {
+                                context.errors.push({
+                                    message: this.formatErrorWithStack(
+                                        "Duplicate key '" +
+                                            dupKey +
+                                            "' introduced by ${{ insert }} expansion conflicts with an existing key.",
+                                        context
+                                    ),
+                                });
+                            }
                         }
+                        Object.assign(result, expandedValue);
                     }
-                    Object.assign(result, expandedValue);
                 }
                 continue;
             }
@@ -3632,24 +3659,29 @@ class AzurePipelineParser {
 
             // Handle ${{ insert }} directive
             if (this.isInsertDirective(key)) {
-                const expandedValue = this.expandNodePreservingTemplates(value, context);
-                if (expandedValue && this.isNonArrayObject(expandedValue)) {
-                    const duplicateKeys = Object.keys(expandedValue).filter((k) =>
-                        Object.prototype.hasOwnProperty.call(result, k)
-                    );
-                    if (duplicateKeys.length > 0 && context && context.errors) {
-                        for (const dupKey of duplicateKeys) {
-                            context.errors.push({
-                                message: this.formatErrorWithStack(
-                                    "Duplicate key '" +
-                                        dupKey +
-                                        "' introduced by ${{ insert }} expansion conflicts with an existing key.",
-                                    context
-                                ),
-                            });
+                // Value may be an array when multiple ${{ insert }} directives were present
+                // (consolidated before YAML toJSON to avoid duplicate key loss)
+                const insertValues = Array.isArray(value) ? value : [value];
+                for (const insertVal of insertValues) {
+                    const expandedValue = this.expandNodePreservingTemplates(insertVal, context);
+                    if (expandedValue && this.isNonArrayObject(expandedValue)) {
+                        const duplicateKeys = Object.keys(expandedValue).filter((k) =>
+                            Object.prototype.hasOwnProperty.call(result, k)
+                        );
+                        if (duplicateKeys.length > 0 && context && context.errors) {
+                            for (const dupKey of duplicateKeys) {
+                                context.errors.push({
+                                    message: this.formatErrorWithStack(
+                                        "Duplicate key '" +
+                                            dupKey +
+                                            "' introduced by ${{ insert }} expansion conflicts with an existing key.",
+                                        context
+                                    ),
+                                });
+                            }
                         }
+                        Object.assign(result, expandedValue);
                     }
-                    Object.assign(result, expandedValue);
                 }
                 i++;
                 continue;

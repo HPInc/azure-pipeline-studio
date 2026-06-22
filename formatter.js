@@ -508,6 +508,10 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
     let jobPropertiesIndent = -1;
     let jobLineNumber = -1;
     let jobsIndent = -1;
+    let inStepsArray = false;
+    let stepsIndent = -1;
+    let inConditionalBlock = false;
+    let conditionalBlockIndent = -1;
 
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
@@ -523,6 +527,7 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
                 jobsIndent = indent;
                 inJobObject = false;
                 jobPropertiesIndent = -1;
+                inStepsArray = false;
             }
 
             // If we're in a jobs array, check for job items
@@ -532,6 +537,7 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
                     inJobObject = true;
                     jobLineNumber = i + 1;
                     jobPropertiesIndent = -1;
+                    inStepsArray = false;
                 }
 
                 // Detect template expressions that might contain jobs - don't track indent strictly
@@ -541,22 +547,47 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
                 if (hasExitedJobsBlock(isTemplateExpr, indent, jobsIndent, trimmed)) {
                     inJobsArray = false;
                     inJobObject = false;
+                    inStepsArray = false;
+                    inConditionalBlock = false;
+                }
+
+                // Track when entering/exiting conditional blocks (${{ if ... }}:, ${{ elseif ... }}:)
+                // This needs to be outside the !isTemplateExpr check so we can detect conditional lines
+                if (inJobObject) {
+                    if (
+                        (trimmed.match(/^\$\{\{\s*(if|elseif)\b.*\}\}:\s*$/) || trimmed.match(/^\$\[\[.*\]\]:\s*$/)) &&
+                        isTemplateExpr
+                    ) {
+                        inConditionalBlock = true;
+                        conditionalBlockIndent = indent;
+                    } else if (
+                        inConditionalBlock &&
+                        indent <= conditionalBlockIndent &&
+                        !trimmed.startsWith('-') &&
+                        !isTemplateExpr
+                    ) {
+                        // We've exited the conditional block (at or before the conditional's indent and not a template expr)
+                        inConditionalBlock = false;
+                    }
                 }
 
                 // If we're in a job, track the indentation of job properties
                 if (inJobObject && !isTemplateExpr) {
+                    // Only establish jobPropertiesIndent if we're NOT in a conditional block
                     // Common job properties to establish baseline indent
                     const jobPropertyPattern =
                         /^(displayName|dependsOn|condition|workspace|pool|strategy|timeoutInMinutes|cancelTimeoutInMinutes|variables|container|services):/;
 
-                    if (trimmed.match(jobPropertyPattern)) {
+                    if (trimmed.match(jobPropertyPattern) && !inConditionalBlock) {
                         if (jobPropertiesIndent === -1) {
                             jobPropertiesIndent = indent;
                         }
                     }
 
-                    // Check for steps: at wrong indentation
+                    // Track when entering steps: array
                     if (trimmed.startsWith('steps:')) {
+                        inStepsArray = true;
+                        stepsIndent = indent;
                         // If we have established the job properties indent, steps should match it
                         if (jobPropertiesIndent !== -1 && indent < jobPropertiesIndent) {
                             hints.push(
@@ -565,28 +596,31 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
                                     `    The 'steps:' property must be at the same indentation level as other job properties (job starts at line ${jobLineNumber}).`
                             );
                         }
-                        // Reset job tracking as we've seen steps
-                        inJobObject = false;
                     }
 
-                    // Check for implicit step items (without explicit steps: keyword)
-                    // Common step types: - script:, - task:, - bash:, - pwsh:, - powershell:, - checkout:, - download:, - publish:, - template:
+                    // Check if we've exited the steps array
+                    if (inStepsArray && indent <= stepsIndent && !trimmed.startsWith('-') && !trimmed.startsWith('$')) {
+                        inStepsArray = false;
+                    }
+
+                    // Validate step items only when inside steps: array
+                    // This is generic - handles all step types and nested structures in other properties
                     const stepItemPattern =
                         /^-\s+(script|task|bash|pwsh|powershell|checkout|download|publish|template):/;
-                    if (trimmed.match(stepItemPattern)) {
-                        // If we have established job properties indent, step items should match it
-                        if (jobPropertiesIndent !== -1 && indent < jobPropertiesIndent) {
+                    if (inStepsArray && trimmed.match(stepItemPattern)) {
+                        // Step items should be indented more than the steps: keyword
+                        if (indent <= stepsIndent) {
                             const stepType = trimmed.match(stepItemPattern)[1];
                             hints.push(
-                                `line ${i + 1}: Step item '- ${stepType}:' is not properly indented under the job.\n` +
-                                    `    Expected ${jobPropertiesIndent} spaces (same as other job properties like 'displayName' or 'pool'), but found ${indent} spaces.\n` +
-                                    `    Step items must be at the same indentation level as other job properties (job starts at line ${jobLineNumber}).`
+                                `line ${i + 1}: Step item '- ${stepType}:' is not properly indented under 'steps:'.\n` +
+                                    `    Expected more than ${stepsIndent} spaces, but found ${indent} spaces.\n` +
+                                    `    Step items must be indented under the 'steps:' array (steps starts at line ${i + 1 - Math.floor((i + 1) / 2)}).`
                             );
                         }
-                        // Reset job tracking as we've seen step items (job is ending)
-                        inJobObject = false;
+                        // Don't reset job tracking - there can be multiple steps
                     }
 
+                    // Detect if we're starting a new job (end of current job tracking)
                     // Detect if we're starting a new job (end of current job tracking)
                     // Only reset if we're currently tracking a job and see another job start
                     if (isStartingNewJob(inJobObject, trimmed, jobPropertiesIndent, indent)) {
