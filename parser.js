@@ -3329,6 +3329,83 @@ class AzurePipelineParser {
 
         const body = this.extractTemplateBody(expandedTemplate);
 
+        // Annotate each expanded item with the template parameter context so the
+        // "Run Single Step" modal can show the parameters used in this expansion.
+        // Only set on items that haven't already been annotated by a nested template.
+        if (Array.isArray(body) && body.length > 0) {
+            const rawParams = templateJson && templateJson.parameters;
+            if (rawParams) {
+                const toType = (t) =>
+                    String(t || 'string')
+                        .trim()
+                        .toLowerCase() || 'string';
+                const defs = [];
+                if (Array.isArray(rawParams)) {
+                    for (const p of rawParams) {
+                        if (!p || !p.name) continue;
+                        const hasDefault = Object.prototype.hasOwnProperty.call(p, 'default');
+                        defs.push({
+                            name: String(p.name),
+                            type: toType(p.type),
+                            hasDefault,
+                            defaultValue: hasDefault ? p.default : '',
+                            values: Array.isArray(p.values) ? p.values : null,
+                            value: mergedParameters[p.name],
+                        });
+                    }
+                } else if (typeof rawParams === 'object') {
+                    for (const [name, p] of Object.entries(rawParams)) {
+                        const hasDefault =
+                            p && typeof p === 'object'
+                                ? Object.prototype.hasOwnProperty.call(p, 'default') ||
+                                  Object.prototype.hasOwnProperty.call(p, 'value')
+                                : p !== undefined;
+                        const defaultValue =
+                            p && typeof p === 'object' ? (p.default !== undefined ? p.default : p.value) : p;
+                        defs.push({
+                            name: String(name),
+                            type: 'string',
+                            hasDefault,
+                            defaultValue: hasDefault ? defaultValue : '',
+                            values: null,
+                            value: mergedParameters[name],
+                        });
+                    }
+                }
+                if (defs.length > 0) {
+                    // Scan unexpanded items to determine which params each item actually references.
+                    // Falls back to all params when counts differ (conditional template blocks).
+                    const rawBodyItems = this.extractTemplateBody(templateJson) || [];
+                    const paramRefSets =
+                        rawBodyItems.length === body.length
+                            ? rawBodyItems.map((rawItem) => {
+                                  const refs = new Set();
+                                  const scan = (val) => {
+                                      if (typeof val === 'string') {
+                                          for (const m of val.matchAll(/\$\{\{\s*parameters\.(\w+)\s*\}\}/g))
+                                              refs.add(m[1]);
+                                      } else if (val && typeof val === 'object') {
+                                          for (const v of Array.isArray(val) ? val : Object.values(val)) scan(v);
+                                      }
+                                  };
+                                  scan(rawItem);
+                                  return refs;
+                              })
+                            : null;
+
+                    for (let i = 0; i < body.length; i++) {
+                        const item = body[i];
+                        if (!item || typeof item !== 'object' || Array.isArray(item) || item.__templateParams) continue;
+                        const itemDefs =
+                            paramRefSets && paramRefSets[i] && paramRefSets[i].size > 0
+                                ? defs.filter((d) => paramRefSets[i].has(d.name))
+                                : defs;
+                        if (itemDefs.length > 0) item.__templateParams = itemDefs;
+                    }
+                }
+            }
+        }
+
         if (templateTimingLabel) console.timeEnd('[aps] ' + templateTimingLabel);
 
         return body;

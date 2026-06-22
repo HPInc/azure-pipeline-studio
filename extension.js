@@ -1,12 +1,32 @@
 const fs = require('fs');
 const path = require('path');
 const minimist = require('minimist');
+const _b64Encode = (str) => Buffer.from(String(str), 'utf8').toString('base64');
 
 // Import utility functions and formatter
 const { pickFirstString, resolveConfiguredPath, normalizeExtension } = require('./utils');
 const { PipelineSimulator, printSimulationResults } = require('./simulator');
 const { formatYaml } = require('./formatter');
 const { DependencyAnalyzer } = require('./dependency-analyzer');
+const {
+    extractSimulationTree,
+    extractTopLevelParameterDefinitions,
+    extractPipelineVariables,
+    buildSimulationDefaultVariables,
+    resolveExecPaths,
+    isLinuxSimulationContext,
+    toSimulatorPath,
+    normalizeCompileTimeVariables,
+    applyDefaultBuildVariables,
+    printCompileTimeVariableSources,
+    extractReferencedParameters,
+    extractReferencedVariables,
+    scanStepForReferences,
+    substituteTemplateExpressions,
+    extractStepInputs,
+    prepareStepTestInputs,
+    extractStepType,
+} = require('./step-inputs');
 
 let vscode;
 try {
@@ -30,51 +50,11 @@ let lastSimSourceText = null;
 let lastSimParserOptions = null;
 let extensionRuntimeGeneration = 0;
 
-const DEFAULT_COMPILE_TIME_VARIABLES = Object.freeze({
-    'Build.Reason': 'Manual',
-    'Build.SourceBranch': 'refs/heads/main',
-});
+// Backward compatibility wrappers for underscore-prefixed function names
+// These maintain the existing internal API while delegating to the extracted module
 
-function normalizeCompileTimeVariables(input) {
-    if (!input || typeof input !== 'object' || Array.isArray(input)) {
-        return {};
-    }
-    return Object.fromEntries(Object.entries(input));
-}
-
-function applyDefaultBuildVariables(baseVariables) {
-    const settingsOrCliVariables = normalizeCompileTimeVariables(baseVariables);
-    const result = { ...settingsOrCliVariables };
-
-    Object.entries(DEFAULT_COMPILE_TIME_VARIABLES).forEach(([key, defaultValue]) => {
-        if (!Object.prototype.hasOwnProperty.call(result, key)) {
-            result[key] = defaultValue;
-        }
-    });
-
-    return result;
-}
-
-function printCompileTimeVariableSources(contextLabel, settingsVariables, commandLineVariables, effectiveVariables) {
-    const report = {
-        defaults: { ...DEFAULT_COMPILE_TIME_VARIABLES },
-        settingsJson: normalizeCompileTimeVariables(settingsVariables),
-        commandLine: normalizeCompileTimeVariables(commandLineVariables),
-        effective: normalizeCompileTimeVariables(effectiveVariables),
-    };
-
-    const formattedReport = JSON.stringify(report, null, 2);
-    console.error(`[APS] Compile-time variable sources (${contextLabel}):\n${formattedReport}`);
-}
-
-/** Convert a Windows UNC WSL path (\\wsl.localhost\distro\foo) to the Linux path (/foo).
- * Returns the path unchanged when it is already a Linux/Windows non-UNC path.
- */
 function _toSimulatorPath(p) {
-    if (!p || typeof p !== 'string') return p || '';
-    const m = p.match(/^\\\\wsl\.localhost\\[^\\]+(.*)/i);
-    if (m) return m[1].replace(/\\/g, '/');
-    return p;
+    return toSimulatorPath(p);
 }
 
 function _escHtml(s) {
@@ -82,145 +62,32 @@ function _escHtml(s) {
 }
 
 function _extractSimulationTree(document) {
-    const mapSteps = (steps) =>
-        (Array.isArray(steps) ? steps : []).map((step, i) => {
-            const type = step.task
-                ? 'task'
-                : step.bash
-                  ? 'bash'
-                  : step.script
-                    ? 'script'
-                    : step.pwsh
-                      ? 'pwsh'
-                      : step.powershell
-                        ? 'powershell'
-                        : step.checkout
-                          ? 'checkout'
-                          : step.publish
-                            ? 'publish'
-                            : step.download
-                              ? 'download'
-                              : 'step';
-            const label =
-                step.displayName ||
-                step.name ||
-                (step.task
-                    ? String(step.task).split('@')[0]
-                    : step.bash
-                      ? 'Bash'
-                      : step.script
-                        ? 'Script'
-                        : step.pwsh || step.powershell
-                          ? 'PowerShell'
-                          : step.checkout
-                            ? `Checkout: ${step.checkout}`
-                            : step.publish
-                              ? 'Publish artifact'
-                              : step.download
-                                ? 'Download artifact'
-                                : `Step ${i + 1}`);
-            return { label, type };
-        });
-
-    const mapJobs = (jobs) =>
-        (Array.isArray(jobs) ? jobs : []).map((j) => ({
-            name: j.job || j.deployment || 'Job',
-            displayName: j.displayName || j.job || j.deployment || 'Job',
-            isDeployment: !!j.deployment,
-            steps: mapSteps(j.steps),
-        }));
-
-    const stages = Array.isArray(document.stages) ? document.stages : [];
-    if (stages.length === 0 && Array.isArray(document.jobs)) {
-        return [{ name: '__default__', displayName: '(Pipeline)', jobs: mapJobs(document.jobs) }];
-    }
-    return stages.map((s) => ({
-        name: s.stage || 'Stage',
-        displayName: s.displayName || s.stage || 'Stage',
-        jobs: mapJobs(s.jobs),
-    }));
+    return extractSimulationTree(document);
 }
 
 function _extractTopLevelParameterDefinitions(parser, sourceText, skipSyntaxCheck) {
-    if (!parser || typeof parser.parseYamlDocument !== 'function') {
-        return [];
-    }
-
-    let jsonDoc;
-    try {
-        ({ jsonDoc } = parser.parseYamlDocument(sourceText, undefined, !!skipSyntaxCheck));
-    } catch (_) {
-        return [];
-    }
-
-    if (!jsonDoc || typeof jsonDoc !== 'object' || !jsonDoc.parameters) {
-        return [];
-    }
-
-    const toType = (rawType, fallback) => {
-        const normalized = String(rawType || fallback || 'string')
-            .trim()
-            .toLowerCase();
-        return normalized || 'string';
-    };
-
-    const normalizeArrayOrNull = (input) =>
-        Array.isArray(input) ? input.map((entry) => (entry === undefined || entry === null ? '' : entry)) : null;
-
-    const defs = [];
-    const parametersNode = jsonDoc.parameters;
-
-    if (Array.isArray(parametersNode)) {
-        for (const item of parametersNode) {
-            if (!item || typeof item !== 'object' || !item.name) {
-                continue;
-            }
-
-            const hasDefault = Object.prototype.hasOwnProperty.call(item, 'default');
-            defs.push({
-                name: String(item.name),
-                type: toType(item.type, 'string'),
-                hasDefault,
-                defaultValue: hasDefault ? item.default : '',
-                values: normalizeArrayOrNull(item.values),
-            });
-        }
-        return defs;
-    }
-
-    if (typeof parametersNode === 'object') {
-        for (const [name, item] of Object.entries(parametersNode)) {
-            if (!name || !String(name).trim()) {
-                continue;
-            }
-
-            if (item && typeof item === 'object' && !Array.isArray(item)) {
-                const hasDefault =
-                    Object.prototype.hasOwnProperty.call(item, 'default') ||
-                    Object.prototype.hasOwnProperty.call(item, 'value');
-                const defaultValue = Object.prototype.hasOwnProperty.call(item, 'default') ? item.default : item.value;
-                defs.push({
-                    name: String(name),
-                    type: toType(item.type, 'string'),
-                    hasDefault,
-                    defaultValue: hasDefault ? defaultValue : '',
-                    values: normalizeArrayOrNull(item.values),
-                });
-                continue;
-            }
-
-            defs.push({
-                name: String(name),
-                type: toType(typeof item, 'string'),
-                hasDefault: item !== undefined,
-                defaultValue: item === undefined ? '' : item,
-                values: null,
-            });
-        }
-    }
-
-    return defs;
+    return extractTopLevelParameterDefinitions(parser, sourceText, skipSyntaxCheck);
 }
+
+function _resolveExecPaths(rawPaths, isLinuxContext) {
+    return resolveExecPaths(rawPaths, isLinuxContext);
+}
+
+function _isLinuxSimulationContext(documentFileName) {
+    return isLinuxSimulationContext(documentFileName);
+}
+
+function _extractPipelineVariables(parsedDoc) {
+    return extractPipelineVariables(parsedDoc);
+}
+
+function _buildSimulationDefaultVariables(workingDirectory, outputRoot, buildCounter, extra) {
+    return buildSimulationDefaultVariables(workingDirectory, outputRoot, buildCounter, extra);
+}
+
+/** Convert a Windows UNC WSL path (\\wsl.localhost\distro\foo) to the Linux path (/foo).
+ * Returns the path unchanged when it is already a Linux/Windows non-UNC path.
+ */
 
 /**
  * Resolves executable path overrides for the current simulation OS context.
@@ -231,17 +98,6 @@ function _extractTopLevelParameterDefinitions(parser, sourceText, skipSyntaxChec
  * @param {boolean} isLinuxContext - true when simulation scripts will run on Linux/WSL
  * @returns {Object} flat map of tool name → resolved path
  */
-function _resolveExecPaths(rawPaths, isLinuxContext) {
-    if (!rawPaths || typeof rawPaths !== 'object') return {};
-    const osKey = isLinuxContext ? 'linux' : 'windows';
-    const osSpecific = rawPaths[osKey];
-    if (!osSpecific || typeof osSpecific !== 'object') return {};
-    const result = {};
-    for (const [key, value] of Object.entries(osSpecific)) {
-        if (typeof value === 'string') result[key] = value;
-    }
-    return result;
-}
 
 /**
  * Returns true when simulation scripts will execute in a Linux/WSL environment.
@@ -249,41 +105,11 @@ function _resolveExecPaths(rawPaths, isLinuxContext) {
  *
  * @param {string} documentFileName
  */
-function _isLinuxSimulationContext(documentFileName) {
-    if (process.platform !== 'win32') return true;
-    return /^\\\\wsl\.localhost\\/i.test(documentFileName || '');
-}
 
 /**
  * Extracts simple variable definitions and library group references from the
  * top-level variables: section of a parsed pipeline document.
  */
-function _extractPipelineVariables(parsedDoc) {
-    const simple = [];
-    const groups = [];
-    if (!parsedDoc || typeof parsedDoc !== 'object') return { simple, groups };
-    const vars = parsedDoc.variables;
-    if (Array.isArray(vars)) {
-        for (const entry of vars) {
-            if (!entry || typeof entry !== 'object') continue;
-            if (typeof entry.group === 'string' && entry.group.trim()) {
-                groups.push(entry.group.trim());
-            } else if (typeof entry.name === 'string' && entry.name.trim()) {
-                simple.push({
-                    name: entry.name.trim(),
-                    value: entry.value !== undefined ? String(entry.value) : '',
-                });
-            }
-        }
-    } else if (vars && typeof vars === 'object') {
-        for (const [name, value] of Object.entries(vars)) {
-            if (name && name.trim()) {
-                simple.push({ name: name.trim(), value: value !== undefined ? String(value) : '' });
-            }
-        }
-    }
-    return { simple, groups };
-}
 
 /**
  * Builds the standard default simulation variables from resolved paths.
@@ -294,26 +120,6 @@ function _extractPipelineVariables(parsedDoc) {
  * @param {string} buildCounter - Build counter value as string
  * @param {Object} [extra={}] - Additional variables to merge in (e.g. checkout vars)
  */
-function _buildSimulationDefaultVariables(workingDirectory, outputRoot, buildCounter, extra) {
-    const out = outputRoot.replace(/[/\\]$/, '').replace(/\\/g, '/');
-    return {
-        'Build.Repository.LocalPath': workingDirectory,
-        'Build.SourcesDirectory': workingDirectory,
-        'System.DefaultWorkingDirectory': workingDirectory,
-        'Build.ArtifactStagingDirectory': out + '/artifacts',
-        'Build.StagingDirectory': out + '/staging',
-        'Build.BinariesDirectory': out + '/binaries',
-        'Pipeline.Workspace': out + '/workspace',
-        'Agent.WorkFolder': out + '/agent/work',
-        'Agent.BuildDirectory': out + '/agent/build',
-        'Agent.TempDirectory': out + '/agent/temp',
-        'Agent.ToolsDirectory': out + '/agent/tools',
-        'Agent.HomeDirectory': out + '/agent/home',
-        'Simulator.OutputRoot': out,
-        buildCounter: buildCounter || '1',
-        ...extra,
-    };
-}
 
 /**
  * Runs a pipeline simulation from a pre-parsed document and a resolved config.
@@ -401,10 +207,13 @@ function _generateSimulationViewHtml(
     topLevelParameterDefinitions = [],
     nonce = '',
     knownVarsJson = '{"azure":[],"pipeline":[],"groups":[]}',
-    savedVarsJson = '{"overrides":{},"libData":[]}'
+    savedVarsJson = '{"overrides":{},"libData":[]}',
+    expandedStepsJson = '[]',
+    originalSourceText = ''
 ) {
     const esc = _escHtml;
-    const topLevelParametersJson = JSON.stringify(topLevelParameterDefinitions || []).replace(/</g, '\\u003c');
+    // Base64 encode JSON to safely pass through template literals and HTML
+    const topLevelParametersJson = _b64Encode(JSON.stringify(topLevelParameterDefinitions || []));
     const STEP_ICONS = {
         task: '⚙',
         bash: '🐚',
@@ -442,6 +251,7 @@ function _generateSimulationViewHtml(
                                         `<span class="sidebar-task-icon" style="color:${STEP_COLORS[step.type] || '#a0aec0'}">${STEP_ICONS[step.type] || '▸'}</span>` +
                                         `<span class="sidebar-result" id="ssr-task-${si}-${ji}-${ti}">•</span>` +
                                         `<span class="sidebar-task-name">${esc(step.label)}</span>` +
+                                        `<button class="sidebar-run-btn" title="Run this step" onclick="openRunStepModal(event,${si},${ji},${ti})">&#9654;</button>` +
                                         `</div>`
                                 )
                                 .join('') || '<div class="empty-msg">No tasks</div>';
@@ -468,6 +278,7 @@ function _generateSimulationViewHtml(
                 `<span class="stage-checkbox-wrap" onclick="event.stopPropagation()"><input type="checkbox" class="stage-cb" data-name="${esc(stage.name)}" checked onchange="onStageSelectionChange()"></span>` +
                 `<span class="stage-indicator"></span>` +
                 `<span class="sidebar-stage-name">${esc(stage.displayName)}</span>` +
+                `<button class="sidebar-stage-run-btn" data-stage-name="${esc(stage.name)}" title="Run this stage" onclick="runSingleStage(event,this)">&#9654;</button>` +
                 `</div>` +
                 `<div class="sidebar-stage-meta">${stage.jobs.length} job${stage.jobs.length !== 1 ? 's' : ''}</div>` +
                 `<div class="sidebar-stage-jobs collapsed" id="ssj-${si}">${sidebarJobsHtml}</div>` +
@@ -515,7 +326,6 @@ function _generateSimulationViewHtml(
 
     const baseName = fileName.split(/[\\/]/).pop();
 
-    /* eslint-disable prettier/prettier */
     return `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Pipeline Simulation</title><!-- nonce:${nonce} -->
@@ -559,6 +369,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 .sidebar-task-name{font-size:.82em;color:#a0a0a0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
 .sidebar-task-row:hover .sidebar-task-name{color:#d8d8d8}
 .sidebar-task-row.active .sidebar-task-name{color:#e8e8e8}
+.sidebar-stage-run-btn{background:none;border:none;color:#5a9fd4;cursor:pointer;font-size:.72em;padding:1px 5px;border-radius:2px;flex-shrink:0;line-height:1.4;opacity:0;margin-left:auto}
+.sidebar-stage-header:hover .sidebar-stage-run-btn,.sidebar-stage.active .sidebar-stage-run-btn{opacity:1}
+.sidebar-stage-run-btn:hover{background:#0078d4;color:#fff}
 .main-content{flex:1;display:flex;flex-direction:column;overflow:hidden}
 .settings-panel{background:#2a2a2c;border-bottom:1px solid #444;padding:12px 20px;overflow-y:auto;max-height:none;flex:1}
 .settings-panel.collapsed{max-height:36px;flex:0 0 auto;overflow:hidden}
@@ -679,12 +492,32 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 .term-btn{display:none;background:none;border:1px solid #3e3e42;color:#ccc;padding:8px 16px;border-radius:3px;cursor:pointer;font-size:.88em;font-weight:600}
 .term-btn:hover{border-color:#0078d4;color:#fff}
 .term-btn:disabled{border-color:#333;color:#555;cursor:not-allowed}
+.run-step-modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:1000;display:flex;align-items:center;justify-content:center}
+.run-step-modal{background:#252526;border:1px solid #555;border-radius:6px;padding:24px 28px;width:min(700px,90vw);max-height:80vh;overflow-y:auto;display:flex;flex-direction:column;gap:14px}
+.rsm-title{font-size:1.05em;font-weight:700;color:#e8e8e8}
+.rsm-subtitle{font-size:.9em;color:#aaa;margin-top:4px;margin-bottom:8px}
+.rsm-section{font-size:.78em;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#888;margin-bottom:6px;margin-top:2px}
+.rsm-refs-grid{display:flex;flex-direction:column;gap:6px}
+.rsm-ref-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:center}
+.rsm-ref-name{font-family:monospace;font-size:.82em;color:#9cdcfe;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rsm-ref-input{background:#2d2d30;border:1px solid #3e3e42;color:#e0e0e0;padding:5px 8px;border-radius:3px;font-size:.82em;width:100%}
+.rsm-ref-input:focus{outline:none;border-color:#0078d4}
+.rsm-envvars{display:flex;flex-direction:column;gap:5px}
+.rsm-envrow{display:grid;grid-template-columns:1fr 1fr auto;gap:6px;align-items:center}
+.rsm-envkey,.rsm-envval{background:#2d2d30;border:1px solid #3e3e42;color:#e0e0e0;padding:4px 7px;border-radius:3px;font-size:.82em;width:100%;font-family:monospace}
+.rsm-envkey:focus,.rsm-envval:focus{outline:none;border-color:#0078d4}
+.rsm-actions{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px}
+.rsm-run-btn{background:#0078d4;border:none;color:#fff;padding:8px 18px;border-radius:3px;cursor:pointer;font-size:.9em;font-weight:600}.rsm-run-btn:hover{background:#005a9e}
+.rsm-cancel-btn{background:#3d3d3f;border:1px solid #555;color:#ccc;padding:8px 14px;border-radius:3px;cursor:pointer;font-size:.88em;font-weight:600}.rsm-cancel-btn:hover{background:#4a4a4e;border-color:#888}
+.sidebar-run-btn{background:none;border:none;color:#5a9fd4;cursor:pointer;font-size:.72em;padding:1px 5px;border-radius:2px;flex-shrink:0;line-height:1.4;opacity:0;margin-left:auto}
+.sidebar-task-row:hover .sidebar-run-btn{opacity:1}.sidebar-run-btn:hover{background:#0078d4;color:#fff}
 #pageLoader{position:fixed;inset:0;background:#1e1e1e;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:9999}
 #pageLoader .pl-spinner{width:28px;height:28px;border:3px solid #3e3e42;border-top-color:#569cd6;border-radius:50%;animation:aps-spin .8s linear infinite}
 #pageLoader .pl-text{font-size:.85em;color:#666}
 </style></head>
 <body>
 <div id="pageLoader"><div class="pl-spinner"></div><div class="pl-text">Loading…</div></div>
+<div id="__aps_data" data-top-params="${topLevelParametersJson}" data-known-vars="${knownVarsJson}" data-saved-vars="${savedVarsJson}" data-expanded-steps="${expandedStepsJson}" data-source-text="${originalSourceText}"></div>
 <div class="header"><h1>&#9889; Pipeline Simulation</h1><div class="filename">${esc(baseName)}</div><div class="filename" style="font-size:.7em;color:#555;margin-left:auto">${new Date().toLocaleTimeString()}</div></div>
 <div class="main-container">
   <div class="sidebar">
@@ -732,14 +565,44 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
     </div>
   </div>
 </div>
+<div id="runStepModalBg" class="run-step-modal-bg" style="display:none" onclick="if(event.target===this)closeRunStepModal()">
+  <div class="run-step-modal">
+    <div class="rsm-title">Run Single Step</div>
+    <div class="rsm-subtitle" id="rsmSubtitle"></div>
+    <div id="rsmParamsSection" style="display:none">
+      <div class="rsm-section">Parameters</div>
+      <div class="rsm-refs-grid" id="rsmParamRows"></div>
+    </div>
+    <div id="rsmMacrosSection" style="display:none">
+      <div class="rsm-section">Environment Variables</div>
+      <div class="rsm-refs-grid" id="rsmMacroRows"></div>
+    </div>
+    <div id="rsmVarsSection" style="display:none">
+      <div class="rsm-section">Variables</div>
+      <div class="rsm-refs-grid" id="rsmVarRows"></div>
+    </div>
+    <div id="rsmEnvSection" style="display:none">
+      <div class="rsm-section">Additional Environment</div>
+      <div class="rsm-envvars" id="rsmEnvRows"></div>
+      <button class="add-var-btn" onclick="addRsmEnvRow()" style="margin-top:6px">+ Add</button>
+    </div>
+    <div class="rsm-actions">
+      <div style="display:flex;gap:8px">
+        <button class="rsm-run-btn" onclick="submitRunStep()">&#9654; Run Step</button>
+        <button class="rsm-cancel-btn" onclick="closeRunStepModal()">Cancel</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="rsmDebugMode" style="cursor:pointer;accent-color:#0078d4;width:14px;height:14px">
+        <label for="rsmDebugMode" class="field-label" style="cursor:pointer">Enable Debug</label>
+      </div>
+    </div>
+  </div>
+</div>
 <script>
 window.onerror=function(msg,src,line,col,err){var l=document.getElementById('pageLoader');if(l){l.innerHTML='<div style="color:#f47174;padding:20px;font-family:monospace;font-size:13px"><b>JS Error (line '+line+'):</b><br>'+msg+'<br><br>'+(err&&err.stack?err.stack.replace(/\\n/g,'<br>'):'')+'</div>';}return false;};
 window.addEventListener('unhandledrejection',function(e){var l=document.getElementById('pageLoader');if(l){l.innerHTML='<div style="color:#f47174;padding:20px;font-family:monospace;font-size:13px"><b>Unhandled Promise Rejection:</b><br>'+String(e.reason)+'</div>';}});
 const vscode=acquireVsCodeApi();let varCount=0;let libVarCount=0;let taskFilter=null;
-const topLevelParameterDefinitions=${topLevelParametersJson};
-const knownVars=${knownVarsJson};
-const savedVars=${savedVarsJson};
-function _normParamType(t){return String(t||'string').trim().toLowerCase();}
+const _b64Decode=(str)=>{try{return new TextDecoder().decode(Uint8Array.from(atob(str),c=>c.charCodeAt(0)));}catch(e){console.error('b64Decode error:',e,str&&str.slice(0,40));return str;}};const dataEl=document.getElementById('__aps_data');function _safeJsonParse(b64,fallback){try{var dec=_b64Decode(b64||'');console.log('[aps] decoded (first 80):', dec&&dec.slice(0,80));return JSON.parse(dec);}catch(e){console.error('[aps] _safeJsonParse failed, b64=',b64&&b64.slice(0,40),e);return fallback;}}const _rawKnownVars=_safeJsonParse(dataEl.getAttribute('data-known-vars'),{});const knownVars={azure:Array.isArray(_rawKnownVars.azure)?_rawKnownVars.azure:[],pipeline:Array.isArray(_rawKnownVars.pipeline)?_rawKnownVars.pipeline:[],groups:Array.isArray(_rawKnownVars.groups)?_rawKnownVars.groups:[]};const _rawSavedVars=_safeJsonParse(dataEl.getAttribute('data-saved-vars'),{});const savedVars={overrides:(_rawSavedVars.overrides&&typeof _rawSavedVars.overrides==='object')?_rawSavedVars.overrides:{},libData:Array.isArray(_rawSavedVars.libData)?_rawSavedVars.libData:[],toolPaths:(_rawSavedVars.toolPaths&&typeof _rawSavedVars.toolPaths==='object')?_rawSavedVars.toolPaths:{}};const topLevelParameterDefinitions=_safeJsonParse(dataEl.getAttribute('data-top-params'),[]);window._expandedSteps=_safeJsonParse(dataEl.getAttribute('data-expanded-steps'),[]);window._originalSourceText=_safeJsonParse(dataEl.getAttribute('data-source-text'),'');console.log('[aps] init: stages=',document.querySelectorAll('.sidebar-stage').length,'knownVars.azure=',knownVars.azure.length,'topLevelParams=',topLevelParameterDefinitions.length);function _normParamType(t){return String(t||'string').trim().toLowerCase();}
 function _asBool(v){if(typeof v==='boolean')return v;var s=String(v||'').trim().toLowerCase();return s==='true'||s==='1'||s==='yes';}
 function _stringifyParamValue(v){if(v===undefined||v===null)return '';if(typeof v==='object'){try{return JSON.stringify(v);}catch(_){return String(v);}}return String(v);}
 function _createParamControl(def){
@@ -878,6 +741,31 @@ function toggleAllStages(checked){
         cb.checked=!!checked;
     });
     syncSelectAllStages();
+}
+function _selectOnlyStage(stageName){
+    const target=String(stageName||'').trim();
+    if(!target)return false;
+    let found=false;
+    document.querySelectorAll('.stage-cb').forEach(function(cb){
+        const name=String((cb && cb.dataset && cb.dataset.name) || '').trim();
+        const matches=name===target;
+        cb.checked=matches;
+        if(matches)found=true;
+    });
+    syncSelectAllStages();
+    return found;
+}
+function runSingleStage(event,button){
+    if(event)event.stopPropagation();
+    const stageName=String((button&&button.getAttribute('data-stage-name'))||'').trim();
+    if(!stageName)return;
+    const found=_selectOnlyStage(stageName);
+    if(!found){
+        const status=document.getElementById('statusMsg');
+        if(status)status.textContent='⚠ Could not find selected stage';
+        return;
+    }
+    runSimulation();
 }
 function selectStage(index){
     taskFilter=null;
@@ -1094,6 +982,16 @@ function _renderVariablesPanel(){
     if(!body)return;
     var e=escHtml;
     var html='';
+    if(knownVars.pipeline&&knownVars.pipeline.length){
+        html+='<div class="var-group-label var-toggle" data-target="pipelineVarsBody" onclick="toggleVarSubSection(this)"><span class="sidebar-toggle" style="transform:rotate(90deg)"></span>Pipeline Variables<button class="sec-save-btn" onclick="_btnClick(event,saveVars)" title="Save Pipeline Variables">Save</button></div>';
+        html+='<div id="pipelineVarsBody"><table class="vars-table vars-ref-table"><thead><tr><th class="varth" style="width:40%">Variable</th><th class="varth" style="width:30%">Default (YAML)</th><th class="varth">Override</th></tr></thead><tbody>';
+        knownVars.pipeline.forEach(function(v){
+            var en=e(v.name);
+            var ev=e(v.value||'');
+            html+='<tr><td class="varref-name">'+en+'</td><td class="varref-val">'+ev+'</td><td><input class="var-override-input var-val" data-varname="'+en+'" placeholder="'+ev+'" value="'+ev+'" style="width:100%"></td></tr>';
+        });
+        html+='</tbody></table></div>';
+    }
     html+='<div class="var-group-label var-toggle" data-target="azureVarsBody" onclick="toggleVarSubSection(this)"><span class="sidebar-toggle"></span>Azure System Variables</div>';
     html+='<div id="azureVarsBody" style="display:none"><div class="var-group-actions" style="margin:4px 0 6px 0"><button class="sec-save-btn" onclick="_btnClick(event,saveAzureVars)" title="Save Azure System Variables">Save</button><button class="sec-save-btn" onclick="_btnClick(event,clearAzureVars)" title="Clear Azure System Variables">Clear</button></div><table class="vars-table vars-ref-table"><thead><tr><th class="varth" style="width:38%">Variable</th><th class="varth" style="width:22%">Description</th><th class="varth">Override</th></tr></thead><tbody>';
     knownVars.azure.forEach(function(v){
@@ -1141,6 +1039,129 @@ function runSimulation(){
   }catch(e){console.error('[aps] runSimulation error',e);document.getElementById('resultsPanel').innerHTML='';document.getElementById('statusMsg').textContent='⚠ JS error: '+String(e);document.getElementById('runBtn').disabled=false;}
 }
 function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+let _rsmState={si:0,ji:0,ti:0};
+function _extractRefsFromYaml(sourceText,searchContext){
+  const params=new Set(),vars=new Set(),macros=new Set();
+  let m;
+  const pr=/\$\{\{\s*parameters?\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
+  const vr=/\$\{\{\s*variables?\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
+  const mr=/\$\(([A-Za-z_][A-Za-z0-9_.]*)\)/g;
+  const s=String(sourceText||'');
+  console.log('_extractRefsFromYaml input (first 300 chars):',s.substring(0,300));
+  console.log('Testing regex mr on sample: $(...) matches?', /\$\(([A-Za-z_][A-Za-z0-9_.]*)\)/g.test(s));
+  while((m=pr.exec(s))!==null){console.log('Found param:',m[1]);params.add(m[1]);}
+  while((m=vr.exec(s))!==null){console.log('Found var:',m[1]);vars.add(m[1]);}
+  while((m=mr.exec(s))!==null){console.log('Found macro:',m[1]);macros.add(m[1]);}
+  return{params:[...params],vars:[...vars],macros:[...macros]};
+}
+function openRunStepModal(event,si,ji,ti){
+  try{
+  event.stopPropagation();
+  const stepArr=(window._expandedSteps[si]||[]);
+  const step=(stepArr[ji]||[])[ti];
+  if(!step){console.error('Step not found',si,ji,ti);return;}
+  _rsmState={si,ji,ti};
+  document.getElementById('rsmSubtitle').textContent=step.label||'Step';
+  
+  // Template params take priority; fall back to runtime var refs for steps not from a template
+  const paramDefs=Array.isArray(step.templateParams)&&step.templateParams.length?step.templateParams:null;
+  const params=new Set(paramDefs?paramDefs.map(function(p){return p.name;}):(Array.isArray(step.referencedRuntimeVars)?step.referencedRuntimeVars:[]));
+  // Variables = all $(VAR) refs in the expanded step, excluding template param names
+  const allVarRefs=[...(Array.isArray(step.referencedRuntimeVars)?step.referencedRuntimeVars:[]),...(Array.isArray(step.referencedCompileTimeVars)?step.referencedCompileTimeVars:[])];
+  const vars=new Set(allVarRefs.filter(function(name){return !params.has(name);}));
+  const varDefaults=Object.assign({},savedVars&&savedVars.overrides?savedVars.overrides:{});
+  
+  // Build paramDefaults: template param values take priority, then stepEnv, then saved overrides
+  const paramDefaults={};
+  if(paramDefs){
+    paramDefs.forEach(function(p){if(p.value!==undefined&&p.value!==null)paramDefaults[p.name]=String(p.value);});
+  }
+  const envObj=step.stepEnv||{};
+  Object.keys(envObj).forEach(function(key){if(params.has(key)&&!paramDefaults[key])paramDefaults[key]=String(envObj[key]||'');});
+  
+  // Supplement defaults from known pipeline variables
+  if(Array.isArray(knownVars&&knownVars.pipeline)){
+    knownVars.pipeline.forEach(function(pv){
+      if(!pv||!pv.name)return;
+      if(params.has(pv.name)&&!paramDefaults[pv.name])paramDefaults[pv.name]=pv.value||'';
+      if(!(pv.name in varDefaults))varDefaults[pv.name]=pv.value||'';
+    });
+  }
+  
+  const rsmParamRows=document.getElementById('rsmParamRows');
+  const rsmParamsSection=document.getElementById('rsmParamsSection');
+  rsmParamRows.innerHTML='';
+  if(params.size){
+    rsmParamsSection.style.display='';
+    params.forEach(function(name){
+      const row=document.createElement('div');row.className='rsm-ref-row';
+      const defaultVal=paramDefaults[name]||'';
+      row.innerHTML='<span class="rsm-ref-name" title="'+escHtml(name)+'">'+escHtml(name)+'</span>'
+        +'<input class="rsm-ref-input" data-ref-type="param" data-ref-key="'+escHtml(name)+'" placeholder="'+escHtml(defaultVal)+'" value="'+escHtml(defaultVal)+'">';
+      rsmParamRows.appendChild(row);
+    });
+  }else{rsmParamsSection.style.display='none';}
+  
+  const rsmMacroRows=document.getElementById('rsmMacroRows');
+  const rsmMacrosSection=document.getElementById('rsmMacrosSection');
+  rsmMacrosSection.style.display='none';
+  
+  const rsmVarRows=document.getElementById('rsmVarRows');
+  const rsmVarsSection=document.getElementById('rsmVarsSection');
+  rsmVarRows.innerHTML='';
+  if(vars.size){
+    rsmVarsSection.style.display='';
+    vars.forEach(function(name){
+      const row=document.createElement('div');row.className='rsm-ref-row';
+      const defaultVal=varDefaults[name]||'';
+      row.innerHTML='<span class="rsm-ref-name" title="'+escHtml(name)+'">'+escHtml(name)+'</span>'
+        +'<input class="rsm-ref-input" data-ref-type="var" data-ref-key="'+escHtml(name)+'" placeholder="'+escHtml(defaultVal)+'" value="'+escHtml(defaultVal)+'">';
+      rsmVarRows.appendChild(row);
+    });
+  }else{rsmVarsSection.style.display='none';}
+  
+  document.getElementById('rsmEnvSection').style.display='none';
+  const modalBg=document.getElementById('runStepModalBg');
+  modalBg.style.display='flex';
+  }catch(e){console.error('Modal error:',e,e.stack);document.getElementById('pageLoader').innerHTML='<div style="color:#f47174;padding:20px">Modal error: '+String(e)+'</div>';}
+}
+function closeRunStepModal(){document.getElementById('runStepModalBg').style.display='none';}
+function addRsmEnvRow(key,val){
+  const row=document.createElement('div');row.className='rsm-envrow';
+  row.innerHTML='<input class="rsm-envkey" placeholder="KEY" value="'+escHtml(key||'')+'">'
+    +'<input class="rsm-envval" placeholder="value" value="'+escHtml(String(val||''))+'">'  
+    +'<button class="remove-var-btn" onclick="this.parentElement.remove()">&times;</button>';
+  document.getElementById('rsmEnvRows').appendChild(row);
+}
+function submitRunStep(){
+  const variableOverrides={};
+  document.querySelectorAll('.rsm-ref-input').forEach(function(inp){
+    const k=(inp.getAttribute('data-ref-key')||'').trim();
+    const v=(inp.value||'').trim();
+    if(k&&v)variableOverrides[k]=v;
+  });
+  const debugEl=document.getElementById('rsmDebugMode');
+  if(debugEl&&debugEl.checked)variableOverrides['System.Debug']='true';
+  const envVars={};
+  document.querySelectorAll('#rsmEnvRows .rsm-envrow').forEach(function(row){
+    const k=(row.querySelector('.rsm-envkey')&&row.querySelector('.rsm-envkey').value||'').trim();
+    const v=(row.querySelector('.rsm-envval')&&row.querySelector('.rsm-envval').value||'').trim();
+    if(k)envVars[k]=v;
+  });
+  const bc=parseInt((document.getElementById('buildCounter')&&document.getElementById('buildCounter').value)||'1',10);
+  if(Object.keys(variableOverrides).length){
+    Object.assign(savedVars.overrides,variableOverrides);
+    vscode.postMessage({command:'saveStepVarOverrides',data:variableOverrides});
+  }
+  closeRunStepModal();
+  document.getElementById('runBtn').disabled=true;
+  document.getElementById('statusMsg').textContent='Running single step\u2026';
+  document.getElementById('resultsPanel').innerHTML='<div class="sim-loading"><div class="sim-spinner"></div><span>Running single step\u2026</span></div>';
+  var rb=document.getElementById('renderBody');if(rb)rb.classList.remove('hidden');
+  var s=document.getElementById('settingsContent');if(s){s.classList.add('collapsed');document.getElementById('settingsPanel').classList.add('collapsed');var btn=document.getElementById('settingsToggle');if(btn)btn.innerHTML='&#9660; Settings';}
+  var bb=document.getElementById('backBtn');if(bb)bb.style.display='inline-block';
+  vscode.postMessage({command:'runSingleStep',stageIndex:_rsmState.si,jobIndex:_rsmState.ji,stepIndex:_rsmState.ti,buildCounter:isNaN(bc)?1:bc,variableOverrides:variableOverrides,envVars:envVars});
+}
 function toggleRes(hd){var body=hd.nextElementSibling;if(!body)return;var c=body.classList.toggle('collapsed');var t=hd.querySelector('.res-tog');if(t)t.textContent=c?'\u25b6':'\u25bc';}
 function openResultsInBrowser(){
     var results=document.getElementById('resultsPanel');
@@ -3441,11 +3462,13 @@ ${mermaidDiagram
             { name: 'System.Debug', desc: 'Debug mode (true/false)' },
             { name: 'Agent.OS', desc: 'Agent OS' },
         ];
-        const knownVarsJson = JSON.stringify({
-            azure: azureSystemVars,
-            pipeline: pipelineSimpleVars,
-            groups: pipelineVarGroups,
-        }).replace(/</g, '\\u003c');
+        const knownVarsJson = _b64Encode(
+            JSON.stringify({
+                azure: azureSystemVars,
+                pipeline: pipelineSimpleVars,
+                groups: pipelineVarGroups,
+            })
+        );
 
         lastSimDocument = document;
         lastSimSourceText = sourceText;
@@ -3667,6 +3690,16 @@ ${mermaidDiagram
                     context.workspaceState.update('aps.vars', message.data || {});
                     return;
                 }
+                if (message.command === 'saveStepVarOverrides') {
+                    const existing = context.workspaceState.get('aps.azureVars', { overrides: {} }) || {
+                        overrides: {},
+                    };
+                    const merged = Object.assign({}, existing.overrides || {}, message.data || {});
+                    context.workspaceState.update('aps.azureVars', { overrides: merged });
+                    const legacy = context.workspaceState.get('aps.vars', null) || {};
+                    context.workspaceState.update('aps.vars', Object.assign({}, legacy, { overrides: merged }));
+                    return;
+                }
                 if (message.command === 'saveAzureVars') {
                     const legacy = context.workspaceState.get('aps.vars', null) || {};
                     const existingLibData = Array.isArray(legacy.libData)
@@ -3759,6 +3792,129 @@ ${mermaidDiagram
                 }
                 if (message.command === 'clearToolPaths') {
                     await context.workspaceState.update('aps.toolPaths', {});
+                    return;
+                }
+                if (message.command === 'runSingleStep') {
+                    const doc = lastExpandedDoc;
+                    if (!doc) {
+                        if (simulationPanel && simulationPanel.webview) {
+                            simulationPanel.webview.postMessage({
+                                command: 'simulationError',
+                                error: 'No expanded document — run a full simulation first.',
+                            });
+                        }
+                        return;
+                    }
+                    const {
+                        stageIndex,
+                        jobIndex,
+                        stepIndex,
+                        variableOverrides,
+                        envVars,
+                        buildCounter: msgCounter,
+                    } = message;
+                    const docStages = Array.isArray(doc.stages) ? doc.stages : [];
+                    let targetStage = null,
+                        targetJob = null,
+                        targetStep = null;
+                    if (docStages.length === 0 && Array.isArray(doc.jobs)) {
+                        targetJob = (doc.jobs || [])[jobIndex];
+                        if (targetJob) targetStep = (targetJob.steps || [])[stepIndex];
+                    } else {
+                        targetStage = docStages[stageIndex];
+                        if (targetStage) {
+                            targetJob = (targetStage.jobs || [])[jobIndex];
+                            if (targetJob) targetStep = (targetJob.steps || [])[stepIndex];
+                        }
+                    }
+                    if (!targetStep) {
+                        if (simulationPanel && simulationPanel.webview) {
+                            simulationPanel.webview.postMessage({
+                                command: 'simulationError',
+                                error: `Step not found (stage=${stageIndex} job=${jobIndex} step=${stepIndex})`,
+                            });
+                        }
+                        return;
+                    }
+                    const mergedStepEnv = {
+                        ...(targetStep.env || {}),
+                        ...(envVars && typeof envVars === 'object' ? envVars : {}),
+                    };
+                    const stepWithEnv = { ...targetStep, env: mergedStepEnv };
+                    const jobEntry = targetJob.deployment
+                        ? {
+                              deployment: targetJob.deployment,
+                              displayName: targetJob.displayName || targetJob.deployment,
+                              variables: targetJob.variables,
+                              steps: [stepWithEnv],
+                          }
+                        : {
+                              job: targetJob.job || 'Job',
+                              displayName: targetJob.displayName || targetJob.job || 'Job',
+                              variables: targetJob.variables,
+                              steps: [stepWithEnv],
+                          };
+                    const singleStepDoc = {
+                        stages: [
+                            {
+                                stage: targetStage ? targetStage.stage || 'Stage' : 'Stage',
+                                displayName: targetStage
+                                    ? targetStage.displayName || targetStage.stage || 'Stage'
+                                    : 'Stage',
+                                jobs: [jobEntry],
+                            },
+                        ],
+                    };
+                    if (simulationPanel && simulationPanel.webview) {
+                        simulationPanel.webview.postMessage({ command: 'simulationStarted' });
+                    }
+                    if (!simOutputChannel) simOutputChannel = vscode.window.createOutputChannel('Pipeline Simulation');
+                    simOutputChannel.appendLine(
+                        `[aps] runSingleStep: "${targetStep.displayName || targetStep.name || 'Step'}"`
+                    );
+                    simOutputChannel.show(true);
+                    try {
+                        const simWorkDir = _toSimulatorPath(path.dirname(document.fileName));
+                        const simOutRoot = simWorkDir.replace(/[\/\\]$/, '') + '/simulation';
+                        const bcNum = parseInt(msgCounter, 10);
+                        const bcStr = isNaN(bcNum) ? '1' : String(bcNum);
+                        const execPathsRaw = vscode.workspace
+                            .getConfiguration('azurePipelineStudio', document.uri)
+                            .get('simulation.toolPaths', {});
+                        const execPathsBase = _resolveExecPaths(
+                            execPathsRaw,
+                            _isLinuxSimulationContext(document.fileName)
+                        );
+                        const execPaths = {
+                            ...execPathsBase,
+                            ...(message.toolPaths && typeof message.toolPaths === 'object' ? message.toolPaths : {}),
+                        };
+                        const distroMatch = document.fileName.match(/^\\\\wsl\.localhost\\([^\\]+)/i);
+                        const wslMountRoot =
+                            process.platform === 'win32' && distroMatch ? `\\\\wsl.localhost\\${distroMatch[1]}` : null;
+                        const stepVarOverrides =
+                            variableOverrides && typeof variableOverrides === 'object' ? variableOverrides : {};
+                        const results = runPipelineSimulation(singleStepDoc, {
+                            workingDirectory: simWorkDir,
+                            outputRoot: simOutRoot,
+                            buildCounter: bcStr,
+                            userVariables: stepVarOverrides,
+                            executablePaths: execPaths,
+                            wslMountRoot,
+                        });
+                        simOutputChannel.appendLine(
+                            `[aps] runSingleStep complete — passed=${results.totalPassed} failed=${results.totalFailed}`
+                        );
+                        if (simulationPanel && simulationPanel.webview)
+                            simulationPanel.webview.postMessage({ command: 'simulationResults', results });
+                    } catch (err) {
+                        simOutputChannel.appendLine(`[aps] runSingleStep ERROR: ${(err && err.stack) || err}`);
+                        if (simulationPanel && simulationPanel.webview)
+                            simulationPanel.webview.postMessage({
+                                command: 'simulationError',
+                                error: String((err && err.message) || err),
+                            });
+                    }
                     return;
                 }
                 if (message.command !== 'runSimulation') return;
@@ -3873,26 +4029,62 @@ ${mermaidDiagram
             _settingsExecPaths,
             _savedToolPaths && typeof _savedToolPaths === 'object' ? _savedToolPaths : {}
         );
-        const savedVarsJson = JSON.stringify({
-            overrides:
-                _savedAzure && typeof _savedAzure.overrides === 'object'
-                    ? _savedAzure.overrides
-                    : _legacyVars.overrides || {},
-            libData: Array.isArray(_savedLib)
-                ? _savedLib
-                : Array.isArray(_legacyVars.libData)
-                  ? _legacyVars.libData
-                  : [],
-            toolPaths: _mergedToolPaths,
-        }).replace(/</g, '\\u003c');
-        simulationPanel.webview.html = _generateSimulationViewHtml(
-            stageTree,
-            document.fileName,
-            topLevelParameterDefinitions,
-            String(Date.now()),
-            knownVarsJson,
-            savedVarsJson
+        const savedVarsJson = _b64Encode(
+            JSON.stringify({
+                overrides:
+                    _savedAzure && typeof _savedAzure.overrides === 'object'
+                        ? _savedAzure.overrides
+                        : _legacyVars.overrides || {},
+                libData: Array.isArray(_savedLib)
+                    ? _savedLib
+                    : Array.isArray(_legacyVars.libData)
+                      ? _legacyVars.libData
+                      : [],
+                toolPaths: _mergedToolPaths,
+            })
         );
+        const expandedStepsJsonStr = JSON.stringify(
+            stageTree.map((stage) =>
+                (stage.jobs || []).map((job) =>
+                    (job.steps || []).map((step) => {
+                        const refs = scanStepForReferences(step.rawStep || step);
+                        return {
+                            label: step.label,
+                            scriptContent: step.scriptContent || '',
+                            taskName: step.taskName || '',
+                            taskInputsJson: step.taskInputsJson || '{}',
+                            stepEnv: step.stepEnv || {},
+                            referencedRuntimeVars: refs.runtimeVars,
+                            referencedCompileTimeVars: refs.compileTimeVars,
+                            templateParams: step.templateParams || null,
+                        };
+                    })
+                )
+            )
+        );
+        const expandedStepsJson = _b64Encode(expandedStepsJsonStr);
+        const originalSourceTextJson = _b64Encode(JSON.stringify(lastSimSourceText || ''));
+        try {
+            const _generatedHtml = _generateSimulationViewHtml(
+                stageTree,
+                document.fileName,
+                topLevelParameterDefinitions,
+                String(Date.now()),
+                knownVarsJson,
+                savedVarsJson,
+                expandedStepsJson,
+                originalSourceTextJson
+            );
+            const _dumpPath = require('os').tmpdir() + '/aps-debug.html';
+            fs.writeFileSync(_dumpPath, _generatedHtml, 'utf8');
+            console.log('[aps] HTML written to', _dumpPath, 'length=', _generatedHtml.length);
+            simulationPanel.webview.html = _generatedHtml;
+        } catch (htmlErr) {
+            console.error('[aps] _generateSimulationViewHtml threw:', (htmlErr && htmlErr.stack) || htmlErr);
+            vscode.window.showErrorMessage(
+                `Pipeline Simulation failed to render: ${(htmlErr && htmlErr.message) || htmlErr}`
+            );
+        }
     };
 
     const showSimulationViewDisposable = vscode.commands.registerCommand(
@@ -4222,6 +4414,954 @@ function formatTemplateExpansionError(displayPath, expandError) {
         : `[${displayPath}] Template expansion failed\n  ${firstLine}`;
 }
 
+// ============================================================================
+// CLI COMMAND HANDLERS
+// ============================================================================
+
+/**
+ * Handle CLI command: getscriptinfo
+ * Get compile-time parameters, runtime variables, and environment for a specific step
+ * Usage: node extension.js getscriptinfo -stage 1 -job 2 -step 4 ./pipelines/ci.yaml
+ */
+/**
+ * Shared argument parser for all step/list CLI commands.
+ * Handles -stage, -job, -step, --template <path>, --repo alias=path, --input JSON,
+ * and the first non-flag positional as filePath.
+ */
+function _parseStepCommandArgs(args) {
+    const result = {
+        stageNum: null,
+        jobNum: null,
+        stepNum: null,
+        filePath: null,
+        inputJson: null,
+        resourceLocations: {},
+        debugMode: false,
+        verbose: false,
+    };
+    for (let i = 0; i < args.length; i++) {
+        const a = args[i];
+        if (a === '-stage' && i + 1 < args.length) {
+            result.stageNum = parseInt(args[++i], 10);
+        } else if (a === '-job' && i + 1 < args.length) {
+            result.jobNum = parseInt(args[++i], 10);
+        } else if (a === '-step' && i + 1 < args.length) {
+            result.stepNum = parseInt(args[++i], 10);
+        } else if (a === '--input' && i + 1 < args.length) {
+            result.inputJson = args[++i];
+        } else if (a === '--template' && i + 1 < args.length) {
+            result.resourceLocations['templates'] = args[++i];
+        } else if (a === '--repo' && i + 1 < args.length) {
+            const val = args[++i];
+            const eq = val.indexOf('=');
+            if (eq > 0) result.resourceLocations[val.substring(0, eq).trim()] = val.substring(eq + 1);
+        } else if (a === '--debug' || a === '-d') {
+            result.debugMode = true;
+        } else if (a === '--verbose' || a === '-V') {
+            result.verbose = true;
+        } else if (!a.startsWith('-') && !result.filePath) {
+            result.filePath = a;
+        }
+    }
+    return result;
+}
+
+function handleGetScriptInfo(args) {
+    const { stageNum, jobNum, stepNum, filePath, resourceLocations } = _parseStepCommandArgs(args);
+
+    if (!filePath || stageNum === null || jobNum === null || stepNum === null) {
+        return { error: 'Usage: getscriptinfo -stage N -job N -step N <filepath>' };
+    }
+
+    const fs = require('fs');
+    if (!fs.existsSync(filePath)) {
+        return { error: `File not found: ${filePath}` };
+    }
+
+    try {
+        const yamlContent = fs.readFileSync(filePath, 'utf8');
+        const parser = new AzurePipelineParser();
+        const { document: expandedDoc } = parser.expandPipeline(yamlContent, {
+            baseDir: path.dirname(path.resolve(filePath)),
+            ...(Object.keys(resourceLocations).length && { resourceLocations }),
+        });
+
+        if (!expandedDoc) {
+            return { error: 'Could not parse YAML document' };
+        }
+
+        // Get step hierarchy (1-based indexing from user)
+        const tree = extractSimulationTree(expandedDoc);
+        const stage = tree[stageNum - 1];
+
+        if (!stage) {
+            return { error: `Stage ${stageNum} not found` };
+        }
+
+        const job = stage.jobs[jobNum - 1];
+        if (!job) {
+            return { error: `Job ${jobNum} not found in stage ${stageNum}` };
+        }
+
+        const step = job.steps[stepNum - 1];
+        if (!step) {
+            return { error: `Step ${stepNum} not found in job ${jobNum}` };
+        }
+
+        // Get parameters
+        const params = extractTopLevelParameterDefinitions(parser, yamlContent, true);
+
+        // Use the raw step object for accurate reference scanning (covers all fields)
+        const rawStep = step.rawStep || step;
+        const refs = scanStepForReferences(rawStep);
+
+        // Build parameterDefinitions with isReferenced flag
+        const referencedNames = new Set(refs.parameters);
+        const parameterDefinitions = params.map((p) => ({ ...p, isReferenced: referencedNames.has(p.name) }));
+
+        return {
+            success: true,
+            stage: stageNum,
+            job: jobNum,
+            step: stepNum,
+            stepLabel: step.label,
+            stepType: step.type,
+            scriptContent: step.scriptContent || null,
+            taskName: step.taskName || null,
+            taskInputs: step.taskInputsJson ? JSON.parse(step.taskInputsJson) : {},
+            referencedParameters: refs.parameters,
+            referencedCompileTimeVariables: refs.compileTimeVars,
+            referencedRuntimeVariables: refs.runtimeVars,
+            stepEnvironment: step.stepEnv || {},
+            parameterDefinitions,
+        };
+    } catch (error) {
+        return { error: error.message };
+    }
+}
+
+/**
+ * Handle CLI command: runscript
+ * Execute a step/script with provided variables and parameters
+ * Usage: node extension.js runscript -stage 1 -job 2 -step 4 ./pipelines/ci.yaml --input '{"parameters":{},"variables":{},...}'
+ */
+function handleRunScript(args) {
+    const { stageNum, jobNum, stepNum, filePath, inputJson, resourceLocations, debugMode } =
+        _parseStepCommandArgs(args);
+
+    if (!filePath || stageNum === null || jobNum === null || stepNum === null) {
+        return { error: 'Usage: runscript -stage N -job N -step N <filepath> [--input JSON]' };
+    }
+
+    const fs = require('fs');
+    if (!fs.existsSync(filePath)) {
+        return { error: `File not found: ${filePath}` };
+    }
+
+    try {
+        const yamlContent = fs.readFileSync(filePath, 'utf8');
+        const parser = new AzurePipelineParser();
+        const { document: expandedDoc } = parser.expandPipeline(yamlContent, {
+            baseDir: path.dirname(path.resolve(filePath)),
+            ...(Object.keys(resourceLocations).length && { resourceLocations }),
+        });
+
+        if (!expandedDoc) {
+            return { error: 'Could not parse YAML document' };
+        }
+
+        // Get step (1-based indexing)
+        const tree = extractSimulationTree(expandedDoc);
+        const stage = tree[stageNum - 1];
+        if (!stage) {
+            return { error: `Stage ${stageNum} not found` };
+        }
+
+        const job = stage.jobs[jobNum - 1];
+        if (!job) {
+            return { error: `Job ${jobNum} not found in stage ${stageNum}` };
+        }
+
+        const step = job.steps[stepNum - 1];
+        if (!step) {
+            return { error: `Step ${stepNum} not found in job ${jobNum}` };
+        }
+
+        // Parse input overrides if provided
+        let overrides = {};
+        if (inputJson) {
+            try {
+                overrides = JSON.parse(inputJson);
+            } catch (e) {
+                return { error: `Invalid JSON in --input: ${e.message}` };
+            }
+        }
+
+        // CLI convenience mode: allow only two top-level sections like the UI.
+        // - parameters: template parameter overrides
+        // - variables: both compile-time (Build./System./Agent./Pipeline.) and runtime vars
+        const normalizedOverrides = {
+            ...overrides,
+            compileTimeVariables:
+                overrides && overrides.compileTimeVariables && typeof overrides.compileTimeVariables === 'object'
+                    ? { ...overrides.compileTimeVariables }
+                    : {},
+            runtimeVariables:
+                overrides && overrides.runtimeVariables && typeof overrides.runtimeVariables === 'object'
+                    ? { ...overrides.runtimeVariables }
+                    : {},
+        };
+        if (overrides && overrides.variables && typeof overrides.variables === 'object') {
+            Object.entries(overrides.variables).forEach(([key, value]) => {
+                const varName = String(key || '').trim();
+                if (!varName) return;
+                if (/^(Build|System|Agent|Pipeline)\./.test(varName)) {
+                    if (normalizedOverrides.compileTimeVariables[varName] === undefined) {
+                        normalizedOverrides.compileTimeVariables[varName] = value;
+                    }
+                } else if (/^variables?\./i.test(varName)) {
+                    const bareVarName = varName.replace(/^variables?\./i, '').trim();
+                    if (bareVarName && normalizedOverrides.compileTimeVariables[bareVarName] === undefined) {
+                        normalizedOverrides.compileTimeVariables[bareVarName] = value;
+                    }
+                    if (normalizedOverrides.compileTimeVariables[varName] === undefined) {
+                        normalizedOverrides.compileTimeVariables[varName] = value;
+                    }
+                } else if (normalizedOverrides.runtimeVariables[varName] === undefined) {
+                    normalizedOverrides.runtimeVariables[varName] = value;
+                }
+            });
+        }
+        if (debugMode) {
+            normalizedOverrides.compileTimeVariables['System.Debug'] = 'true';
+        }
+
+        // Get the original step definition (not the processed one from extractSimulationTree)
+        const rawStep = step.rawStep || step;
+
+        // Get parameters
+        const params = extractTopLevelParameterDefinitions(parser, yamlContent, true);
+
+        // Prepare step test inputs with overrides using raw step
+        const stepInputs = prepareStepUnitTest(rawStep, expandedDoc, params, normalizedOverrides);
+
+        // Resolve script content — prefer prepareStepUnitTest result, then fall back to
+        // inline task scripts (Bash@3, PowerShell@2, CmdLine@2, etc. with targetType: inline)
+        let resolvedScript = stepInputs && stepInputs.resolvedScriptContent;
+        let taskShell = null;
+
+        if (!resolvedScript && step.taskName && step.taskInputsJson) {
+            const taskInputs = JSON.parse(step.taskInputsJson);
+            if ((taskInputs.targetType === 'inline' || !taskInputs.targetType) && taskInputs.script) {
+                resolvedScript = taskInputs.script;
+                const taskLower = step.taskName.toLowerCase();
+                taskShell =
+                    taskLower.startsWith('powershell') || taskLower.startsWith('azurepowershell') ? 'pwsh' : 'bash';
+            }
+        }
+
+        if (!resolvedScript) {
+            return {
+                error: `Step ${stepNum} has no executable script content (type: ${step.type}, task: ${step.taskName || 'n/a'}).`,
+                info: stepInputs,
+            };
+        }
+
+        // Prepare environment
+        const env = { ...process.env };
+
+        const resolveEnvMacros = (value, lookup) => {
+            const raw = String(value === undefined || value === null ? '' : value);
+            return raw.replace(/\$\(([^)]+)\)/g, (full, name) => {
+                const key = String(name || '').trim();
+                if (!key) return full;
+                if (lookup[key] !== undefined && lookup[key] !== null) {
+                    return String(lookup[key]);
+                }
+                return full;
+            });
+        };
+
+        const resolveScriptMacros = (scriptText, lookup) => {
+            const raw = String(scriptText === undefined || scriptText === null ? '' : scriptText);
+            // Azure macro variables use $(Var.Name). Replace only identifier-like tokens so
+            // unresolved or non-variable shell constructs remain untouched.
+            return raw.replace(/\$\(([A-Za-z_][A-Za-z0-9_.-]*)\)/g, (full, name) => {
+                const key = String(name || '').trim();
+                if (!key) return full;
+                if (lookup[key] !== undefined && lookup[key] !== null) {
+                    return String(lookup[key]);
+                }
+                return full;
+            });
+        };
+
+        const macroLookup = {
+            ...(stepInputs && stepInputs.compileTimeVariableValues ? stepInputs.compileTimeVariableValues : {}),
+            ...(stepInputs && stepInputs.runtimeVariableValues ? stepInputs.runtimeVariableValues : {}),
+        };
+
+        const executableScript = resolveScriptMacros(resolvedScript, macroLookup);
+
+        // Add step environment variables
+        if (stepInputs && stepInputs.stepEnvironment) {
+            Object.entries(stepInputs.stepEnvironment).forEach(([key, value]) => {
+                env[key] = resolveEnvMacros(value, macroLookup);
+            });
+        }
+
+        // Add compile-time variables
+        if (stepInputs && stepInputs.compileTimeVariableValues) {
+            Object.entries(stepInputs.compileTimeVariableValues).forEach(([key, value]) => {
+                env[key] = String(value);
+            });
+        }
+
+        // Add runtime variables
+        if (stepInputs && stepInputs.runtimeVariableValues) {
+            Object.entries(stepInputs.runtimeVariableValues).forEach(([key, value]) => {
+                env[key] = String(value);
+            });
+        }
+
+        // Execute the script
+        const { spawnSync } = require('child_process');
+        try {
+            let script = executableScript;
+
+            // Detect shell type: explicit step type takes priority, then task-inferred, then bash
+            const shell = step.type === 'powershell' || step.type === 'pwsh' ? 'pwsh' : taskShell || 'bash';
+
+            // In debug mode, force xtrace for bash if not already present.
+            if (debugMode && shell === 'bash') {
+                const hasSetX = /(^|\n)\s*set\s+-[^\n]*x\b/.test(script);
+                if (!hasSetX) {
+                    script = `set -x\n${script}`;
+                }
+            }
+
+            const mergeOutput = (stdoutText, stderrText, includeStderr) => {
+                const stdoutValue = String(stdoutText || '');
+                const stderrValue = String(stderrText || '');
+                if (!includeStderr) {
+                    return stdoutValue.trim();
+                }
+                if (stderrValue && stdoutValue) {
+                    return `${stderrValue}${stderrValue.endsWith('\n') ? '' : '\n'}${stdoutValue}`.trim();
+                }
+                return (stderrValue || stdoutValue).trim();
+            };
+
+            // Execute script
+            const execResult =
+                shell === 'pwsh'
+                    ? spawnSync('pwsh', ['-NoProfile', '-Command', script], {
+                          env,
+                          encoding: 'utf8',
+                      })
+                    : spawnSync('/bin/bash', ['-lc', script], {
+                          env,
+                          encoding: 'utf8',
+                      });
+
+            const stdout = String(execResult.stdout || '');
+            const stderr = String(execResult.stderr || '');
+            const outputText = mergeOutput(stdout, stderr, debugMode);
+
+            if (execResult.error) {
+                return {
+                    success: false,
+                    stage: stageNum,
+                    job: jobNum,
+                    step: stepNum,
+                    stepLabel: step.label,
+                    error: `Script execution failed: ${execResult.error.message}`,
+                    exitCode: execResult.status,
+                    output: outputText,
+                    inputsUsed: {
+                        parameters: (stepInputs && stepInputs.parameterValues) || {},
+                        compileTimeVariables: (stepInputs && stepInputs.compileTimeVariableValues) || {},
+                        runtimeVariables: (stepInputs && stepInputs.runtimeVariableValues) || {},
+                        environment: env,
+                    },
+                };
+            }
+
+            if (execResult.status !== 0) {
+                // Script failed, return error details
+                return {
+                    success: false,
+                    stage: stageNum,
+                    job: jobNum,
+                    step: stepNum,
+                    stepLabel: step.label,
+                    error: `Script execution failed (exit code ${execResult.status})`,
+                    exitCode: execResult.status,
+                    output: outputText,
+                    inputsUsed: {
+                        parameters: (stepInputs && stepInputs.parameterValues) || {},
+                        compileTimeVariables: (stepInputs && stepInputs.compileTimeVariableValues) || {},
+                        runtimeVariables: (stepInputs && stepInputs.runtimeVariableValues) || {},
+                        environment: env,
+                    },
+                };
+            }
+
+            return {
+                success: true,
+                stage: stageNum,
+                job: jobNum,
+                step: stepNum,
+                stepLabel: step.label,
+                stepType: step.type,
+                scriptExecuted: true,
+                output: outputText,
+                inputsUsed: {
+                    parameters: (stepInputs && stepInputs.parameterValues) || {},
+                    compileTimeVariables: (stepInputs && stepInputs.compileTimeVariableValues) || {},
+                    runtimeVariables: (stepInputs && stepInputs.runtimeVariableValues) || {},
+                    environment: env,
+                },
+            };
+        } catch (error) {
+            return { error: error.message };
+        }
+    } catch (error) {
+        return { error: error.message };
+    }
+}
+
+/**
+ * Handle CLI command: liststages
+ * Usage: node extension.js liststages [--template <path>] [--repo alias=path] <filepath>
+ */
+function handleListStages(args) {
+    const { filePath, resourceLocations } = _parseStepCommandArgs(args);
+    if (!filePath) return { error: 'Usage: liststages [--template <path>] [--repo alias=path] <filepath>' };
+    const fs = require('fs');
+    if (!fs.existsSync(filePath)) return { error: `File not found: ${filePath}` };
+    try {
+        const yamlContent = fs.readFileSync(filePath, 'utf8');
+        const parser = new AzurePipelineParser();
+        const { document: expandedDoc } = parser.expandPipeline(yamlContent, {
+            baseDir: path.dirname(path.resolve(filePath)),
+            ...(Object.keys(resourceLocations).length && { resourceLocations }),
+        });
+        if (!expandedDoc) return { error: 'Could not parse YAML document' };
+        const tree = extractSimulationTree(expandedDoc);
+        return {
+            success: true,
+            stages: tree.map((stage, i) => ({
+                number: i + 1,
+                name: stage.name,
+                displayName: stage.displayName,
+                jobCount: (stage.jobs || []).length,
+            })),
+        };
+    } catch (error) {
+        return { error: error.message };
+    }
+}
+
+/**
+ * Handle CLI command: listjobs
+ * Usage: node extension.js listjobs -stage N <filepath>
+ */
+function handleListJobs(args) {
+    const { stageNum, filePath, resourceLocations } = _parseStepCommandArgs(args);
+    if (!filePath || stageNum === null)
+        return { error: 'Usage: listjobs -stage N [--template <path>] [--repo alias=path] <filepath>' };
+    const fs = require('fs');
+    if (!fs.existsSync(filePath)) return { error: `File not found: ${filePath}` };
+    try {
+        const yamlContent = fs.readFileSync(filePath, 'utf8');
+        const parser = new AzurePipelineParser();
+        const { document: expandedDoc } = parser.expandPipeline(yamlContent, {
+            baseDir: path.dirname(path.resolve(filePath)),
+            ...(Object.keys(resourceLocations).length && { resourceLocations }),
+        });
+        if (!expandedDoc) return { error: 'Could not parse YAML document' };
+        const tree = extractSimulationTree(expandedDoc);
+        const stage = tree[stageNum - 1];
+        if (!stage) return { error: `Stage ${stageNum} not found (total: ${tree.length})` };
+        return {
+            success: true,
+            stage: stageNum,
+            stageName: stage.displayName,
+            jobs: (stage.jobs || []).map((job, i) => ({
+                number: i + 1,
+                name: job.name,
+                displayName: job.displayName,
+                stepCount: (job.steps || []).length,
+            })),
+        };
+    } catch (error) {
+        return { error: error.message };
+    }
+}
+
+/**
+ * Handle CLI command: liststeps
+ * Usage: node extension.js liststeps -stage N -job N <filepath>
+ */
+function handleListSteps(args) {
+    const { stageNum, jobNum, filePath, resourceLocations } = _parseStepCommandArgs(args);
+    if (!filePath || stageNum === null || jobNum === null)
+        return { error: 'Usage: liststeps -stage N -job N [--template <path>] [--repo alias=path] <filepath>' };
+    const fs = require('fs');
+    if (!fs.existsSync(filePath)) return { error: `File not found: ${filePath}` };
+    try {
+        const yamlContent = fs.readFileSync(filePath, 'utf8');
+        const parser = new AzurePipelineParser();
+        const { document: expandedDoc } = parser.expandPipeline(yamlContent, {
+            baseDir: path.dirname(path.resolve(filePath)),
+            ...(Object.keys(resourceLocations).length && { resourceLocations }),
+        });
+        if (!expandedDoc) return { error: 'Could not parse YAML document' };
+        const tree = extractSimulationTree(expandedDoc);
+        const stage = tree[stageNum - 1];
+        if (!stage) return { error: `Stage ${stageNum} not found (total: ${tree.length})` };
+        const job = (stage.jobs || [])[jobNum - 1];
+        if (!job)
+            return { error: `Job ${jobNum} not found in stage ${stageNum} (total: ${(stage.jobs || []).length})` };
+        return {
+            success: true,
+            stage: stageNum,
+            stageName: stage.displayName,
+            job: jobNum,
+            jobName: job.displayName,
+            steps: (job.steps || []).map((step, i) => ({
+                number: i + 1,
+                label: step.label,
+                type: step.type,
+            })),
+        };
+    } catch (error) {
+        return { error: error.message };
+    }
+}
+
+/**
+ * Handle CLI command: extract-tree
+ * Extracts and displays step hierarchy from a pipeline
+ */
+function handleExtractTree(filePath) {
+    try {
+        const fs = require('fs');
+        if (!fs.existsSync(filePath)) {
+            return { error: `File not found: ${filePath}` };
+        }
+
+        const yamlContent = fs.readFileSync(filePath, 'utf8');
+        const parser = new AzurePipelineParser();
+        const parseResult = parser.parseYamlDocument(yamlContent);
+
+        if (!parseResult || !parseResult.jsonDoc) {
+            return { error: 'Could not parse YAML document' };
+        }
+
+        const stages = extractSimulationTree(parseResult.jsonDoc);
+        return {
+            command: 'extract-tree',
+            file: filePath,
+            stages,
+        };
+    } catch (error) {
+        return { error: error.message };
+    }
+}
+
+/**
+ * Handle CLI command: extract-params
+ * Extracts parameter definitions from a pipeline
+ */
+function handleExtractParams(filePath) {
+    try {
+        const fs = require('fs');
+        if (!fs.existsSync(filePath)) {
+            return { error: `File not found: ${filePath}` };
+        }
+
+        const yamlContent = fs.readFileSync(filePath, 'utf8');
+        const parser = new AzurePipelineParser();
+        const parameters = extractTopLevelParameterDefinitions(parser, yamlContent, true);
+
+        return {
+            command: 'extract-params',
+            file: filePath,
+            parameters,
+        };
+    } catch (error) {
+        return { error: error.message };
+    }
+}
+
+/**
+ * Handle CLI command: extract-vars
+ * Extracts variables and variable groups from a pipeline
+ */
+function handleExtractVars(filePath) {
+    try {
+        const fs = require('fs');
+        if (!fs.existsSync(filePath)) {
+            return { error: `File not found: ${filePath}` };
+        }
+
+        const yamlContent = fs.readFileSync(filePath, 'utf8');
+        const parser = new AzurePipelineParser();
+        const parseResult = parser.parseYamlDocument(yamlContent);
+
+        if (!parseResult || !parseResult.jsonDoc) {
+            return { error: 'Could not parse YAML document' };
+        }
+
+        const { simple, groups } = extractPipelineVariables(parseResult.jsonDoc);
+        return {
+            command: 'extract-vars',
+            file: filePath,
+            simpleVariables: simple,
+            libraryGroups: groups,
+        };
+    } catch (error) {
+        return { error: error.message };
+    }
+}
+
+// ============================================================================
+// STEP INPUT ANALYSIS FOR UI AND TESTING
+// ============================================================================
+
+/**
+ * Build a variable context object from a parsed pipeline document.
+ * Returns { varMap, systemVars } for use in step input extraction.
+ */
+function buildVariableContext(document) {
+    const { simple: pipelineVars } = extractPipelineVariables(document);
+    const systemVars = buildSimulationDefaultVariables('.', '.', '1', {});
+    const varMap = {};
+    pipelineVars.forEach((v) => {
+        varMap[v.name] = v.value;
+    });
+    return { varMap, systemVars };
+}
+
+/**
+ * Get all inputs for a specific step for display/testing in UI
+ * Finds which parameters and variables affect a particular step
+ */
+function getStepInputsForTesting(step, document, allParameters = []) {
+    if (!step || !document) return null;
+    const { varMap, systemVars } = buildVariableContext(document);
+    return extractStepInputs(step, allParameters, varMap, systemVars);
+}
+
+/**
+ * Prepare test scenario for a step with parameter/variable overrides
+ * Returns complete test input set ready for unit testing
+ */
+function prepareStepUnitTest(step, document, allParameters = [], overrides = {}) {
+    if (!step || !document) return null;
+    const { varMap, systemVars } = buildVariableContext(document);
+
+    return prepareStepTestInputs(step, allParameters, varMap, systemVars, overrides);
+}
+
+// ============================================================================
+// STEP INPUTS ANALYSIS
+// ============================================================================
+
+/**
+ * Analyze which parameters and variables a specific step uses
+ * Useful for UI display of step dependencies
+ */
+function analyzeStepDependencies(step) {
+    if (!step) return null;
+
+    return {
+        referencedParameters: extractReferencedParameters(step),
+        variables: extractReferencedVariables(step),
+        stepType: extractStepType(step),
+        hasEnvironmentVariables: !!(step.env && Object.keys(step.env).length > 0),
+        hasTaskInputs: !!(step.inputs && Object.keys(step.inputs).length > 0),
+    };
+}
+
+// ============================================================================
+// CLI MAIN ENTRY POINT
+// ============================================================================
+
+/**
+ * Main CLI entry point for pipeline extraction
+ * Handles argument parsing and command routing
+ * Usage: node extension.js <command> <file> [options]
+ */
+function handleExtractorCli(argv = process.argv) {
+    // If argv is already sliced (doesn't contain node/script), use as-is
+    // Otherwise slice off node and script name
+    const args = argv.length > 0 && !argv[0].includes('node') ? argv : argv.slice(2);
+
+    // Parse options
+    const options = {
+        format: 'json',
+        pretty: false,
+        help: false,
+    };
+
+    const positional = [];
+
+    for (let i = 0; i < args.length; i++) {
+        const arg = args[i];
+
+        if (arg === '--help' || arg === '-h') {
+            options.help = true;
+        } else if (arg === '--pretty') {
+            options.pretty = true;
+        } else if (arg === '--json') {
+            options.format = 'json';
+        } else if (arg === '--csv') {
+            options.format = 'csv';
+        } else if (arg === '--table') {
+            options.format = 'table';
+        } else if (arg.startsWith('--format=')) {
+            options.format = arg.substring('--format='.length);
+        } else if (!arg.startsWith('--')) {
+            positional.push(arg);
+        }
+    }
+
+    if (options.help || positional.length === 0) {
+        printCliHelp();
+        return { success: true };
+    }
+
+    const [command, filePath] = positional;
+
+    if (!command || !filePath) {
+        console.error('Error: command and file path are required');
+        printCliHelp();
+        return { error: 'Missing arguments' };
+    }
+
+    const fs = require('fs');
+    if (!fs.existsSync(filePath)) {
+        console.error(`Error: File not found: ${filePath}`);
+        return { error: `File not found: ${filePath}` };
+    }
+
+    let result;
+
+    switch (command) {
+        case 'extract-tree':
+        case 'tree':
+            result = handleExtractTree(filePath);
+            break;
+        case 'extract-params':
+        case 'params':
+            result = handleExtractParams(filePath);
+            break;
+        case 'extract-vars':
+        case 'vars':
+            result = handleExtractVars(filePath);
+            break;
+        default:
+            console.error(`Error: Unknown command '${command}'`);
+            printCliHelp();
+            return { error: `Unknown command: ${command}` };
+    }
+
+    if (result.error) {
+        console.error(`Error: ${result.error}`);
+        return result;
+    }
+
+    // Format output
+    const output = formatCliOutput(result, options);
+    console.log(output);
+
+    return { success: true, result };
+}
+
+/**
+ * Print CLI help message
+ */
+function printCliHelp() {
+    console.log(`
+Pipeline CLI - Script Execution
+
+Usage: node extension.js <command> [options] <file>
+
+Listing Commands:
+  liststages <file>
+    List all stages with their numbers and job counts.
+
+  listjobs -stage N <file>
+    List all jobs in a stage with their numbers and step counts.
+
+  liststeps -stage N -job N <file>
+    List all steps in a job with their numbers, labels, and types.
+
+Script Commands:
+  getscriptinfo -stage N -job N -step N <file>
+    List the template parameters, runtime variables, and environment for a step.
+    Output includes parameter names, types, default values, and current expansion values.
+
+    runscript -stage N -job N -step N <file> [--input JSON] [--debug] [--verbose]
+    Execute a step script with optional parameter/variable overrides.
+        Options:
+            --debug               runscript-only; set System.Debug=true for this run
+            --verbose             Global or runscript arg; print full JSON result
+                                                        (default prints script output only)
+    The --input JSON object supports these keys:
+      parameters            Override template parameter values  (map of name => value)
+            variables             Override variables (auto-split by key pattern):
+                                                        - Build.*/System.*/Agent.*/Pipeline.* => compile-time
+                                                        - variables.* or variable.*            => compile-time
+                                                        - all others                           => runtime variables
+            Legacy keys (still supported): compileTimeVariables, runtimeVariables, environment
+
+Examples:
+  # Discover the pipeline structure
+    node extension.js liststages ./pipeline.yaml
+    node extension.js listjobs -stage 1 ./pipeline.yaml
+    node extension.js liststeps -stage 1 -job 1 ./pipeline.yaml
+
+  # Inspect a step's inputs
+    node extension.js getscriptinfo -stage 1 -job 1 -step 3 ./pipeline.yaml
+
+  # Run with default parameter values
+    node extension.js runscript -stage 1 -job 1 -step 3 ./pipeline.yaml
+
+  # Override template parameters
+    node extension.js runscript -stage 1 -job 1 -step 3 ./pipeline.yaml \\
+    --input '{"parameters":{"username":"myuser","email":"my@email.com"}}'
+
+  # Override runtime variables
+    node extension.js runscript -stage 1 -job 1 -step 3 ./pipeline.yaml \\
+        --input '{"variables":{"auth_token":"mytoken"}}'
+
+  # Enable debug mode (sets System.Debug=true)
+    node extension.js runscript -stage 1 -job 1 -step 3 ./pipeline.yaml \\
+        --input '{"variables":{"System.Debug":"true"}}'
+
+    # Combine parameter and variable overrides
+    node extension.js runscript -stage 1 -job 1 -step 3 ./pipeline.yaml \\
+        --input '{"parameters":{"serviceUser":"myuser"},"variables":{"System.Debug":"true","variable.var1":"abc"}}'
+
+Output:
+  Listing commands print one entry per line (human-readable).
+    runscript normal mode prints only script stdout.
+    runscript --verbose prints full JSON with step info, inputs, and environment.
+    Other script commands output JSON.
+  On error: message on stderr and exit code 1.
+    `);
+}
+
+/**
+ * Format CLI output based on options
+ */
+function formatCliOutput(data, options) {
+    if (options.format === 'json' || options.format === 'application/json') {
+        const indent = options.pretty ? 2 : 0;
+        return JSON.stringify(data, null, indent);
+    }
+
+    if (options.format === 'csv') {
+        return formatAsCSV(data);
+    }
+
+    if (options.format === 'table') {
+        return formatAsTable(data);
+    }
+
+    // Default to JSON
+    return JSON.stringify(data, null, options.pretty ? 2 : 0);
+}
+
+/**
+ * Format data as CSV
+ */
+function formatAsCSV(data) {
+    if (data.command === 'extract-tree') {
+        // Format stages/jobs/steps as CSV
+        const rows = ['Stage,Job,Step,Type'];
+        data.stages?.forEach((stage) => {
+            stage.jobs?.forEach((job) => {
+                job.steps?.forEach((step) => {
+                    rows.push(`"${stage.displayName}","${job.displayName}","${step.label}","${step.type}"`);
+                });
+            });
+        });
+        return rows.join('\n');
+    }
+
+    if (data.command === 'extract-params') {
+        // Format parameters as CSV
+        const rows = ['Name,Type,HasDefault,DefaultValue'];
+        data.parameters?.forEach((p) => {
+            rows.push(`"${p.name}","${p.type}",${p.hasDefault},"${p.defaultValue || ''}"`);
+        });
+        return rows.join('\n');
+    }
+
+    if (data.command === 'extract-vars') {
+        // Format variables as CSV
+        const rows = ['Type,Name,Value'];
+        data.simpleVariables?.forEach((v) => {
+            rows.push(`"simple","${v.name}","${v.value}"`);
+        });
+        data.libraryGroups?.forEach((g) => {
+            rows.push(`"group","${g}",""`);
+        });
+        return rows.join('\n');
+    }
+
+    return JSON.stringify(data, null, 0);
+}
+
+/**
+ * Format data as table
+ */
+function formatAsTable(data) {
+    if (data.command === 'extract-tree') {
+        // Format stages/jobs/steps as ASCII table
+        let output = 'STAGE\t\t\tJOB\t\t\tSTEP\t\t\tTYPE\n';
+        output += ''.padEnd(80, '=') + '\n';
+        data.stages?.forEach((stage) => {
+            stage.jobs?.forEach((job) => {
+                job.steps?.forEach((step) => {
+                    output += `${(stage.displayName || '').padEnd(15)}\t${(job.displayName || '').padEnd(15)}\t${(step.label || '').padEnd(15)}\t${step.type}\n`;
+                });
+            });
+        });
+        return output;
+    }
+
+    if (data.command === 'extract-params') {
+        // Format parameters as ASCII table
+        let output = 'NAME\t\t\tTYPE\t\tDEFAULT\n';
+        output += ''.padEnd(80, '=') + '\n';
+        data.parameters?.forEach((p) => {
+            output += `${(p.name || '').padEnd(15)}\t${(p.type || '').padEnd(10)}\t${p.defaultValue || '(none)'}\n`;
+        });
+        return output;
+    }
+
+    if (data.command === 'extract-vars') {
+        // Format variables as ASCII table
+        let output = 'TYPE\tNAME\t\t\tVALUE\n';
+        output += ''.padEnd(80, '=') + '\n';
+        data.simpleVariables?.forEach((v) => {
+            output += `var\t${(v.name || '').padEnd(20)}\t${v.value}\n`;
+        });
+        data.libraryGroups?.forEach((g) => {
+            output += `group\t${g}\n`;
+        });
+        return output;
+    }
+
+    return JSON.stringify(data, null, 0);
+}
+
 module.exports = {
     activate,
     deactivate,
@@ -4229,6 +5369,21 @@ module.exports = {
     formatYaml,
     formatFilesRecursively,
     DependencyAnalyzer,
+    // Script execution commands
+    handleGetScriptInfo,
+    handleRunScript,
+    // CLI command handlers
+    handleExtractTree,
+    handleExtractParams,
+    handleExtractVars,
+    // Step input analysis functions
+    getStepInputsForTesting,
+    prepareStepUnitTest,
+    analyzeStepDependencies,
+    // CLI extractors
+    handleExtractorCli,
+    printCliHelp,
+    formatCliOutput,
 };
 
 function buildRepositoryOverridesFromCliEntries(entries, cwd) {
@@ -4451,9 +5606,84 @@ function runCli(args) {
         return;
     }
 
+    // Check for script commands (getscriptinfo, runscript, liststages, listjobs, liststeps)
+    // Support passing flags before the command, e.g.:
+    //   node extension.js --verbose runscript ...
+    const scriptCommands = ['getscriptinfo', 'runscript', 'liststages', 'listjobs', 'liststeps'];
+    const scriptCommandIndex = args.findIndex((arg) => scriptCommands.includes(arg));
+    if (scriptCommandIndex >= 0) {
+        const command = args[scriptCommandIndex];
+        const argsBeforeCommand = args.slice(0, scriptCommandIndex);
+        const argsAfterCommand = args.slice(scriptCommandIndex + 1);
+
+        const forwardedScriptFlags = [];
+        if (argsBeforeCommand.includes('--verbose') || argsBeforeCommand.includes('-V')) {
+            forwardedScriptFlags.push('--verbose');
+        }
+
+        const commandArgs = [...forwardedScriptFlags, ...argsAfterCommand];
+
+        let result;
+        if (command === 'getscriptinfo') {
+            result = handleGetScriptInfo(commandArgs);
+        } else if (command === 'runscript') {
+            result = handleRunScript(commandArgs);
+        } else if (command === 'liststages') {
+            result = handleListStages(commandArgs);
+        } else if (command === 'listjobs') {
+            result = handleListJobs(commandArgs);
+        } else if (command === 'liststeps') {
+            result = handleListSteps(commandArgs);
+        }
+
+        if (result && result.error) {
+            console.error(`Error: ${result.error}`);
+            process.exitCode = 1;
+        } else if (result) {
+            const scriptOptions = _parseStepCommandArgs(commandArgs);
+            if (command === 'liststages' && result.stages) {
+                result.stages.forEach((s) =>
+                    console.log(
+                        `Stage ${s.number}: ${s.displayName}  (${s.jobCount} job${s.jobCount !== 1 ? 's' : ''})`
+                    )
+                );
+            } else if (command === 'listjobs' && result.jobs) {
+                console.log(`[Stage ${result.stage}: ${result.stageName}]`);
+                result.jobs.forEach((j) =>
+                    console.log(
+                        `  Job ${j.number}: ${j.displayName}  (${j.stepCount} step${j.stepCount !== 1 ? 's' : ''})`
+                    )
+                );
+            } else if (command === 'liststeps' && result.steps) {
+                console.log(`[Stage ${result.stage}: ${result.stageName} / Job ${result.job}: ${result.jobName}]`);
+                result.steps.forEach((s) => console.log(`  Step ${s.number}: ${s.label}  [${s.type}]`));
+            } else if (command === 'runscript') {
+                const scriptOutput = typeof result.output === 'string' ? result.output : '';
+                if (scriptOptions.verbose) {
+                    console.log(JSON.stringify(result, null, 2));
+                } else if (scriptOutput.length) {
+                    console.log(scriptOutput);
+                }
+                if (result.success === false) {
+                    process.exitCode = 1;
+                }
+            } else {
+                console.log(JSON.stringify(result, null, 2));
+            }
+        }
+        return;
+    }
+
     const usage =
-        'Usage: node extension.js <file1> <file2> ...\n' +
-        'Options:\n' +
+        'Usage: node extension.js <command> <file> [options]\n' +
+        '       node extension.js <file1> <file2> ... [options]\n\n' +
+        'Script Commands:\n' +
+        '  getscriptinfo -stage N -job N -step N <file>  Get script input info at location\n' +
+        '  runscript -stage N -job N -step N <file> [--input JSON] [--debug] [--verbose]  Execute script with inputs\n\n' +
+        'Script Run Options:\n' +
+        '      --debug                  (runscript-only, pass after command) set System.Debug=true for this run\n' +
+        '  -V, --verbose                (global or runscript) print full JSON result (default: script stdout only)\n\n' +
+        'Format/Expand Options:\n' +
         '  -h, --help                   Show this help message\n' +
         '  -o, --output <file>          Write output to file (default: in-place, only with single file)\n' +
         '  -r, --repo <alias=path>      Map repository alias to local path\n' +
@@ -4987,3 +6217,8 @@ function runCli(args) {
         process.exitCode = 1;
     }
 }
+
+// ============================================================================
+// CLI ENTRY POINT
+// ============================================================================
+// Handled by: if (require.main === module) at line 5088
