@@ -85,6 +85,36 @@ function _buildSimulationDefaultVariables(workingDirectory, outputRoot, buildCou
     return buildSimulationDefaultVariables(workingDirectory, outputRoot, buildCounter, extra);
 }
 
+function _resolveSimulationWorkingDirectory(document, parserOptions) {
+    const candidates = [
+        document && document.uri && typeof document.uri.fsPath === 'string' ? document.uri.fsPath : '',
+        document && typeof document.fileName === 'string' ? document.fileName : '',
+        parserOptions && typeof parserOptions.fileName === 'string' ? parserOptions.fileName : '',
+    ]
+        .map((value) => String(value || '').trim())
+        .filter((value) => value.length > 0);
+
+    for (const candidate of candidates) {
+        const resolved = path.resolve(candidate);
+        try {
+            const stat = fs.statSync(resolved);
+            if (stat.isFile()) {
+                return _toSimulatorPath(path.dirname(resolved));
+            }
+            if (stat.isDirectory()) {
+                return _toSimulatorPath(resolved);
+            }
+        } catch (_) {
+            if (/\.ya?ml$/i.test(resolved)) {
+                return _toSimulatorPath(path.dirname(resolved));
+            }
+        }
+    }
+
+    const fallbackPath = candidates[0] || process.cwd() || '.';
+    return _toSimulatorPath(path.dirname(path.resolve(fallbackPath)));
+}
+
 /** Convert a Windows UNC WSL path (\\wsl.localhost\distro\foo) to the Linux path (/foo).
  * Returns the path unchanged when it is already a Linux/Windows non-UNC path.
  */
@@ -3874,7 +3904,7 @@ ${mermaidDiagram
                     );
                     simOutputChannel.show(true);
                     try {
-                        const simWorkDir = _toSimulatorPath(path.dirname(document.fileName));
+                        const simWorkDir = _resolveSimulationWorkingDirectory(document, parserOptions);
                         const simOutRoot = simWorkDir.replace(/[\/\\]$/, '') + '/simulation';
                         const bcNum = parseInt(msgCounter, 10);
                         const bcStr = isNaN(bcNum) ? '1' : String(bcNum);
@@ -3957,7 +3987,7 @@ ${mermaidDiagram
                 simOutputChannel.show(true);
 
                 try {
-                    const simWorkDir = _toSimulatorPath(path.dirname(document.fileName));
+                    const simWorkDir = _resolveSimulationWorkingDirectory(document, parserOptions);
                     const simOutRoot = simWorkDir.replace(/[/\\]$/, '') + '/simulation';
                     simOutputChannel.appendLine(`[aps] workDir=${simWorkDir}`);
                     const execPathsRaw = vscode.workspace
