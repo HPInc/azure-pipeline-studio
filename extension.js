@@ -1591,6 +1591,7 @@ function activate(context) {
     const renderedEmitter = new vscode.EventEmitter();
     let dependenciesPanel;
     let dependenciesPanelHtml = '';
+    let dependenciesExpandedYaml = '';
     let dependenciesDocumentUri;
     let dependenciesDebounceTimer;
     let simulationDebounceTimer;
@@ -1605,6 +1606,18 @@ function activate(context) {
         vscode.workspace.registerTextDocumentContentProvider(renderedScheme, {
             onDidChange: renderedEmitter.event,
             provideTextDocumentContent: (uri) => renderedContent.get(uri.toString()) || '',
+        })
+    );
+
+    const stageYamlScheme = 'azure-pipeline-stage';
+    let stageYamlContent = '';
+    const stageYamlEmitter = new vscode.EventEmitter();
+    const stageYamlUri = vscode.Uri.parse(`${stageYamlScheme}://view/stage.yaml`);
+    context.subscriptions.push(stageYamlEmitter);
+    context.subscriptions.push(
+        vscode.workspace.registerTextDocumentContentProvider(stageYamlScheme, {
+            onDidChange: stageYamlEmitter.event,
+            provideTextDocumentContent: () => stageYamlContent,
         })
     );
 
@@ -2727,6 +2740,42 @@ function activate(context) {
                 } catch (err) {
                     vscode.window.showErrorMessage(`Failed to open file: ${err.message}`);
                 }
+            } else if (message.command === 'getStageYaml') {
+                const yaml = dependenciesExpandedYaml;
+                const stageName = message.stageName;
+                let yamlText = yaml;
+                if (yaml && stageName) {
+                    const lines = yaml.split('\n');
+                    let start = -1;
+                    let baseIndent = 0;
+                    for (let i = 0; i < lines.length; i++) {
+                        const m = lines[i].match(/^(\s*)- (?:stage|job|deployment): (.+)$/);
+                        if (m && m[2].trim() === stageName) {
+                            start = i;
+                            baseIndent = m[1].length;
+                            break;
+                        }
+                    }
+                    if (start !== -1) {
+                        let end = lines.length;
+                        for (let i = start + 1; i < lines.length; i++) {
+                            if (!lines[i].trim()) continue;
+                            const m2 = lines[i].match(/^(\s*)-\s/);
+                            if (m2 && m2[1].length <= baseIndent) {
+                                end = i;
+                                break;
+                            }
+                        }
+                        yamlText = lines.slice(start, end).join('\n');
+                    }
+                }
+                stageYamlContent = yamlText;
+                stageYamlEmitter.fire(stageYamlUri);
+                await vscode.window.showTextDocument(stageYamlUri, {
+                    preserveFocus: true,
+                    preview: false,
+                    viewColumn: vscode.ViewColumn.Active,
+                });
             }
         });
 
@@ -2875,6 +2924,8 @@ function activate(context) {
                     showErrorWebviewNow(enhancedError, context, 'dependency');
                     return;
                 }
+
+                dependenciesExpandedYaml = expandedYaml;
 
                 if (!silent) {
                     vscode.window.setStatusBarMessage('Analyzing dependencies...', 2000);
@@ -3255,6 +3306,7 @@ function activate(context) {
         .btn-secondary:hover {
             background: #4e4e52;
         }
+
     </style>
 </head>
 <body>
@@ -3327,8 +3379,9 @@ ${mermaidDiagram
 
     <script>
         // Open in browser function
+        const vscode = acquireVsCodeApi();
+
         window.openInBrowser = function() {
-            const vscode = acquireVsCodeApi();
             vscode.postMessage({ command: 'openInBrowser' });
         };
         
@@ -3427,9 +3480,21 @@ ${mermaidDiagram
         
         // Manually render with error handling
         try {
-            mermaid.run({
-                querySelector: '.mermaid',
-            }).catch(function(error) {
+            mermaid
+                .run({ querySelector: '.mermaid' })
+                .then(function() {
+                    document.querySelectorAll('[id^="flowchart-stage_"],[id^="flowchart-job_"]').forEach(function(el) {
+                        const m = el.id.match(/^flowchart-((?:stage|job)_[^-]+)/);
+                        if (!m) return;
+                        el.style.cursor = 'pointer';
+                        el.addEventListener('click', function(e) {
+                            e.stopPropagation();
+                            const stageName = m[1].replace(/^(?:stage|job)_/, '');
+                            vscode.postMessage({ command: 'getStageYaml', stageName: stageName });
+                        });
+                    });
+                })
+                .catch(function(error) {
                 console.error('Mermaid rendering error:', error);
                 const diagramDiv = document.getElementById('mermaid-diagram');
                 const errorDiv = document.getElementById('mermaid-error');

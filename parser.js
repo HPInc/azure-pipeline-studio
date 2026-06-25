@@ -7,6 +7,15 @@ const jsep = require('jsep');
 const adoFunctions = require('./ado-functions');
 const { analyzeTemplateHints, findFirstKeyOccurrence } = require('./formatter');
 
+function stripInternalProperties(node) {
+    if (Array.isArray(node)) {
+        node.forEach(stripInternalProperties);
+    } else if (node && typeof node === 'object') {
+        delete node.__templateParams;
+        Object.values(node).forEach(stripInternalProperties);
+    }
+}
+
 const CHECKOUT_TASK = '6d15af64-176c-496d-b583-fd2ae21d4df4@1';
 // Mapping of shorthand keys to Azure task identifiers
 const TASK_TYPE_MAP = Object.freeze({
@@ -122,6 +131,7 @@ class AzurePipelineParser {
         te('4. convertVariablesToArrayFormat');
 
         t('5. YAML.parseDocument + restoreQuoteStyles');
+        stripInternalProperties(expandedDocument);
         const finalYamlDoc = YAML.parseDocument(YAML.stringify(expandedDocument));
         this.restoreQuoteStyles(finalYamlDoc.contents, [], context);
         te('5. YAML.parseDocument + restoreQuoteStyles');
