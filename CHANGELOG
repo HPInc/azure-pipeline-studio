@@ -5,6 +5,27 @@ All notable changes to Azure Pipeline Studio will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-06-25
+
+### Added
+- **Pipeline dependency diagram**: Clicking a stage or job node in the diagram now opens its expanded YAML in a new editor tab, reusing the same tab on subsequent clicks.
+- **CLI list commands**: New `--list-stages`, `--list-jobs`, and `--list-steps` CLI options to enumerate pipeline items without full expansion output.
+- **Per-step template parameters**: The expanded output now tracks which template parameters each step originated from, enabling richer tooling and debug views.
+- **Debug mode**: Added `--debug` CLI flag for verbose expansion tracing.
+- **`--toolpath` CLI option**: Override the path to external tools used during simulation.
+
+### Changed
+- **Clean expansion output**: Internal parser metadata (`__templateParams`) is now stripped from all expansion output — CLI, Expand Pipeline, and the diagram stage view all produce clean YAML.
+- **Simulation PR system variables**: Build and PR system variables are now correctly injected during simulation runs.
+- **Simulation bash environment variables**: Environment variables defined via `bash` steps are now propagated correctly in the simulation runner.
+
+### Fixed
+- **Template parameter validation**: Corrected false-positive validation errors for parameters with defaults and improved error messages for type mismatches.
+- **Step validation on expansion errors**: Step-level validation no longer blocks expansion when unrelated template errors are present.
+- **Simulation workdir resolution**: External pipeline files now resolve their working directory correctly during simulation.
+
+[1.5.0]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.5.0
+
 ## [1.4.0] - 2026-06-19
 
 > **Simulation UI — Alpha release.** First release of the pipeline simulation UI. Functionality is working but subject to change as the feature matures.
