@@ -245,6 +245,42 @@ function extractTopLevelParameterDefinitions(parser, sourceText, skipSyntaxCheck
 // Prefixes that identify compile-time (predefined) pipeline variables
 const COMPILE_TIME_VAR_PREFIXES = ['Build.', 'System.', 'Agent.', 'Pipeline.'];
 
+// Mapping from bash env var name to Azure variable name for known system variables.
+// Azure DevOps exposes pipeline variables as env vars by uppercasing and replacing . with _.
+// This reverse map lets us detect direct bash ${ENV_VAR} references in scripts.
+const AZURE_ENV_VAR_NAMES = Object.freeze({
+    BUILD_SOURCEBRANCH: 'Build.SourceBranch',
+    BUILD_SOURCEBRANCHNAME: 'Build.SourceBranchName',
+    BUILD_REASON: 'Build.Reason',
+    BUILD_BUILDID: 'Build.BuildId',
+    BUILD_BUILDNUMBER: 'Build.BuildNumber',
+    BUILD_SOURCESDIRECTORY: 'Build.SourcesDirectory',
+    BUILD_REPOSITORY_LOCALPATH: 'Build.Repository.LocalPath',
+    BUILD_ARTIFACTSTAGINGDIRECTORY: 'Build.ArtifactStagingDirectory',
+    BUILD_STAGINGDIRECTORY: 'Build.StagingDirectory',
+    BUILD_BINARIESDIRECTORY: 'Build.BinariesDirectory',
+    BUILD_DEFINITIONNAME: 'Build.DefinitionName',
+    BUILD_REQUESTEDFOR: 'Build.RequestedFor',
+    BUILD_REQUESTEDFOREMAIL: 'Build.RequestedForEmail',
+    BUILD_SOURCEVERSION: 'Build.SourceVersion',
+    BUILD_SOURCEVERSIONMESSAGE: 'Build.SourceVersionMessage',
+    SYSTEM_DEBUG: 'System.Debug',
+    SYSTEM_TEAMPROJECT: 'System.TeamProject',
+    SYSTEM_DEFAULTWORKINGDIRECTORY: 'System.DefaultWorkingDirectory',
+    SYSTEM_ACCESSTOKEN: 'System.AccessToken',
+    SYSTEM_PULLREQUEST_SOURCEBRANCH: 'System.PullRequest.SourceBranch',
+    SYSTEM_PULLREQUEST_TARGETBRANCH: 'System.PullRequest.TargetBranch',
+    SYSTEM_PULLREQUEST_PULLREQUESTID: 'System.PullRequest.PullRequestId',
+    SYSTEM_PULLREQUEST_PULLREQUESTNUMBER: 'System.PullRequest.PullRequestNumber',
+    AGENT_OS: 'Agent.OS',
+    AGENT_OSARCHITECTURE: 'Agent.OSArchitecture',
+    AGENT_TEMPDIRECTORY: 'Agent.TempDirectory',
+    AGENT_TOOLSDIRECTORY: 'Agent.ToolsDirectory',
+    AGENT_WORKFOLDER: 'Agent.WorkFolder',
+    AGENT_BUILDDIRECTORY: 'Agent.BuildDirectory',
+    PIPELINE_WORKSPACE: 'Pipeline.Workspace',
+});
+
 /**
  * Unified scanner: finds all ${{ parameters.X }} and $(VAR) references across
  * all relevant string fields of a step (script, displayName, condition, env,
@@ -267,6 +303,13 @@ function scanStepForReferences(step) {
             } else {
                 runtimeVars.add(varName);
             }
+        }
+        // Detect bash env var references (${VAR}, ${VAR:-default}, ${VAR@modifier}, $VAR)
+        // and map known Azure system variable env names back to their dot-notation names.
+        for (const m of text.matchAll(/\$\{([A-Z][A-Z0-9_]+)|\$([A-Z][A-Z0-9_]+)\b/g)) {
+            const envVarName = m[1] || m[2];
+            const azureName = AZURE_ENV_VAR_NAMES[envVarName];
+            if (azureName) compileTimeVars.add(azureName);
         }
     }
 

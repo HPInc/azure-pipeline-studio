@@ -231,6 +231,120 @@ function runPipelineSimulation(
     return simulator.simulate(parsedDoc, simOptions);
 }
 
+function _extractBuildConfigurationsFromRawYaml(rawYaml) {
+    let parsedYaml;
+    try {
+        const YAML = require('yaml');
+        parsedYaml = YAML.parse(rawYaml);
+    } catch (_) {
+        return null;
+    }
+    if (!parsedYaml || typeof parsedYaml !== 'object') {
+        return null;
+    }
+    const findConfigs = (node) => {
+        if (!node || typeof node !== 'object') {
+            return null;
+        }
+        if (Array.isArray(node)) {
+            for (const item of node) {
+                const result = findConfigs(item);
+                if (result) {
+                    return result;
+                }
+            }
+            return null;
+        }
+        if (Array.isArray(node.buildConfigurations)) {
+            const configs = node.buildConfigurations
+                .filter((entry) => entry && typeof entry === 'object' && entry.config !== undefined)
+                .map((entry) => ({
+                    configuration: String(entry.config || ''),
+                    platform: String(entry.platform || ''),
+                }))
+                .filter((entry) => entry.configuration);
+            if (configs.length > 0) {
+                return configs;
+            }
+        }
+        for (const val of Object.values(node)) {
+            const result = findConfigs(val);
+            if (result) {
+                return result;
+            }
+        }
+        return null;
+    };
+    return findConfigs(parsedYaml);
+}
+
+function collectBuildContextsFromPipelineDocument(parsedDoc) {
+    const contexts = [];
+    const addContextFromStep = (step) => {
+        if (!step || typeof step !== 'object') {
+            return;
+        }
+
+        const taskRaw = String(step.task || '').trim();
+        const taskName = taskRaw.split('@')[0];
+        if (taskName !== 'VSBuild' && taskName !== 'MSBuild') {
+            return;
+        }
+
+        const inputs = step.inputs && typeof step.inputs === 'object' ? step.inputs : {};
+        contexts.push({
+            solution:
+                inputs.solution || inputs.solutionFile || inputs.project || inputs.projects || inputs.projectFile || '',
+            configuration: inputs.configuration || inputs.buildConfiguration || '',
+            platform: inputs.platform || inputs.buildPlatform || '',
+        });
+    };
+
+    const visitSteps = (steps) => {
+        if (!Array.isArray(steps)) {
+            return;
+        }
+        for (const step of steps) {
+            addContextFromStep(step);
+        }
+    };
+
+    const visitJob = (job) => {
+        if (!job || typeof job !== 'object') {
+            return;
+        }
+        visitSteps(job.steps);
+    };
+
+    if (Array.isArray(parsedDoc.jobs)) {
+        for (const job of parsedDoc.jobs) {
+            visitJob(job);
+        }
+    }
+
+    if (Array.isArray(parsedDoc.steps)) {
+        visitSteps(parsedDoc.steps);
+    }
+
+    if (Array.isArray(parsedDoc.stages)) {
+        for (const stage of parsedDoc.stages) {
+            if (!stage || typeof stage !== 'object') {
+                continue;
+            }
+            if (Array.isArray(stage.jobs)) {
+                for (const job of stage.jobs) {
+                    visitJob(job);
+                }
+            }
+            if (Array.isArray(stage.steps)) {
+                visitSteps(stage.steps);
+            }
+        }
+    }
+
+    return contexts;
+}
+
 function _generateSimulationViewHtml(
     stageTree,
     fileName,
@@ -582,8 +696,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
         </div>
         <div style="display:flex;gap:10px;margin-top:12px">
           <button class="run-btn" id="runBtn" onclick="runSimulation()">&#9654; Run Simulation</button>
-
-          <button class="back-btn" id="backBtn" onclick="showSettings()" style="display:none">&#9881; Settings</button>
           <span class="status-msg" id="statusMsg"></span>
         </div>
       </div>
@@ -1065,6 +1177,8 @@ function runSimulation(){
   var bb=document.getElementById('backBtn');if(bb)bb.style.display='inline-block';
   const libVars=_collectLibVars();
     const parameters=_collectTopLevelParameters();
+    vscode.postMessage({command:'saveLibVars',data:{libData:_collectLibData()}});
+    vscode.postMessage({command:'saveAzureVars',data:{overrides:_collectAzureOverrides()}});
     vscode.postMessage({command:'runSimulation',stages,buildCounter,variables,libraryVariables:libVars,parameters,toolPaths:_collectToolPaths()});
   }catch(e){console.error('[aps] runSimulation error',e);document.getElementById('resultsPanel').innerHTML='';document.getElementById('statusMsg').textContent='⚠ JS error: '+String(e);document.getElementById('runBtn').disabled=false;}
 }
@@ -1447,6 +1561,7 @@ window.addEventListener('message',e=>{
   if(d.command==='simulationStarted'){document.getElementById('runBtn').disabled=false;}
   else if(d.command==='simulationResults'){document.getElementById('runBtn').disabled=false;renderResults(d.results);}
     else if(d.command==='simulationError'){document.getElementById('resultsPanel').innerHTML='';document.getElementById('statusMsg').textContent='\u26a0 '+d.error;document.getElementById('runBtn').disabled=false;var browserBtn=document.getElementById('browserBtn');if(browserBtn)browserBtn.style.display='none';}
+  else if(d.command==='triggerRerun'){runSimulation();}
   else if(d.command==='varsLoaded'){_applyVarsLoaded(d.data);}
 });
 <\/script>
@@ -1478,6 +1593,8 @@ function activate(context) {
     let dependenciesPanelHtml = '';
     let dependenciesDocumentUri;
     let dependenciesDebounceTimer;
+    let simulationDebounceTimer;
+    let isSimulationRunning = false;
     let isDependenciesRendering = false;
     let pendingDependenciesDocument = null;
     let simulationPanel = null;
@@ -3594,7 +3711,7 @@ ${mermaidDiagram
                     for (const [exeName, exePath] of Object.entries(termExecPaths)) {
                         const rawExePath = String(exePath || '').trim();
                         if (!rawExePath) continue;
-                        simArgs.push('--exe', `${exeName}=${rawExePath}`);
+                        simArgs.push('--toolpath', `${exeName}=${rawExePath}`);
                     }
                     simArgs.push('--output-json', jsonOutputPath);
                     if (!simOutputChannel) {
@@ -3948,6 +4065,7 @@ ${mermaidDiagram
                     return;
                 }
                 if (message.command !== 'runSimulation') return;
+                if (isSimulationRunning) return;
 
                 const stages = Array.isArray(message.stages) && message.stages.length ? message.stages : undefined;
                 const counter = parseInt(message.buildCounter, 10);
@@ -3978,12 +4096,19 @@ ${mermaidDiagram
                     simulationPanel.webview.postMessage({ command: 'simulationStarted' });
                 }
 
+                isSimulationRunning = true;
+
                 if (!simOutputChannel) {
                     simOutputChannel = vscode.window.createOutputChannel('Pipeline Simulation');
                 }
                 simOutputChannel.appendLine(
                     `[aps] runSimulation started — stages=${JSON.stringify(stages !== undefined ? stages : 'all')} counter=${counterStr}`
                 );
+                if (userVariables['System.Debug'] === 'true') {
+                    simOutputChannel.appendLine(
+                        '[aps] Debug mode: System.Debug=true (SYSTEM_DEBUG=true will be set in script env)'
+                    );
+                }
                 simOutputChannel.show(true);
 
                 try {
@@ -4039,6 +4164,8 @@ ${mermaidDiagram
                             error: String((err && err.message) || err),
                         });
                     }
+                } finally {
+                    isSimulationRunning = false;
                 }
             });
         }
@@ -4380,9 +4507,18 @@ ${mermaidDiagram
     }
 
     context.subscriptions.push(
-        vscode.workspace.onDidChangeTextDocument(({ document }) => {
+        vscode.workspace.onDidChangeTextDocument(({ document, contentChanges }) => {
             if (isRelevantDocument(document)) {
                 scheduleRender(document, 500);
+            }
+            if (simulationPanel && lastSimDocument && lastSimDocument.fileName === document.fileName) {
+                if (contentChanges.length === 0 || isSimulationRunning) return;
+                clearTimeout(simulationDebounceTimer);
+                simulationDebounceTimer = setTimeout(() => {
+                    if (!isSimulationRunning && simulationPanel && simulationPanel.webview) {
+                        simulationPanel.webview.postMessage({ command: 'triggerRerun' });
+                    }
+                }, 500);
             }
         })
     );
@@ -4391,10 +4527,11 @@ ${mermaidDiagram
         vscode.workspace.onDidSaveTextDocument((document) => {
             // Diagram panel refresh: runs independently of expansion panel
             scheduleDependenciesRefresh(document, 0);
-            if (!isRelevantDocument(document)) return;
-            const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
-            if (config.get('refreshOnSave', true)) {
-                scheduleRender(document, 0);
+            if (isRelevantDocument(document)) {
+                const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
+                if (config.get('refreshOnSave', true)) {
+                    scheduleRender(document, 0);
+                }
             }
         })
     );
@@ -5630,6 +5767,32 @@ if (require.main === module) {
     runCli(process.argv.slice(2));
 }
 
+function _buildPipelineParserOptions(
+    pipelineFile,
+    { repositories, cliVariables, effectiveCliVariables, parameterMap }
+) {
+    const options = {
+        fileName: pipelineFile,
+        baseDir: path.dirname(pipelineFile),
+        templateStack: [pipelineFile],
+        azureCompatible: false,
+    };
+    if (repositories) {
+        const resourceLocations = {};
+        for (const [alias, config] of Object.entries(repositories)) {
+            resourceLocations[alias] = config.location || config.path;
+        }
+        options.resourceLocations = resourceLocations;
+    }
+    if (cliVariables) {
+        options.variables = effectiveCliVariables;
+    }
+    if (Object.keys(parameterMap).length) {
+        options.parameters = parameterMap;
+    }
+    return options;
+}
+
 function runCli(args) {
     // Only run CLI logic when not in VS Code extension mode
     if (vscode !== undefined) {
@@ -5732,8 +5895,9 @@ function runCli(args) {
         '      --simulate               Run local pipeline simulation mode\n' +
         '  -c, --build-counter <n>      Set the build counter value used in version expressions (default: 1)\n' +
         '  -S, --stage <name>           Run only the named stage(s); repeat or comma-separate (e.g. -S Build,Test)\n' +
-        '      --exe <name=path>        Override executable/tool path for simulation (repeatable)\n' +
-        '      --output-json <file>     Write simulation results JSON to the provided path';
+        '      --toolpath <name=path>    Override executable/tool path for simulation (repeatable)\n' +
+        '      --output-json <file>     Write simulation results JSON to the provided path\n' +
+        '      --list-build-outputs     List files that will be generated by the build (from sln/csproj/vcproj) without running simulation';
 
     const failWithUsage = (message) => {
         if (message) {
@@ -5769,11 +5933,20 @@ function runCli(args) {
             'library-variables-file',
             'build-counter',
             'stage',
-            'exe',
+            'toolpath',
             'output-json',
             'wsl-mount-root',
         ],
-        boolean: ['help', 'expand-templates', 'azure-compatible', 'skip-syntax-check', 'debug', 'simulate', 'timing'],
+        boolean: [
+            'help',
+            'expand-templates',
+            'azure-compatible',
+            'skip-syntax-check',
+            'debug',
+            'simulate',
+            'timing',
+            'list-build-outputs',
+        ],
         alias: {
             h: 'help',
             o: 'output',
@@ -5847,9 +6020,10 @@ function runCli(args) {
         'c',
         'stage',
         'S',
-        'exe',
+        'toolpath',
         'output-json',
         'wsl-mount-root',
+        'list-build-outputs',
     ]);
     const unknownKeys = Object.keys(argv).filter((k) => !knownArgvKeys.has(k));
     if (unknownKeys.length) {
@@ -5886,7 +6060,7 @@ function runCli(args) {
     const { map: variablesMap, errors: variableErrors } = parseKeyValue(toArray(argv.variables), 'variable');
     const { map: parameterMap, errors: parameterErrors } = parseKeyValue(toArray(argv.parameter), 'parameter');
     const { map: repoMap, errors: repoErrors } = parseKeyValue(toArray(argv.repo), 'repository mapping');
-    const { map: executablePaths } = parseKeyValue(toArray(argv.exe), 'executable path');
+    const { map: executablePaths } = parseKeyValue(toArray(argv.toolpath), 'executable path');
     const repositoryEntries = Object.entries(repoMap).map(([alias, path]) => ({ alias, path }));
 
     const libraryVariablesMap = {};
@@ -6021,39 +6195,82 @@ function runCli(args) {
 
     const checkoutConfig = parseSimulationCheckoutConfig(argv.git);
 
-    if (argv.simulate) {
-        if (filesToFormat.length === 0) {
-            failWithUsage('Error: --simulate requires a pipeline file argument.');
+    if (argv['list-build-outputs'] || argv.simulate) {
+        if (positionalFiles.length === 0) {
+            failWithUsage(
+                `Error: --${argv['list-build-outputs'] ? 'list-build-outputs' : 'simulate'} requires a pipeline file argument.`
+            );
             return;
         }
 
-        const simulateFile = path.resolve(process.cwd(), filesToFormat[0]);
-        const simulateSource = fs.readFileSync(simulateFile, 'utf8');
-        const simulateParser = new AzurePipelineParser({ skipSyntax: argv['skip-syntax-check'] || false });
-        const simulationRoot = path.resolve(process.cwd(), path.join(path.dirname(simulateFile), 'simulation'));
+        const pipelineFile = path.resolve(process.cwd(), positionalFiles[0]);
+        const pipelineSource = fs.readFileSync(pipelineFile, 'utf8');
+        const parser = new AzurePipelineParser({ skipSyntax: argv['skip-syntax-check'] || false });
+        const parserOptions = _buildPipelineParserOptions(pipelineFile, {
+            repositories,
+            cliVariables,
+            effectiveCliVariables,
+            parameterMap,
+        });
+
+        if (argv['list-build-outputs']) {
+            try {
+                const { document } = parser.expandPipeline(pipelineSource, parserOptions);
+                let buildContexts = collectBuildContextsFromPipelineDocument(document);
+
+                if (buildContexts.length === 0) {
+                    throw new Error(
+                        'No VSBuild or MSBuild tasks found in the pipeline. ' +
+                            'Build output discovery requires at least one VSBuild@1 or MSBuild@1 task.'
+                    );
+                }
+
+                // When VSBuild task inputs have unresolved runtime variables,
+                // the pipeline uses a buildConfigurations parameter list that gets iterated at runtime.
+                // Fall back to extracting config+platform pairs directly from the raw YAML.
+                const hasUnresolvedVars = (str) => /\$\(/.test(String(str || ''));
+                const allUnresolved = buildContexts.every(
+                    (ctx) => hasUnresolvedVars(ctx.configuration) || hasUnresolvedVars(ctx.platform)
+                );
+                if (allUnresolved) {
+                    const rawConfigs = _extractBuildConfigurationsFromRawYaml(pipelineSource);
+                    if (rawConfigs && rawConfigs.length > 0) {
+                        buildContexts = rawConfigs.map((cfg) => ({
+                            solution: buildContexts[0].solution,
+                            configuration: cfg.configuration,
+                            platform: cfg.platform,
+                        }));
+                    }
+                }
+
+                const simulator = new PipelineSimulator({ outputRoot: path.dirname(pipelineFile) });
+
+                const createdBuildFiles = simulator.discoverBuildOutputs(path.dirname(pipelineFile), buildContexts);
+                if (createdBuildFiles.length === 0) {
+                    console.log('[sim] build outputs: none');
+                } else {
+                    console.log('[sim] build outputs:');
+                    for (const createdFile of createdBuildFiles) {
+                        console.log(`[sim]   ${createdFile}`);
+                    }
+                }
+
+                if (argv['output-json']) {
+                    fs.writeFileSync(argv['output-json'], JSON.stringify({ createdBuildFiles }, null, 2), 'utf8');
+                }
+            } catch (err) {
+                console.error(`Error: ${err.message}`);
+                process.exitCode = 1;
+            }
+
+            return;
+        }
+
+        // argv.simulate
+        const simulationRoot = path.resolve(process.cwd(), path.join(path.dirname(pipelineFile), 'simulation'));
         fs.rmSync(simulationRoot, { recursive: true, force: true });
         const buildCounterRaw = argv['build-counter'];
         const buildCounterValue = buildCounterRaw !== undefined ? String(parseInt(buildCounterRaw, 10) || 1) : '1';
-
-        const simulateParserOptions = {
-            fileName: simulateFile,
-            baseDir: path.dirname(simulateFile),
-            templateStack: [simulateFile],
-            azureCompatible: false,
-        };
-        if (repositories) {
-            const resourceLocations = {};
-            for (const [alias, config] of Object.entries(repositories)) {
-                resourceLocations[alias] = config.location || config.path;
-            }
-            simulateParserOptions.resourceLocations = resourceLocations;
-        }
-        if (cliVariables) {
-            simulateParserOptions.variables = effectiveCliVariables;
-        }
-        if (Object.keys(parameterMap).length) {
-            simulateParserOptions.parameters = parameterMap;
-        }
 
         let mockCatalog = {};
         const mockCatalogPath = argv['mock-catalog'];
@@ -6069,12 +6286,12 @@ function runCli(args) {
         }
 
         try {
-            const { document } = simulateParser.expandPipeline(simulateSource, simulateParserOptions);
+            const { document } = parser.expandPipeline(pipelineSource, parserOptions);
             if (debugLibVars) {
                 console.log('[DEBUG] Library Variables Map:', JSON.stringify(libraryVariablesMap, null, 2));
             }
             const results = runPipelineSimulation(document, {
-                workingDirectory: path.dirname(simulateFile),
+                workingDirectory: path.dirname(pipelineFile),
                 outputRoot: simulationRoot,
                 buildCounter: buildCounterValue,
                 userVariables: variablesMap,
@@ -6166,7 +6383,6 @@ function runCli(args) {
                     timing: argv.timing || false,
                 };
                 if (repositories) {
-                    // Convert repository mappings to resourceLocations format
                     const resourceLocations = {};
                     for (const [alias, config] of Object.entries(repositories)) {
                         resourceLocations[alias] = config.location || config.path;
