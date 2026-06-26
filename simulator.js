@@ -19,6 +19,9 @@ const NATIVE_TASK_SHELLS = Object.freeze({
 
 const CHECKOUT_TASK = '6d15af64-176c-496d-b583-fd2ae21d4df4@1';
 
+// Pre-compiled regex for Azure Pipelines variable substitution syntax: $(VarName)
+const RE_SUBSTITUTE_VARS = /\$\(([A-Za-z_][A-Za-z0-9_.-]*)\)/g;
+
 // Default values for Azure DevOps built-in variables when running locally.
 // Users can override any of these via -v flags on the CLI.
 const AZURE_DEFAULTS = Object.freeze({
@@ -446,7 +449,7 @@ class PipelineSimulator {
         // overwrite explicit user-supplied values (e.g. --build-counter / -v flags).
         const stageVariables = {
             ...variables,
-            ...this._extractVariablesFromDoc(stageDoc, variables, options.libraryVariables || {}),
+            ...this._extractPipelineVariables(stageDoc, variables, options.libraryVariables || {}),
             ...(options.userOverrides || {}),
         };
 
@@ -644,7 +647,7 @@ class PipelineSimulator {
         const jobVariables = {
             ...variables,
             ...jobWorkspaceVariables,
-            ...this._extractVariablesFromDoc(jobDoc, jobVariableContext, options.libraryVariables || {}),
+            ...this._extractPipelineVariables(jobDoc, jobVariableContext, options.libraryVariables || {}),
             ...(options.userOverrides || {}),
         };
         const stepOptions = {
@@ -1254,15 +1257,6 @@ class PipelineSimulator {
      * Applies runtime expression mocking.
      * @param {object} parentVariables - Already-resolved variables to use when a value references $(anotherVar)
      */
-    _extractVariablesFromDoc(doc, parentVariables = {}, libraryVariables = {}) {
-        return this._extractPipelineVariables(doc, parentVariables, libraryVariables);
-    }
-
-    /**
-     * Extract top-level pipeline variables from the expanded document.
-     * Handles both object format ({ varName: value }) and array format
-     * ([{ name, value }, { name, value }]).
-     */
     _extractPipelineVariables(document, parentVariables = {}, libraryVariables = {}) {
         const vars = {};
         const raw = document.variables;
@@ -1449,7 +1443,7 @@ class PipelineSimulator {
      * Runtime expressions $[...] are handled by _mockRuntimeExpression().
      */
     _substituteVariables(text, variables) {
-        return text.replace(/\$\(([A-Za-z_][A-Za-z0-9_.-]*)\)/g, (match, name) => {
+        return text.replace(RE_SUBSTITUTE_VARS, (match, name) => {
             if (Object.prototype.hasOwnProperty.call(variables, name)) {
                 return variables[name];
             }
@@ -2462,22 +2456,27 @@ exit 0
             );
             const testPatterns = rawPatterns
                 .split('\n')
-                .map((p) => p.replace(/\\/g, '/').trim())
+                // Normalize Windows path separators and any \t-as-tab from YAML double-quoted strings
+                .map((p) => p.replace(/[\\\t]/g, '/').trim())
                 .filter(Boolean);
             const includePatterns = testPatterns.filter((p) => !p.startsWith('!'));
             const excludePatterns = testPatterns.filter((p) => p.startsWith('!')).map((p) => p.slice(1));
-            const defaults = this._defaultTestPatterns();
+            const effectiveIncludes = includePatterns;
+            const effectiveExcludes = excludePatterns;
             const allFiles = this._scanWorkDirFiles(workDir);
-            const matched = this.filterByGlobPatterns(
-                allFiles,
-                includePatterns.length > 0 ? includePatterns : defaults.include,
-                excludePatterns.length > 0 ? excludePatterns : defaults.exclude
-            );
+            const matched = this.filterByGlobPatterns(allFiles, effectiveIncludes, effectiveExcludes);
+            const debugOutput = this.debugScript
+                ? `[sim] VSTest: Processing patterns:\n` +
+                  effectiveIncludes.map((p) => `[sim]   ${p}`).join('\n') +
+                  '\n' +
+                  effectiveExcludes.map((p) => `[sim]   !${p}`).join('\n') +
+                  '\n'
+                : '';
             if (matched.length === 0) {
-                return '[sim] VSTest: no test assemblies found';
+                return `${debugOutput}[sim] VSTest: no test assemblies found`;
             }
             return (
-                `[sim] VSTest: ${matched.length} test assembl${matched.length === 1 ? 'y' : 'ies'}:\n` +
+                `${debugOutput}[sim] VSTest: ${matched.length} test assembl${matched.length === 1 ? 'y' : 'ies'}:\n` +
                 matched.map((f) => `[sim]   ${f}`).join('\n')
             );
         }
@@ -2941,23 +2940,6 @@ exit 0
         return new RegExp(`^${p}$`, 'i');
     }
 
-    _defaultTestPatterns() {
-        return {
-            include: ['**/*Test*.dll', '**/*Test*.exe'],
-            exclude: [
-                '**/*.pdb',
-                '**/*TestAdapter.dll',
-                '**/Microsoft*.dll',
-                '**/publish/**',
-                '**/obj/**',
-                '**/*.SystemTests/**',
-                '**/*SpecFlowPlugin.dll',
-                '**/testhost.dll',
-                '**/testhost.exe',
-            ],
-        };
-    }
-
     filterByGlobPatterns(files, includePatterns, excludePatterns) {
         const includeRegexes = (includePatterns || []).map((p) => this._globToRegex(p));
         const excludeRegexes = (excludePatterns || []).map((p) => this._globToRegex(p));
@@ -2984,13 +2966,6 @@ exit 0
             } else {
                 includePatterns.push(normalized);
             }
-        }
-
-        if (includePatterns.length === 0) {
-            includePatterns.push(...this._defaultTestPatterns().include);
-        }
-        if (excludePatterns.length === 0) {
-            excludePatterns.push(...this._defaultTestPatterns().exclude);
         }
 
         return this.filterByGlobPatterns(allBuildOutputs, includePatterns, excludePatterns);

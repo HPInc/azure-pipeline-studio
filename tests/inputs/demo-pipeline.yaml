@@ -1,0 +1,136 @@
+# Demo CI/CD Pipeline
+# Generic multi-stage pipeline used for tests and README documentation.
+# No external template references — fully self-contained.
+
+parameters:
+- name: environment
+  type: string
+  default: staging
+  values:
+  - staging
+  - production
+- name: runIntegrationTests
+  type: boolean
+  default: true
+- name: appVersion
+  type: string
+  default: '1.0.0'
+
+
+variables:
+  appName: 'demo-app'
+  nodeVersion: '18'
+  buildOutputDir: '$(Build.ArtifactStagingDirectory)/dist'
+
+
+stages:
+- stage: Validate
+  displayName: 'Validate'
+
+  jobs:
+  - job: Lint
+    displayName: 'Lint & Format Check'
+
+    steps:
+    - checkout: self
+      displayName: 'Checkout Source'
+
+    - bash: |
+        echo "Running linter on $(appName)..."
+        echo "Source branch: $(Build.SourceBranchName)"
+      displayName: 'Run Linter'
+
+    - bash: |
+        echo "Checking code formatting..."
+        echo "Node version: $(nodeVersion)"
+      displayName: 'Format Check'
+
+- stage: Build
+  displayName: 'Build'
+  dependsOn: Validate
+
+  jobs:
+  - job: Compile
+    displayName: 'Compile & Bundle'
+
+    steps:
+    - checkout: self
+      displayName: 'Checkout Source'
+
+    - bash: |
+        echo "Installing dependencies for $(appName)..."
+      displayName: 'Install Dependencies'
+
+    - bash: |
+        echo "Building version ${{ parameters.appVersion }}..."
+        echo "Output: $(buildOutputDir)"
+      displayName: 'Build Application'
+
+    - bash: |
+        echo "Running bundle size analysis..."
+      displayName: 'Analyze Bundle'
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Build Artifacts'
+      inputs:
+        pathToPublish: '$(Build.ArtifactStagingDirectory)'
+        artifactName: 'build-output'
+
+- stage: Test
+  displayName: 'Test'
+  dependsOn: Build
+
+  jobs:
+  - job: UnitTests
+    displayName: 'Unit Tests'
+
+    steps:
+    - checkout: self
+      displayName: 'Checkout Source'
+
+    - bash: |
+        echo "Running unit tests..."
+        echo "Build: $(Build.BuildNumber)"
+      displayName: 'Run Unit Tests'
+
+    - bash: |
+        echo "Publishing test results..."
+      displayName: 'Publish Test Results'
+
+  - job: IntegrationTests
+    displayName: 'Integration Tests'
+    dependsOn: UnitTests
+    condition: succeeded()
+
+    steps:
+    - checkout: self
+      displayName: 'Checkout Source'
+
+    - bash: |
+        echo "Starting test environment..."
+      displayName: 'Start Environment'
+
+    - bash: |
+        echo "Running integration tests against ${{ parameters.environment }}..."
+      displayName: 'Run Integration Tests'
+
+    - bash: |
+        echo "Tearing down test environment..."
+      displayName: 'Teardown Environment'
+
+- stage: Package
+  displayName: 'Package & Publish'
+  dependsOn: Test
+
+  jobs:
+  - job: PackageArtifacts
+    displayName: 'Create Release Package'
+
+    steps:
+    - bash: |
+        echo "Packaging $(appName) version ${{ parameters.appVersion }}..."
+      displayName: 'Create Package'
+
+    - bash: |
+        echo "Publishing $(appName)-${{ parameters.appVersion }} to ${{ parameters.environment }}..."
+      displayName: 'Publish Package'

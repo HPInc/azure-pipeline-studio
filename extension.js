@@ -35,7 +35,8 @@ try {
     vscode = undefined;
 }
 const { AzurePipelineParser } = require('./parser');
-const { NONAME } = require('dns');
+const os = require('os');
+const { spawn, execSync, spawnSync } = require('child_process');
 
 // Module-level state for cleanup
 let activeDebounceTimer;
@@ -50,40 +51,15 @@ let lastSimSourceText = null;
 let lastSimParserOptions = null;
 let extensionRuntimeGeneration = 0;
 
-// Backward compatibility wrappers for underscore-prefixed function names
-// These maintain the existing internal API while delegating to the extracted module
-
-function _toSimulatorPath(p) {
-    return toSimulatorPath(p);
-}
-
-function _escHtml(s) {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-function _extractSimulationTree(document) {
-    return extractSimulationTree(document);
-}
-
-function _extractTopLevelParameterDefinitions(parser, sourceText, skipSyntaxCheck) {
-    return extractTopLevelParameterDefinitions(parser, sourceText, skipSyntaxCheck);
-}
-
-function _resolveExecPaths(rawPaths, isLinuxContext) {
-    return resolveExecPaths(rawPaths, isLinuxContext);
-}
-
-function _isLinuxSimulationContext(documentFileName) {
-    return isLinuxSimulationContext(documentFileName);
-}
-
-function _extractPipelineVariables(parsedDoc) {
-    return extractPipelineVariables(parsedDoc);
-}
-
-function _buildSimulationDefaultVariables(workingDirectory, outputRoot, buildCounter, extra) {
-    return buildSimulationDefaultVariables(workingDirectory, outputRoot, buildCounter, extra);
-}
+const isWsl =
+    process.platform === 'linux' &&
+    (() => {
+        try {
+            return fs.readFileSync('/proc/version', 'utf8').toLowerCase().includes('microsoft');
+        } catch (_) {
+            return false;
+        }
+    })();
 
 function _resolveSimulationWorkingDirectory(document, parserOptions) {
     const candidates = [
@@ -99,20 +75,20 @@ function _resolveSimulationWorkingDirectory(document, parserOptions) {
         try {
             const stat = fs.statSync(resolved);
             if (stat.isFile()) {
-                return _toSimulatorPath(path.dirname(resolved));
+                return toSimulatorPath(path.dirname(resolved));
             }
             if (stat.isDirectory()) {
-                return _toSimulatorPath(resolved);
+                return toSimulatorPath(resolved);
             }
         } catch (_) {
             if (/\.ya?ml$/i.test(resolved)) {
-                return _toSimulatorPath(path.dirname(resolved));
+                return toSimulatorPath(path.dirname(resolved));
             }
         }
     }
 
     const fallbackPath = candidates[0] || process.cwd() || '.';
-    return _toSimulatorPath(path.dirname(path.resolve(fallbackPath)));
+    return toSimulatorPath(path.dirname(path.resolve(fallbackPath)));
 }
 
 /** Convert a Windows UNC WSL path (\\wsl.localhost\distro\foo) to the Linux path (/foo).
@@ -198,7 +174,7 @@ function runPipelineSimulation(
               }
             : {};
 
-    const defaultVariables = _buildSimulationDefaultVariables(workingDirectory, outputRoot, counterStr, checkoutVars);
+    const defaultVariables = buildSimulationDefaultVariables(workingDirectory, outputRoot, counterStr, checkoutVars);
 
     const userOverrides = { ...userVariables };
     if (!isNaN(counterNum)) {
@@ -355,7 +331,8 @@ function _generateSimulationViewHtml(
     expandedStepsJson = '[]',
     originalSourceText = ''
 ) {
-    const esc = _escHtml;
+    const esc = (s) =>
+        String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     // Base64 encode JSON to safely pass through template literals and HTML
     const topLevelParametersJson = _b64Encode(JSON.stringify(topLevelParameterDefinitions || []));
     const STEP_ICONS = {
@@ -402,7 +379,7 @@ function _generateSimulationViewHtml(
 
                         return (
                             `<div class="sidebar-job-item">` +
-                            `<div class="sidebar-job-header" onclick="toggleSidebarJob(event,'ssjt-${si}-${ji}','ssjto-${si}-${ji}')">` +
+                            `<div class="sidebar-job-header" onclick="toggleSidebarJob(event,'ssjt-${si}-${ji}','ssjto-${si}-${ji}',${si},${ji})">` +
                             `<span class="sidebar-toggle" id="ssjto-${si}-${ji}"></span>` +
                             `<span class="sidebar-result" id="ssr-job-${si}-${ji}">•</span>` +
                             `<span class="sidebar-job-name">${esc(job.displayName)}</span>` +
@@ -415,7 +392,7 @@ function _generateSimulationViewHtml(
                     .join('') || '<div class="empty-msg">No jobs</div>';
 
             return (
-                `<div class="sidebar-stage ${si === 0 ? 'active' : ''}" data-stage-index="${si}">` +
+                `<div class="sidebar-stage ${si === 0 ? 'active' : ''}" data-stage-index="${si}" onclick="selectStage(${si})">` +
                 `<div class="sidebar-stage-header" onclick="toggleSidebarStage(event,${si})">` +
                 `<span class="sidebar-toggle" id="sst-${si}"></span>` +
                 `<span class="sidebar-result" id="ssr-stage-${si}">•</span>` +
@@ -434,35 +411,47 @@ function _generateSimulationViewHtml(
     // Generate main content for each stage
     const stageContentsHtml = stageTree
         .map((stage, si) => {
-            const jobsHtml =
-                stage.jobs
-                    .map((job, ji) => {
-                        const stepsHtml = job.steps
-                            .map(
-                                (step) =>
-                                    `<div class="step-row">` +
-                                    `<span class="step-icon" style="color:${STEP_COLORS[step.type] || '#a0aec0'}">${STEP_ICONS[step.type] || '▸'}</span>` +
-                                    `<span class="step-type">${esc(step.type)}</span>` +
-                                    `<span class="step-label">${esc(step.label)}</span>` +
-                                    `</div>`
-                            )
-                            .join('');
-                        return (
-                            `<div class="job-item">` +
-                            `<div class="job-header" onclick="toggleSteps('steps-${si}-${ji}')">` +
-                            `<span class="toggle" id="tj-${si}-${ji}">&#9658;</span>` +
-                            `<span class="job-badge${job.isDeployment ? ' deploy' : ''}">${job.isDeployment ? 'DEPLOY' : 'JOB'}</span>` +
-                            `<span class="job-name">${esc(job.displayName)}</span>` +
-                            `<span class="count-badge">${job.steps.length}</span>` +
-                            `</div>` +
-                            `<div class="steps-list collapsed" id="steps-${si}-${ji}">${stepsHtml || '<div class="empty-msg">No steps</div>'}</div>` +
-                            `</div>`
-                        );
-                    })
-                    .join('') || '<div class="empty-msg">No jobs</div>';
+            const stepDetailPanels = stage.jobs
+                .map((job, ji) =>
+                    job.steps
+                        .map((step, ti) => {
+                            const taskInputs = (() => {
+                                try {
+                                    return JSON.parse(step.taskInputsJson || '{}');
+                                } catch (_) {
+                                    return {};
+                                }
+                            })();
+                            const envEntries = Object.entries(step.stepEnv || {});
+                            let bodyHtml = '';
+                            if (step.scriptContent) {
+                                bodyHtml += `<div class="sdp-section"><div class="sdp-section-title">Script</div><pre class="sdp-script">${esc(step.scriptContent)}</pre></div>`;
+                            }
+                            const inputEntries = Object.entries(taskInputs).filter(([k]) => k !== 'script');
+                            if (inputEntries.length > 0) {
+                                bodyHtml += `<div class="sdp-section"><div class="sdp-section-title">Inputs</div><table class="sdp-table">${inputEntries.map(([k, v]) => `<tr><td class="sdp-k">${esc(k)}</td><td class="sdp-v">${esc(String(v))}</td></tr>`).join('')}</table></div>`;
+                            }
+                            if (envEntries.length > 0) {
+                                bodyHtml += `<div class="sdp-section"><div class="sdp-section-title">Environment</div><table class="sdp-table">${envEntries.map(([k, v]) => `<tr><td class="sdp-k">${esc(k)}</td><td class="sdp-v">${esc(String(v))}</td></tr>`).join('')}</table></div>`;
+                            }
+                            if (!bodyHtml) bodyHtml = '<div class="sdp-empty">No details available</div>';
+                            return (
+                                `<div class="sdp" id="sdp-${si}-${ji}-${ti}" style="display:none">` +
+                                `<div class="sdp-hd">` +
+                                `<span class="sdp-icon" style="color:${STEP_COLORS[step.type] || '#a0aec0'}">${STEP_ICONS[step.type] || '▸'}</span>` +
+                                `<span class="sdp-title">${esc(step.label)}</span>` +
+                                `<span class="sdp-badge">${esc(step.type)}</span>` +
+                                (step.taskName ? `<span class="sdp-taskname">${esc(step.taskName)}</span>` : '') +
+                                `</div>${bodyHtml}</div>`
+                            );
+                        })
+                        .join('')
+                )
+                .join('');
+
             return (
                 `<div class="stage-content ${si === 0 ? 'active' : ''}" data-stage-index="${si}">` +
-                `<div class="jobs-container">${jobsHtml}</div>` +
+                `${stepDetailPanels}` +
                 `</div>`
             );
         })
@@ -578,7 +567,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 .toolbar-btn{background:#2d2d30;border:1px solid #3e3e42;color:#aaa;padding:4px 8px;border-radius:3px;cursor:pointer;font-size:.74em}
 .toolbar-btn:hover{border-color:#555;color:#ddd}
 .jobs-container{display:flex;flex-direction:column;gap:8px}
-.job-item{display:none;background:#2a2a2a;border:1px solid #3e3e42;border-radius:3px;overflow:hidden}
+.job-item{display:block;background:#2a2a2a;border:1px solid #3e3e42;border-radius:3px;overflow:hidden}
 .job-header{display:flex;align-items:center;gap:8px;padding:10px 12px;background:#2d2d30;cursor:pointer;transition:background .15s}
 .job-header:hover{background:#333333}
 .toggle{display:inline-block;font-size:.72em;color:#888;transition:transform .15s;cursor:pointer;width:14px;flex-shrink:0;text-align:center;user-select:none}
@@ -596,6 +585,20 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 .step-type{font-size:.68em;color:#666;font-family:monospace;flex-shrink:0;min-width:56px;font-weight:600}
 .step-label{font-size:.85em;color:#999;flex:1}
 .empty-msg{font-size:.78em;color:#555;padding:12px;font-style:italic;text-align:center}
+.sdp{padding:12px 0}
+.sdp-hd{display:flex;align-items:center;gap:8px;padding-bottom:12px;border-bottom:1px solid #3e3e42;margin-bottom:12px}
+.sdp-icon{font-size:1.1em}
+.sdp-title{font-size:1.05em;font-weight:600;color:#e8e8e8;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sdp-badge{font-size:.75em;padding:2px 7px;border-radius:3px;background:#252526;color:#9cdcfe;border:1px solid #3e3e42;font-weight:600;white-space:nowrap}
+.sdp-taskname{font-size:.8em;color:#777;white-space:nowrap}
+.sdp-section{margin-bottom:14px}
+.sdp-section-title{font-size:.77em;font-weight:700;color:#777;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
+.sdp-script{background:#1a1a1a;border:1px solid #3e3e42;border-radius:4px;padding:10px 12px;font-size:.83em;color:#d4d4d4;overflow-x:auto;white-space:pre;margin:0;font-family:Consolas,'Courier New',monospace;max-height:400px;overflow-y:auto}
+.sdp-table{border-collapse:collapse;width:100%}
+.sdp-table tr+tr td{border-top:1px solid #2d2d30}
+.sdp-k{color:#9cdcfe;padding:4px 10px 4px 0;white-space:nowrap;vertical-align:top;font-size:.83em}
+.sdp-v{color:#ce9178;padding:4px 0;word-break:break-all;font-size:.83em}
+.sdp-empty{color:#666;font-size:.88em;padding:10px 0;font-style:italic}
 .actions{display:flex;align-items:center;gap:10px;margin-top:18px;padding-top:14px;border-top:1px solid #3e3e42}
 .run-btn{background:#0078d4;border:none;color:#fff;padding:9px 20px;border-radius:3px;cursor:pointer;font-size:.92em;font-weight:600}
 .run-btn:hover{background:#005a9e}
@@ -661,7 +664,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 </style></head>
 <body>
 <div id="pageLoader"><div class="pl-spinner"></div><div class="pl-text">Loading…</div></div>
-<div id="__aps_data" data-top-params="${topLevelParametersJson}" data-known-vars="${knownVarsJson}" data-saved-vars="${savedVarsJson}" data-expanded-steps="${expandedStepsJson}" data-source-text="${originalSourceText}"></div>
+<div id="__aps_data" data-top-params="${topLevelParametersJson}" data-known-vars="${knownVarsJson}" data-saved-vars="${savedVarsJson}" data-expanded-steps="${expandedStepsJson}" data-source-text="${originalSourceText}" data-pipeline-dir="${esc(baseName && fileName ? fileName.slice(0, fileName.length - baseName.length - 1) : '')}"></div>
 <div class="header"><h1>&#9889; Pipeline Simulation</h1><div class="filename">${esc(baseName)}</div><div class="filename" style="font-size:.7em;color:#555;margin-left:auto">${new Date().toLocaleTimeString()}</div></div>
 <div class="main-container">
   <div class="sidebar">
@@ -700,7 +703,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
         </div>
       </div>
     </div>
-        <div class="body hidden" id="renderBody">
+        <div class="body" id="renderBody">
             <div class="body-toolbar"><button class="res-browser-btn" id="browserBtn" onclick="openResultsInBrowser()" style="display:none">&#127760; Open in Browser</button></div>
       <div id="stageContents">${stageContentsHtml || '<div class="empty-msg">No stages found</div>'}</div>
       <div id="resultsPanel"></div>
@@ -743,8 +746,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 <script>
 window.onerror=function(msg,src,line,col,err){var l=document.getElementById('pageLoader');if(l){l.innerHTML='<div style="color:#f47174;padding:20px;font-family:monospace;font-size:13px"><b>JS Error (line '+line+'):</b><br>'+msg+'<br><br>'+(err&&err.stack?err.stack.replace(/\\n/g,'<br>'):'')+'</div>';}return false;};
 window.addEventListener('unhandledrejection',function(e){var l=document.getElementById('pageLoader');if(l){l.innerHTML='<div style="color:#f47174;padding:20px;font-family:monospace;font-size:13px"><b>Unhandled Promise Rejection:</b><br>'+String(e.reason)+'</div>';}});
-const vscode=acquireVsCodeApi();let varCount=0;let libVarCount=0;let taskFilter=null;
-const _b64Decode=(str)=>{try{return new TextDecoder().decode(Uint8Array.from(atob(str),c=>c.charCodeAt(0)));}catch(e){console.error('b64Decode error:',e,str&&str.slice(0,40));return str;}};const dataEl=document.getElementById('__aps_data');function _safeJsonParse(b64,fallback){try{var dec=_b64Decode(b64||'');console.log('[aps] decoded (first 80):', dec&&dec.slice(0,80));return JSON.parse(dec);}catch(e){console.error('[aps] _safeJsonParse failed, b64=',b64&&b64.slice(0,40),e);return fallback;}}const _rawKnownVars=_safeJsonParse(dataEl.getAttribute('data-known-vars'),{});const knownVars={azure:Array.isArray(_rawKnownVars.azure)?_rawKnownVars.azure:[],pipeline:Array.isArray(_rawKnownVars.pipeline)?_rawKnownVars.pipeline:[],groups:Array.isArray(_rawKnownVars.groups)?_rawKnownVars.groups:[]};const _rawSavedVars=_safeJsonParse(dataEl.getAttribute('data-saved-vars'),{});const savedVars={overrides:(_rawSavedVars.overrides&&typeof _rawSavedVars.overrides==='object')?_rawSavedVars.overrides:{},libData:Array.isArray(_rawSavedVars.libData)?_rawSavedVars.libData:[],toolPaths:(_rawSavedVars.toolPaths&&typeof _rawSavedVars.toolPaths==='object')?_rawSavedVars.toolPaths:{}};const topLevelParameterDefinitions=_safeJsonParse(dataEl.getAttribute('data-top-params'),[]);window._expandedSteps=_safeJsonParse(dataEl.getAttribute('data-expanded-steps'),[]);window._originalSourceText=_safeJsonParse(dataEl.getAttribute('data-source-text'),'');console.log('[aps] init: stages=',document.querySelectorAll('.sidebar-stage').length,'knownVars.azure=',knownVars.azure.length,'topLevelParams=',topLevelParameterDefinitions.length);function _normParamType(t){return String(t||'string').trim().toLowerCase();}
+const vscode=acquireVsCodeApi();let varCount=0;let libVarCount=0;let taskFilter=null;let lastResults=null;
+const _b64Decode=(str)=>{try{return new TextDecoder().decode(Uint8Array.from(atob(str),c=>c.charCodeAt(0)));}catch(e){console.error('b64Decode error:',e,str&&str.slice(0,40));return str;}};const dataEl=document.getElementById('__aps_data');function _safeJsonParse(b64,fallback){try{var dec=_b64Decode(b64||'');console.log('[aps] decoded (first 80):', dec&&dec.slice(0,80));return JSON.parse(dec);}catch(e){console.error('[aps] _safeJsonParse failed, b64=',b64&&b64.slice(0,40),e);return fallback;}}const _rawKnownVars=_safeJsonParse(dataEl.getAttribute('data-known-vars'),{});const knownVars={azure:Array.isArray(_rawKnownVars.azure)?_rawKnownVars.azure:[],pipeline:Array.isArray(_rawKnownVars.pipeline)?_rawKnownVars.pipeline:[],groups:Array.isArray(_rawKnownVars.groups)?_rawKnownVars.groups:[]};const _rawSavedVars=_safeJsonParse(dataEl.getAttribute('data-saved-vars'),{});const savedVars={overrides:(_rawSavedVars.overrides&&typeof _rawSavedVars.overrides==='object')?_rawSavedVars.overrides:{},libData:Array.isArray(_rawSavedVars.libData)?_rawSavedVars.libData:[],toolPaths:(_rawSavedVars.toolPaths&&typeof _rawSavedVars.toolPaths==='object')?_rawSavedVars.toolPaths:{}};const topLevelParameterDefinitions=_safeJsonParse(dataEl.getAttribute('data-top-params'),[]);window._expandedSteps=_safeJsonParse(dataEl.getAttribute('data-expanded-steps'),[]);window._originalSourceText=_safeJsonParse(dataEl.getAttribute('data-source-text'),'');window._pipelineDir=dataEl.getAttribute('data-pipeline-dir')||'';console.log('[aps] init: stages=',document.querySelectorAll('.sidebar-stage').length,'knownVars.azure=',knownVars.azure.length,'topLevelParams=',topLevelParameterDefinitions.length);function _normParamType(t){return String(t||'string').trim().toLowerCase();}
 function _asBool(v){if(typeof v==='boolean')return v;var s=String(v||'').trim().toLowerCase();return s==='true'||s==='1'||s==='yes';}
 function _stringifyParamValue(v){if(v===undefined||v===null)return '';if(typeof v==='object'){try{return JSON.stringify(v);}catch(_){return String(v);}}return String(v);}
 function _createParamControl(def){
@@ -914,7 +917,18 @@ function selectStage(index){
     document.querySelectorAll('.sidebar-task-row').forEach(el=>el.classList.remove('active'));
     document.querySelectorAll('.sidebar-stage').forEach((el,i)=>{el.classList.toggle('active',i===index);});
     document.querySelectorAll('.stage-content').forEach((el,i)=>{el.classList.toggle('active',i===index);});
+    document.querySelectorAll('.sdp').forEach(function(el){el.style.display='none';});
+    var rp=document.getElementById('resultsPanel');
+    if(rp)rp.style.display='';
     applyTaskFilter();
+    var stageEl=document.querySelector('.res-stage[data-stage-index="'+String(index)+'"]');
+    if(stageEl){
+        var body=stageEl.querySelector('.res-body');
+        if(body)body.classList.remove('collapsed');
+        var tog=stageEl.querySelector('.res-tog');
+        if(tog)tog.textContent='\u25bc';
+        stageEl.scrollIntoView({behavior:'smooth',block:'start'});
+    }
 }
 function toggleCollapse(bodyId,toggleId){
     var body=document.getElementById(bodyId);
@@ -936,9 +950,20 @@ function toggleSidebarStage(event,index){
     selectStage(index);
     toggleCollapse('ssj-'+index,'sst-'+index);
 }
-function toggleSidebarJob(event,bodyId,toggleId){
+function toggleSidebarJob(event,bodyId,toggleId,stageIndex,jobIndex){
     if(event)event.stopPropagation();
     toggleCollapse(bodyId,toggleId);
+    if(stageIndex!==undefined){
+        selectStage(stageIndex);
+        var jobEl=document.querySelector('.res-job[data-stage-index="'+String(stageIndex)+'"][data-job-index="'+String(jobIndex)+'"]');
+        if(jobEl){
+            var body=jobEl.querySelector('.res-body');
+            if(body)body.classList.remove('collapsed');
+            var tog=jobEl.querySelector('.res-tog');
+            if(tog)tog.textContent='\u25bc';
+            jobEl.scrollIntoView({behavior:'smooth',block:'start'});
+        }
+    }
 }
 function selectSidebarTask(event,stageIndex,jobIndex,stepIndex){
     if(event)event.stopPropagation();
@@ -946,8 +971,13 @@ function selectSidebarTask(event,stageIndex,jobIndex,stepIndex){
     taskFilter={stageIndex,jobIndex,stepIndex};
     document.querySelectorAll('.sidebar-task-row').forEach(el=>el.classList.remove('active'));
     if(event&&event.currentTarget)event.currentTarget.classList.add('active');
+    document.querySelectorAll('.sdp').forEach(function(el){el.style.display='none';});
+    var sdp=document.getElementById('sdp-'+stageIndex+'-'+jobIndex+'-'+stepIndex);
+    if(sdp){_populateSdpResult(sdp,stageIndex,jobIndex,stepIndex);sdp.style.display='';}
     expandResultsForTask(stageIndex,jobIndex);
     applyTaskFilter();
+    var rp=document.getElementById('resultsPanel');
+    if(rp)rp.style.display='none';
 }
 function expandResultsForTask(stageIndex,jobIndex){
     const panel=document.getElementById('resultsPanel');
@@ -1029,7 +1059,6 @@ function applyTaskFilter(){
     if(!steps.length)return;
     if(!taskFilter){
         panel.querySelectorAll('.res-stage,.res-job,.res-step').forEach(el=>{el.style.display='';});
-        document.querySelectorAll('.job-item').forEach(el=>{el.style.display='';});
         if(summary)summary.style.display='';
         return;
     }
@@ -1049,7 +1078,6 @@ function applyTaskFilter(){
         const matchesJob=stageIdx===s&&jobIdx===j;
         jobEl.style.display=matchesJob?'':'none';
     });
-    document.querySelectorAll('.job-item').forEach(el=>{el.style.display='none';});
     if(summary)summary.style.display='none';
 }
 function toggleSteps(id){const el=document.getElementById(id);if(!el)return;el.classList.toggle('collapsed');}
@@ -1213,7 +1241,13 @@ function openRunStepModal(event,si,ji,ti){
   // Variables = all $(VAR) refs in the expanded step, excluding template param names
   const allVarRefs=[...(Array.isArray(step.referencedRuntimeVars)?step.referencedRuntimeVars:[]),...(Array.isArray(step.referencedCompileTimeVars)?step.referencedCompileTimeVars:[])];
   const vars=new Set(allVarRefs.filter(function(name){return !params.has(name);}));
-  const varDefaults=Object.assign({},savedVars&&savedVars.overrides?savedVars.overrides:{});
+  var _sbEl=document.getElementById('sourceBranch');var _brEl=document.getElementById('buildReason');var _dbgEl=document.getElementById('debugMode');var _bcEl=document.getElementById('buildCounter');var _settingsDerived={};
+  if(_sbEl&&_sbEl.value.trim()){var _sv=_sbEl.value.trim();var _sbn=_sv.startsWith('refs/heads/')?_sv.slice(11):(_sv.split('/').pop()||_sv);_settingsDerived['Build.SourceBranch']=_sv;_settingsDerived['Build.SourceBranchName']=_sbn;}
+  if(_brEl&&_brEl.value)_settingsDerived['Build.Reason']=_brEl.value;
+  if(_dbgEl)_settingsDerived['System.Debug']=_dbgEl.checked?'true':'false';
+  if(_bcEl&&_bcEl.value){_settingsDerived['Build.BuildNumber']=_bcEl.value;_settingsDerived['Build.BuildId']=_bcEl.value;}
+  var _agentDefaults=(function(){var d=window._pipelineDir||'/agent/_work/1';var sim=d+'/simulation';return{'Agent.TempDirectory':sim+'/agent/tmp','Agent.BuildDirectory':sim+'/build-artifacts','Agent.WorkFolder':sim,'Agent.HomeDirectory':sim+'/agent','Agent.ToolsDirectory':sim+'/agent','Agent.OS':'Linux','Build.SourcesDirectory':sim+'/workspace','Build.Repository.LocalPath':sim+'/workspace','System.DefaultWorkingDirectory':sim+'/workspace','Build.ArtifactStagingDirectory':sim+'/artifacts','Build.StagingDirectory':sim+'/staging','Build.BinariesDirectory':sim+'/binaries','Pipeline.Workspace':sim+'/workspace','System.TeamProject':'MyProject'};})();
+  const varDefaults=Object.assign({},_agentDefaults,_settingsDerived,savedVars&&savedVars.overrides?savedVars.overrides:{},_collectAzureOverrides());
   
   // Build paramDefaults: template param values take priority, then stepEnv, then saved overrides
   const paramDefaults={};
@@ -1222,6 +1256,15 @@ function openRunStepModal(event,si,ji,ti){
   }
   const envObj=step.stepEnv||{};
   Object.keys(envObj).forEach(function(key){if(params.has(key)&&!paramDefaults[key])paramDefaults[key]=String(envObj[key]||'');});
+  
+  // Collect current values from top-level parameter controls in the Settings panel
+  const paramPanelValues={};
+  document.querySelectorAll('.param-control[data-param-name]').forEach(function(ctrl){
+    var pname=ctrl.getAttribute('data-param-name');
+    if(!pname)return;
+    var val=ctrl.type==='checkbox'?(ctrl.checked?'true':'false'):(ctrl.value||ctrl.getAttribute('data-param-default')||'');
+    if(val)paramPanelValues[pname]=val;
+  });
   
   // Supplement defaults from known pipeline variables
   if(Array.isArray(knownVars&&knownVars.pipeline)){
@@ -1239,7 +1282,7 @@ function openRunStepModal(event,si,ji,ti){
     rsmParamsSection.style.display='';
     params.forEach(function(name){
       const row=document.createElement('div');row.className='rsm-ref-row';
-      const defaultVal=paramDefaults[name]||'';
+      const defaultVal=paramDefaults[name]||paramPanelValues[name]||'';
       row.innerHTML='<span class="rsm-ref-name" title="'+escHtml(name)+'">'+escHtml(name)+'</span>'
         +'<input class="rsm-ref-input" data-ref-type="param" data-ref-key="'+escHtml(name)+'" placeholder="'+escHtml(defaultVal)+'" value="'+escHtml(defaultVal)+'">';
       rsmParamRows.appendChild(row);
@@ -1267,7 +1310,7 @@ function openRunStepModal(event,si,ji,ti){
   document.getElementById('rsmEnvSection').style.display='none';
   const modalBg=document.getElementById('runStepModalBg');
   modalBg.style.display='flex';
-  }catch(e){console.error('Modal error:',e,e.stack);document.getElementById('pageLoader').innerHTML='<div style="color:#f47174;padding:20px">Modal error: '+String(e)+'</div>';}
+  }catch(e){console.error('[aps] openRunStepModal error:',e);var _sm=document.getElementById('statusMsg');if(_sm)_sm.textContent='\u26a0 Modal error: '+String(e);}
 }
 function closeRunStepModal(){document.getElementById('runStepModalBg').style.display='none';}
 function addRsmEnvRow(key,val){
@@ -1279,10 +1322,21 @@ function addRsmEnvRow(key,val){
 }
 function submitRunStep(){
   const variableOverrides={};
+  const paramOverrides=[];
+  var _curStep=(window._expandedSteps[_rsmState.si]||[]);
+  _curStep=Array.isArray(_curStep[_rsmState.ji])?_curStep[_rsmState.ji][_rsmState.ti]:null;
   document.querySelectorAll('.rsm-ref-input').forEach(function(inp){
     const k=(inp.getAttribute('data-ref-key')||'').trim();
     const v=(inp.value||'').trim();
-    if(k&&v)variableOverrides[k]=v;
+    if(!k)return;
+    if(inp.getAttribute('data-ref-type')==='param'){
+      var paramDef=_curStep&&Array.isArray(_curStep.templateParams)&&_curStep.templateParams.find(function(p){return p.name===k;});
+      var oldVal=paramDef?String(paramDef.value!=null?paramDef.value:''):
+'';
+      if(v!==oldVal)paramOverrides.push({name:k,oldValue:oldVal,newValue:v});
+    }else{
+      if(v)variableOverrides[k]=v;
+    }
   });
   const debugEl=document.getElementById('rsmDebugMode');
   if(debugEl&&debugEl.checked)variableOverrides['System.Debug']='true';
@@ -1304,7 +1358,7 @@ function submitRunStep(){
   var rb=document.getElementById('renderBody');if(rb)rb.classList.remove('hidden');
   var s=document.getElementById('settingsContent');if(s){s.classList.add('collapsed');document.getElementById('settingsPanel').classList.add('collapsed');var btn=document.getElementById('settingsToggle');if(btn)btn.innerHTML='&#9660; Settings';}
   var bb=document.getElementById('backBtn');if(bb)bb.style.display='inline-block';
-  vscode.postMessage({command:'runSingleStep',stageIndex:_rsmState.si,jobIndex:_rsmState.ji,stepIndex:_rsmState.ti,buildCounter:isNaN(bc)?1:bc,variableOverrides:variableOverrides,envVars:envVars});
+  vscode.postMessage({command:'runSingleStep',stageIndex:_rsmState.si,jobIndex:_rsmState.ji,stepIndex:_rsmState.ti,buildCounter:isNaN(bc)?1:bc,variableOverrides:variableOverrides,paramOverrides:paramOverrides,envVars:envVars});
 }
 function toggleRes(hd){var body=hd.nextElementSibling;if(!body)return;var c=body.classList.toggle('collapsed');var t=hd.querySelector('.res-tog');if(t)t.textContent=c?'\u25b6':'\u25bc';}
 function openResultsInBrowser(){
@@ -1456,7 +1510,25 @@ function openResultsInBrowser(){
         html:'<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Simulation Results</title><style>'+css+extraCss+'</style></head><body><div class="export-title">Pipeline Simulation Results</div><div class="main-container">'+sidebarClone.outerHTML+'<div class="export-content">'+resultsClone.innerHTML+'</div></div><scr'+'ipt>'+exportScript+'<\/scr'+'ipt></body></html>'
     });
 }
+function _populateSdpResult(sdpEl,si,ji,ti){
+  if(!lastResults)return;
+  var stg=lastResults.stages[si];if(!stg)return;
+  var job=stg.jobs[ji];if(!job)return;
+  var step=job.steps[ti];if(!step)return;
+  var ICON={Succeeded:'\u2714',Failed:'\u2716',Skipped:'\u29d8'};
+  var COL={Succeeded:'#4ec94e',Failed:'#f47174',Skipped:'#c8a84b'};
+  var res=step.result||'Skipped';
+  var col=COL[res]||'#888';
+  var body='<div style="margin-bottom:10px"><span style="color:'+col+'">'+(ICON[res]||'?')+' '+escHtml(res)+'</span></div>';
+  if(step.stdout&&step.stdout.trim()){body+='<div class="sdp-section"><div class="sdp-section-title">Output</div><pre class="sdp-script">'+escHtml(step.stdout.trim())+'</pre></div>';}
+  if(step.stderr&&step.stderr.trim()){body+='<div class="sdp-section"><div class="sdp-section-title">Errors / Warnings</div><pre class="sdp-script" style="color:#f47174">'+escHtml(step.stderr.trim())+'</pre></div>';}
+  var ov=Object.entries(step.outputVariables||{});
+  if(ov.length)body+='<div class="sdp-section"><div class="sdp-section-title">Output Variables</div><table class="sdp-table">'+ov.map(function(kv){return '<tr><td class="sdp-k">'+escHtml(kv[0])+'</td><td class="sdp-v">'+escHtml(String(kv[1]))+'</td></tr>';}).join('')+'</table></div>';
+  var hd=sdpEl.querySelector('.sdp-hd');
+  sdpEl.innerHTML=(hd?hd.outerHTML:'')+body;
+}
 function renderResults(r){
+  lastResults=r;
   const panel=document.getElementById('resultsPanel');
   const ICON={Succeeded:'\u2714',Failed:'\u2716',Skipped:'\u29d8'};
   const COL={Succeeded:'#4ec94e',Failed:'#f47174',Skipped:'#c8a84b'};
@@ -1543,6 +1615,8 @@ function renderResults(r){
         updateSidebarResults(r);
         if(taskFilter){
                 expandResultsForTask(taskFilter.stageIndex,taskFilter.jobIndex);
+                var activeSdp=document.getElementById('sdp-'+taskFilter.stageIndex+'-'+taskFilter.jobIndex+'-'+taskFilter.stepIndex);
+                if(activeSdp){_populateSdpResult(activeSdp,taskFilter.stageIndex,taskFilter.jobIndex,taskFilter.stepIndex);}
         }
     applyTaskFilter();
   panel.scrollIntoView({behavior:'smooth',block:'start'});
@@ -2725,10 +2799,21 @@ function activate(context) {
         dependenciesPanel.webview.onDidReceiveMessage(async (message) => {
             if (message.command === 'openInBrowser') {
                 try {
-                    const os = require('os');
                     const tempFile = path.join(os.tmpdir(), `pipeline-dependencies-${Date.now()}.html`);
                     fs.writeFileSync(tempFile, dependenciesPanelHtml);
-                    await vscode.env.openExternal(vscode.Uri.file(tempFile));
+                    if (isWsl) {
+                        try {
+                            const winPath = execSync(`wslpath -w "${tempFile}"`).toString().trim();
+                            spawn('cmd.exe', ['/c', 'start', '', winPath], {
+                                detached: true,
+                                stdio: 'ignore',
+                            }).unref();
+                        } catch (_) {
+                            spawn('xdg-open', [tempFile], { detached: true, stdio: 'ignore' }).unref();
+                        }
+                    } else {
+                        await vscode.env.openExternal(vscode.Uri.file(tempFile));
+                    }
                     vscode.window.showInformationMessage('Opened dependencies in browser');
                 } catch (err) {
                     vscode.window.showErrorMessage(`Failed to open in browser: ${err.message}`);
@@ -2853,7 +2938,6 @@ function activate(context) {
 
             try {
                 const sourceText = document.getText();
-                lastRenderedDiagramSourceText = sourceText;
 
                 // Warn if document is very large
                 if (sourceText.length > 100000) {
@@ -3642,8 +3726,8 @@ ${mermaidDiagram
             const { document: parsedDoc } = simParser.expandPipeline(sourceText, parserOptions);
             expandedDoc = parsedDoc;
             lastExpandedDoc = parsedDoc;
-            stageTree = _extractSimulationTree(expandedDoc);
-            topLevelParameterDefinitions = _extractTopLevelParameterDefinitions(simParser, sourceText, skipSyntaxCheck);
+            stageTree = extractSimulationTree(expandedDoc);
+            topLevelParameterDefinitions = extractTopLevelParameterDefinitions(simParser, sourceText, skipSyntaxCheck);
         } catch (err) {
             const enhancedError = new Error(formatTemplateExpansionError(document.fileName, err));
             enhancedError.stack = err.stack;
@@ -3651,7 +3735,7 @@ ${mermaidDiagram
             return;
         }
 
-        const { simple: pipelineSimpleVars, groups: pipelineVarGroups } = _extractPipelineVariables(expandedDoc);
+        const { simple: pipelineSimpleVars, groups: pipelineVarGroups } = extractPipelineVariables(expandedDoc);
         const azureSystemVars = [
             { name: 'Build.SourcesDirectory', desc: 'Repository sources directory' },
             { name: 'Build.Repository.LocalPath', desc: 'Local repository path' },
@@ -3709,15 +3793,13 @@ ${mermaidDiagram
                 const sourceText = lastSimSourceText;
                 const parserOptions = lastSimParserOptions;
                 if (message.command === 'runInTerminal') {
-                    const { spawn } = require('child_process');
-                    const os = require('os');
                     const isWindows = process.platform === 'win32';
 
                     // On Windows hosts, run with Windows Node to avoid old WSL /usr/bin/node syntax limitations.
-                    const pipelineFile = isWindows ? document.fileName : _toSimulatorPath(document.fileName);
+                    const pipelineFile = isWindows ? document.fileName : toSimulatorPath(document.fileName);
                     const bundlePath = isWindows
                         ? path.join(__dirname, 'extension-bundle.js')
-                        : _toSimulatorPath(path.join(__dirname, 'extension-bundle.js'));
+                        : toSimulatorPath(path.join(__dirname, 'extension-bundle.js'));
 
                     const token = `aps-sim-${Date.now()}.json`;
                     const jsonOutputPath = isWindows ? path.join(os.tmpdir(), token) : `/tmp/${token}`;
@@ -3761,7 +3843,7 @@ ${mermaidDiagram
                             ) {
                                 const repoPath = isWindows
                                     ? resolvedLocation.trim()
-                                    : _toSimulatorPath(resolvedLocation.trim());
+                                    : toSimulatorPath(resolvedLocation.trim());
                                 simArgs.push('--repo', `${alias.trim()}=${repoPath}`);
                             }
                         }
@@ -3769,9 +3851,9 @@ ${mermaidDiagram
                     const termExecPathsRaw = vscode.workspace
                         .getConfiguration('azurePipelineStudio', document.uri)
                         .get('simulation.toolPaths', {});
-                    const termExecPaths = _resolveExecPaths(
+                    const termExecPaths = resolveExecPaths(
                         termExecPathsRaw,
-                        _isLinuxSimulationContext(document.fileName)
+                        isLinuxSimulationContext(document.fileName)
                     );
                     for (const [exeName, exePath] of Object.entries(termExecPaths)) {
                         const rawExePath = String(exePath || '').trim();
@@ -3861,37 +3943,37 @@ ${mermaidDiagram
                 if (message.command === 'openResultsInBrowser') {
                     try {
                         const html = String(message.html || '');
-                        const os = require('os');
-                        const { spawn } = require('child_process');
                         const tempFile = path.join(os.tmpdir(), `pipeline-sim-results-${Date.now()}.html`);
                         fs.writeFileSync(tempFile, html, 'utf8');
 
-                        let openedExternally = false;
-                        try {
-                            openedExternally = await vscode.env.openExternal(vscode.Uri.file(tempFile));
-                        } catch (_) {
-                            openedExternally = false;
-                        }
-
-                        if (!openedExternally) {
-                            // Fallback to OS opener when VS Code external open API fails.
-                            if (process.platform === 'win32') {
-                                spawn('cmd.exe', ['/c', 'start', '', tempFile], {
-                                    detached: true,
-                                    stdio: 'ignore',
-                                }).unref();
-                                openedExternally = true;
-                            } else if (process.platform === 'darwin') {
-                                spawn('open', [tempFile], { detached: true, stdio: 'ignore' }).unref();
-                                openedExternally = true;
-                            } else {
-                                spawn('xdg-open', [tempFile], { detached: true, stdio: 'ignore' }).unref();
-                                openedExternally = true;
+                        if (isWsl) {
+                            // WSL: skip vscode.env.openExternal (produces unusable vscode-remote:// URI);
+                            // convert to Windows path and open with Windows default browser.
+                            const winPath = execSync(`wslpath -w "${tempFile}"`).toString().trim();
+                            spawn('cmd.exe', ['/c', 'start', '', winPath], {
+                                detached: true,
+                                stdio: 'ignore',
+                            }).unref();
+                        } else {
+                            let openedExternally = false;
+                            try {
+                                openedExternally = await vscode.env.openExternal(vscode.Uri.file(tempFile));
+                            } catch (_) {
+                                openedExternally = false;
                             }
-                        }
 
-                        if (!openedExternally) {
-                            throw new Error('Unable to open results in an external browser.');
+                            if (!openedExternally) {
+                                if (process.platform === 'win32') {
+                                    spawn('cmd.exe', ['/c', 'start', '', tempFile], {
+                                        detached: true,
+                                        stdio: 'ignore',
+                                    }).unref();
+                                } else if (process.platform === 'darwin') {
+                                    spawn('open', [tempFile], { detached: true, stdio: 'ignore' }).unref();
+                                } else {
+                                    spawn('xdg-open', [tempFile], { detached: true, stdio: 'ignore' }).unref();
+                                }
+                            }
                         }
                     } catch (err) {
                         vscode.window.showErrorMessage(`Failed to open results in browser: ${err.message}`);
@@ -3945,9 +4027,9 @@ ${mermaidDiagram
                     const execPathsRawForLoad = vscode.workspace
                         .getConfiguration('azurePipelineStudio', document.uri)
                         .get('simulation.toolPaths', {});
-                    const execPathsBaseForLoad = _resolveExecPaths(
+                    const execPathsBaseForLoad = resolveExecPaths(
                         execPathsRawForLoad,
-                        _isLinuxSimulationContext(document.fileName)
+                        isLinuxSimulationContext(document.fileName)
                     );
                     const mergedToolPathsForLoad = Object.assign(
                         {},
@@ -4022,6 +4104,7 @@ ${mermaidDiagram
                         jobIndex,
                         stepIndex,
                         variableOverrides,
+                        paramOverrides,
                         envVars,
                         buildCounter: msgCounter,
                     } = message;
@@ -4048,44 +4131,70 @@ ${mermaidDiagram
                         }
                         return;
                     }
-                    const mergedStepEnv = {
-                        ...(targetStep.env || {}),
-                        ...(envVars && typeof envVars === 'object' ? envVars : {}),
-                    };
-                    const stepWithEnv = { ...targetStep, env: mergedStepEnv };
-                    const jobEntry = targetJob.deployment
-                        ? {
-                              deployment: targetJob.deployment,
-                              displayName: targetJob.displayName || targetJob.deployment,
-                              variables: targetJob.variables,
-                              steps: [stepWithEnv],
-                          }
-                        : {
-                              job: targetJob.job || 'Job',
-                              displayName: targetJob.displayName || targetJob.job || 'Job',
-                              variables: targetJob.variables,
-                              steps: [stepWithEnv],
-                          };
-                    const singleStepDoc = {
-                        stages: [
-                            {
-                                stage: targetStage ? targetStage.stage || 'Stage' : 'Stage',
-                                displayName: targetStage
-                                    ? targetStage.displayName || targetStage.stage || 'Stage'
-                                    : 'Stage',
-                                jobs: [jobEntry],
-                            },
-                        ],
-                    };
                     if (simulationPanel && simulationPanel.webview) {
                         simulationPanel.webview.postMessage({ command: 'simulationStarted' });
                     }
                     if (!simOutputChannel) simOutputChannel = vscode.window.createOutputChannel('Pipeline Simulation');
-                    simOutputChannel.appendLine(
-                        `[aps] runSingleStep: "${targetStep.displayName || targetStep.name || 'Step'}"`
-                    );
                     simOutputChannel.show(true);
                     try {
+                        // Apply template parameter substitutions (old expanded value → new user value)
+                        // so changes to compile-time params in the modal actually affect the script.
+                        const paramSubs = Array.isArray(paramOverrides)
+                            ? paramOverrides.filter((p) => p && p.oldValue !== p.newValue)
+                            : [];
+                        if (paramSubs.length > 0) {
+                            const applyParamSubs = (val) => {
+                                if (typeof val !== 'string') return val;
+                                let result = val;
+                                for (const { oldValue, newValue } of paramSubs) {
+                                    if (oldValue) result = result.split(oldValue).join(newValue);
+                                }
+                                return result;
+                            };
+                            const walkParamSubs = (obj) => {
+                                if (typeof obj === 'string') return applyParamSubs(obj);
+                                if (Array.isArray(obj)) return obj.map(walkParamSubs);
+                                if (obj && typeof obj === 'object') {
+                                    const out = {};
+                                    for (const [k, v] of Object.entries(obj)) out[k] = walkParamSubs(v);
+                                    return out;
+                                }
+                                return obj;
+                            };
+                            targetStep = walkParamSubs(targetStep);
+                        }
+                        const mergedStepEnv = {
+                            ...(targetStep.env || {}),
+                            ...(envVars && typeof envVars === 'object' ? envVars : {}),
+                        };
+                        const stepWithEnv = { ...targetStep, env: mergedStepEnv };
+                        const jobEntry = targetJob.deployment
+                            ? {
+                                  deployment: targetJob.deployment,
+                                  displayName: targetJob.displayName || targetJob.deployment,
+                                  variables: targetJob.variables,
+                                  steps: [stepWithEnv],
+                              }
+                            : {
+                                  job: targetJob.job || 'Job',
+                                  displayName: targetJob.displayName || targetJob.job || 'Job',
+                                  variables: targetJob.variables,
+                                  steps: [stepWithEnv],
+                              };
+                        const singleStepDoc = {
+                            stages: [
+                                {
+                                    stage: targetStage ? targetStage.stage || 'Stage' : 'Stage',
+                                    displayName: targetStage
+                                        ? targetStage.displayName || targetStage.stage || 'Stage'
+                                        : 'Stage',
+                                    jobs: [jobEntry],
+                                },
+                            ],
+                        };
+                        simOutputChannel.appendLine(
+                            `[aps] runSingleStep: "${targetStep.displayName || targetStep.name || 'Step'}"`
+                        );
                         const simWorkDir = _resolveSimulationWorkingDirectory(document, parserOptions);
                         const simOutRoot = simWorkDir.replace(/[\/\\]$/, '') + '/simulation';
                         const bcNum = parseInt(msgCounter, 10);
@@ -4093,9 +4202,9 @@ ${mermaidDiagram
                         const execPathsRaw = vscode.workspace
                             .getConfiguration('azurePipelineStudio', document.uri)
                             .get('simulation.toolPaths', {});
-                        const execPathsBase = _resolveExecPaths(
+                        const execPathsBase = resolveExecPaths(
                             execPathsRaw,
-                            _isLinuxSimulationContext(document.fileName)
+                            isLinuxSimulationContext(document.fileName)
                         );
                         const execPaths = {
                             ...execPathsBase,
@@ -4183,7 +4292,7 @@ ${mermaidDiagram
                     const execPathsRaw = vscode.workspace
                         .getConfiguration('azurePipelineStudio', document.uri)
                         .get('simulation.toolPaths', {});
-                    const execPathsBase = _resolveExecPaths(execPathsRaw, _isLinuxSimulationContext(document.fileName));
+                    const execPathsBase = resolveExecPaths(execPathsRaw, isLinuxSimulationContext(document.fileName));
                     const panelToolPaths =
                         message.toolPaths && typeof message.toolPaths === 'object' ? message.toolPaths : {};
                     const execPaths = { ...execPathsBase, ...panelToolPaths };
@@ -4242,10 +4351,7 @@ ${mermaidDiagram
         const _settingsExecPathsRaw = vscode.workspace
             .getConfiguration('azurePipelineStudio', document.uri)
             .get('simulation.toolPaths', {});
-        const _settingsExecPaths = _resolveExecPaths(
-            _settingsExecPathsRaw,
-            _isLinuxSimulationContext(document.fileName)
-        );
+        const _settingsExecPaths = resolveExecPaths(_settingsExecPathsRaw, isLinuxSimulationContext(document.fileName));
         const _mergedToolPaths = Object.assign(
             {},
             _settingsExecPaths,
@@ -4297,7 +4403,7 @@ ${mermaidDiagram
                 expandedStepsJson,
                 originalSourceTextJson
             );
-            const _dumpPath = require('os').tmpdir() + '/aps-debug.html';
+            const _dumpPath = os.tmpdir() + '/aps-debug.html';
             fs.writeFileSync(_dumpPath, _generatedHtml, 'utf8');
             console.log('[aps] HTML written to', _dumpPath, 'length=', _generatedHtml.length);
             simulationPanel.webview.html = _generatedHtml;
@@ -4957,7 +5063,6 @@ function handleRunScript(args) {
         }
 
         // Execute the script
-        const { spawnSync } = require('child_process');
         try {
             let script = executableScript;
 
@@ -5608,6 +5713,9 @@ module.exports = {
     handleExtractTree,
     handleExtractParams,
     handleExtractVars,
+    handleListStages,
+    handleListJobs,
+    handleListSteps,
     // Step input analysis functions
     getStepInputsForTesting,
     prepareStepUnitTest,
@@ -6114,7 +6222,7 @@ function runCli(args) {
         return { map, errors };
     };
 
-    const filesToFormat = argv._;
+    const inputFiles = argv._;
     const formatOption = toArray(argv['format-option']);
     const extension = toArray(argv.extension);
     const formatRecursiveRaw = argv['format-recursive'];
@@ -6201,7 +6309,7 @@ function runCli(args) {
     }
 
     const recursiveTargets =
-        formatRecursiveFlag || formatRecursiveValues.length ? [...formatRecursiveValues, ...filesToFormat] : [];
+        formatRecursiveFlag || formatRecursiveValues.length ? [...formatRecursiveValues, ...inputFiles] : [];
 
     if (formatRecursiveFlag && recursiveTargets.length === 0) {
         failWithUsage('Error: --format-recursive requires at least one path.');
@@ -6261,14 +6369,14 @@ function runCli(args) {
     const checkoutConfig = parseSimulationCheckoutConfig(argv.git);
 
     if (argv['list-build-outputs'] || argv.simulate) {
-        if (positionalFiles.length === 0) {
+        if (inputFiles.length === 0) {
             failWithUsage(
                 `Error: --${argv['list-build-outputs'] ? 'list-build-outputs' : 'simulate'} requires a pipeline file argument.`
             );
             return;
         }
 
-        const pipelineFile = path.resolve(process.cwd(), positionalFiles[0]);
+        const pipelineFile = path.resolve(process.cwd(), inputFiles[0]);
         const pipelineSource = fs.readFileSync(pipelineFile, 'utf8');
         const parser = new AzurePipelineParser({ skipSyntax: argv['skip-syntax-check'] || false });
         const parserOptions = _buildPipelineParserOptions(pipelineFile, {
@@ -6411,12 +6519,12 @@ function runCli(args) {
         return;
     }
 
-    if (filesToFormat.length === 0) {
+    if (inputFiles.length === 0) {
         failWithUsage();
         return;
     }
 
-    if (argv.output && filesToFormat.length > 1) {
+    if (argv.output && inputFiles.length > 1) {
         failWithUsage('Error: --output option is only supported when formatting a single file.');
         return;
     }
@@ -6428,7 +6536,7 @@ function runCli(args) {
 
     let hasErrors = false;
 
-    for (const filePath of filesToFormat) {
+    for (const filePath of inputFiles) {
         const absolutePath = path.resolve(process.cwd(), filePath);
 
         if (argv.debug) {
@@ -6528,8 +6636,3 @@ function runCli(args) {
         process.exitCode = 1;
     }
 }
-
-// ============================================================================
-// CLI ENTRY POINT
-// ============================================================================
-// Handled by: if (require.main === module) at line 5088

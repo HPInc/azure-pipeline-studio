@@ -89,10 +89,22 @@ function isLinuxSimulationContext(documentFileName) {
  * Maps each step with its type and metadata.
  */
 function extractSimulationTree(document) {
+    const CHECKOUT_TASK_GUID = '6d15af64-176c-496d-b583-fd2ae21d4df4';
+
     const mapSteps = (steps) =>
         (Array.isArray(steps) ? steps : []).map((step, i) => {
+            const rawTask = step.task ? String(step.task) : '';
+            const taskNamePart = rawTask.split('@')[0].trim();
+            const taskNameLower = taskNamePart.toLowerCase();
+
             const type = step.task
-                ? 'task'
+                ? taskNameLower === CHECKOUT_TASK_GUID
+                    ? 'checkout'
+                    : taskNameLower === 'bash' || taskNameLower === 'cmdline'
+                      ? 'bash'
+                      : taskNameLower === 'powershell'
+                        ? 'pwsh'
+                        : 'task'
                 : step.bash
                   ? 'bash'
                   : step.script
@@ -112,7 +124,9 @@ function extractSimulationTree(document) {
                 step.displayName ||
                 step.name ||
                 (step.task
-                    ? String(step.task).split('@')[0]
+                    ? taskNameLower === CHECKOUT_TASK_GUID
+                        ? `Checkout: ${(step.inputs && step.inputs.repository) || 'self'}`
+                        : taskNamePart
                     : step.bash
                       ? 'Bash'
                       : step.script
@@ -129,7 +143,14 @@ function extractSimulationTree(document) {
             return {
                 label,
                 type,
-                scriptContent: String(step.bash || step.script || step.pwsh || step.powershell || ''),
+                scriptContent: String(
+                    step.bash ||
+                        step.script ||
+                        step.pwsh ||
+                        step.powershell ||
+                        (step.inputs && step.inputs.script) ||
+                        ''
+                ),
                 taskName: step.task ? String(step.task) : '',
                 taskInputsJson: step.inputs && typeof step.inputs === 'object' ? JSON.stringify(step.inputs) : '{}',
                 stepEnv: step.env && typeof step.env === 'object' ? { ...step.env } : {},

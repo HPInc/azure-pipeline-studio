@@ -79,7 +79,8 @@ pre-commit run azure-pipeline-formatter --all-files
 
 - **Template Expansion**: Expand pipelines with shared templates and repository resources
 - **Compile-Time Variables**: Set Azure Pipeline variables (Build.Reason, Build.SourceBranch, etc.) to test different build scenarios (see [docs/COMPILE_TIME_VARIABLES.md](docs/COMPILE_TIME_VARIABLES.md))
-- **Dependency Visualization**: View stage and job dependencies in a clear, structured format
+- **Pipeline Simulation**: Run pipeline scripts locally, step-by-step or full pipeline, directly from VS Code
+- **Dependency Visualization**: Interactive stage/job dependency diagram — click any node to open its expanded YAML in an editor tab
 - **Parameter Validation**: Automatic validation ensures all required template parameters are provided
 - **Expression Evaluation**: All 33 Azure DevOps expression functions (`${{ }}`, `$[]`, `$()`)
 - **Advanced Formatting**: Customizable indentation, line width, array formatting, native comment preservation
@@ -99,7 +100,91 @@ Available commands:
 - **Expand Pipeline (Standard)** - Expand templates and expressions with user settings
 - **Expand Pipeline (Azure Compatible)** - Expand with Azure DevOps-compatible formatting (literal blocks, capitalized booleans)
 - **Pipeline Diagram** - Analyze and display pipeline dependencies (stages, jobs, templates, resources)
+- **Simulate Pipeline Run** - Open the simulation panel to run pipeline scripts locally
 - **Configure Resource Locations** - Set up repository paths for if templates are referred in the pipeline
+
+## Pipeline Diagram
+
+Open with **Right-click → Azure Pipeline Studio → Pipeline Diagram** (or the Command Palette).
+
+The diagram renders an interactive dependency graph of your pipeline using [Mermaid](https://mermaid.js.org/):
+
+- **Stages** are shown as top-level nodes with arrows indicating `dependsOn` relationships
+- **Jobs** within each stage are shown as child nodes, also with their dependency edges
+- **Templates and resources** referenced by the pipeline are listed alongside the graph
+
+**Click to open YAML**: Clicking any stage or job node in the diagram opens its expanded YAML in a new editor tab. Clicking the same node again reuses that tab rather than opening a new one, keeping your workspace tidy.
+
+## Pipeline Simulation
+
+Simulate Pipeline Run executes your pipeline's bash/PowerShell scripts locally so you can verify logic, environment variables, and template output without pushing to Azure DevOps.
+
+Open with **Right-click → Azure Pipeline Studio → Simulate Pipeline Run** (or the Command Palette).
+
+### Simulation Panel
+
+![Simulation Panel](images/simulation-main.png "Simulation Panel")
+
+The panel has two areas:
+
+**Left sidebar — Stages & Steps**
+- Lists every stage with its jobs and steps, mirroring the expanded pipeline structure
+- Check/uncheck individual stages to include or exclude them from the run
+- Click the **▶** play button on any step to open the [Run Single Step](#run-single-step) modal
+- After a run, each stage/job/step shows a **✔ passed**, **✖ failed**, or **⧘ skipped** icon
+
+**Right panel — Settings**
+- **Top-level parameters**: If the pipeline defines `parameters:`, each one appears here with its type (string, boolean, dropdown) and default value
+- **Build Counter** / **Build Reason** / **Source Branch**: Standard Azure DevOps variables injected into every run
+- **Enable Debug**: Enables `set -x` (bash) or `Set-PSDebug` (PowerShell) in every script and merges stderr into the output for full trace logging
+- **Run Simulation** button: Executes all checked stages in order
+
+> **Simulation directory**: Scripts run with working paths rooted at a `simulation/` folder next to your pipeline file. Agent variables (`Build.SourcesDirectory`, `Agent.BuildDirectory`, etc.) are set to subdirectories within that folder to mirror real ADO agent layouts.
+
+### Full Run Results
+
+![Full Run Results](images/simulation-full-run.png "Full Run Results")
+
+After **Run Simulation**, the results panel shows each stage and job collapsed by default. Expand any node to see:
+- Per-step pass/fail icon
+- Script stdout (and stderr when debug is enabled)
+- Output variables set by `##vso[task.setvariable ...]` commands
+
+The sidebar also updates with pass/fail icons at every level.
+
+### Run Single Step
+
+![Run Single Step](images/simulation-single-step.png "Run Single Step Modal")
+
+Click the **▶** play button next to any step in the sidebar to run just that step in isolation.
+
+The **Run Single Step** modal shows:
+
+| Section | Contents |
+|---|---|
+| **Parameters** | Compile-time template parameters the step was expanded from, pre-filled with their current expanded values. Changing a value substitutes it into the script before execution. |
+| **Variables** | Runtime `$(VAR)` references used in the script, pre-filled from saved overrides and agent defaults. |
+| **Enable Debug** | Per-step debug toggle independent of the main panel setting. |
+
+Click **▶ Run Step** to execute only that step. Results appear in the main panel, narrowed to that step.
+
+### Variables & Overrides
+
+Variable values used during simulation are resolved in priority order (highest wins):
+
+1. Values entered in the modal / Settings panel
+2. Saved overrides (persisted per workspace)
+3. Settings panel Build Counter / Build Reason / Source Branch controls
+4. Agent defaults derived from the simulation directory layout
+
+Saved overrides persist across VS Code sessions and are restored when you reopen the simulation panel.
+
+### Simulation Settings
+
+Configure simulation behaviour via VS Code settings:
+
+- `azurePipelineStudio.simulation.workingDirectory` — Override the root directory used as the simulated workspace (default: directory of the open pipeline file)
+- `azurePipelineStudio.simulation.toolPaths` — Map tool names to explicit executable paths, e.g. `{"bash": "/usr/bin/bash", "pwsh": "/snap/bin/pwsh"}`
 
 ## Configuration
 

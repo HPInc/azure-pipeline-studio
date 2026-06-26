@@ -131,12 +131,14 @@ class AzurePipelineParser {
         te('4. convertVariablesToArrayFormat');
 
         t('5. YAML.parseDocument + restoreQuoteStyles');
-        stripInternalProperties(expandedDocument);
-        const finalYamlDoc = YAML.parseDocument(YAML.stringify(expandedDocument));
+        // Deep-clone before stripping so __templateParams survives on the returned document
+        // for extractSimulationTree to read. The clone is used only for YAML serialization.
+        const expandedDocumentForYaml = JSON.parse(JSON.stringify(expandedDocument));
+        stripInternalProperties(expandedDocumentForYaml);
+        const finalYamlDoc = YAML.parseDocument(YAML.stringify(expandedDocumentForYaml));
         this.restoreQuoteStyles(finalYamlDoc.contents, [], context);
         te('5. YAML.parseDocument + restoreQuoteStyles');
 
-        console.log(`Azure Compatibility mode: ${context.azureCompatible}`);
         t('6. applyBlockScalarStyles');
         this.applyBlockScalarStyles(finalYamlDoc.contents, context);
         te('6. applyBlockScalarStyles');
