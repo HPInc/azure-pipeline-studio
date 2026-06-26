@@ -40,6 +40,7 @@ const tests = [
     'test-comprehensive-spacing.js',
     'test-pipeline-diagram.js',
     'test-resources.js',
+    'test-cli.js',
 ];
 
 console.log('='.repeat(70));

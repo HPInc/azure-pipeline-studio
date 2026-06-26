@@ -19,6 +19,9 @@ const NATIVE_TASK_SHELLS = Object.freeze({
 
 const CHECKOUT_TASK = '6d15af64-176c-496d-b583-fd2ae21d4df4@1';
 
+// Pre-compiled regex for Azure Pipelines variable substitution syntax: $(VarName)
+const RE_SUBSTITUTE_VARS = /\$\(([A-Za-z_][A-Za-z0-9_.-]*)\)/g;
+
 // Default values for Azure DevOps built-in variables when running locally.
 // Users can override any of these via -v flags on the CLI.
 const AZURE_DEFAULTS = Object.freeze({
@@ -121,6 +124,8 @@ class PipelineSimulator {
         this._downloadedArtifactTargets = new Map();
         this._jobRunCounter = 0;
         this._resolvedToolsPaths = null;
+        this._createdBuildFiles = new Set();
+        this._currentRepositoryRoot = '';
     }
 
     /**
@@ -145,6 +150,8 @@ class PipelineSimulator {
         this._feedPublishes = [];
         this._downloadedArtifactTargets = new Map();
         this._jobRunCounter = 0;
+        this._createdBuildFiles = new Set();
+        this._currentRepositoryRoot = '';
 
         // Build the initial variable map:
         // 1. Azure built-in defaults (lowest priority)
@@ -254,6 +261,7 @@ class PipelineSimulator {
 
         results.publishedArtifacts = [...this._publishedArtifacts];
         results.feedPublishes = [...this._feedPublishes];
+        results.createdBuildFiles = [...this._createdBuildFiles].sort();
         return results;
     }
 
@@ -441,7 +449,7 @@ class PipelineSimulator {
         // overwrite explicit user-supplied values (e.g. --build-counter / -v flags).
         const stageVariables = {
             ...variables,
-            ...this._extractVariablesFromDoc(stageDoc, variables, options.libraryVariables || {}),
+            ...this._extractPipelineVariables(stageDoc, variables, options.libraryVariables || {}),
             ...(options.userOverrides || {}),
         };
 
@@ -639,7 +647,7 @@ class PipelineSimulator {
         const jobVariables = {
             ...variables,
             ...jobWorkspaceVariables,
-            ...this._extractVariablesFromDoc(jobDoc, jobVariableContext, options.libraryVariables || {}),
+            ...this._extractPipelineVariables(jobDoc, jobVariableContext, options.libraryVariables || {}),
             ...(options.userOverrides || {}),
         };
         const stepOptions = {
@@ -649,6 +657,7 @@ class PipelineSimulator {
             // Keep the original repository root available for checkout simulation.
             repositoryRoot: options.workingDirectory || process.cwd(),
         };
+        this._currentRepositoryRoot = stepOptions.repositoryRoot;
 
         let jobFailed = false;
         for (let stepIdx = 0; stepIdx < steps.length; stepIdx++) {
@@ -822,7 +831,7 @@ class PipelineSimulator {
             const stepEnv = this._resolveStepEnv(stepDoc.env, variables);
             const executionStart = Date.now();
             console.log(`[sim-exec] START shell=${shell} step="${displayName}" cwd=${workDir}`);
-            const run = this._executeScript(shell, substituted, variables, workDir, stepEnv);
+            const run = this._executeScript(shell, substituted, variables, workDir, stepEnv, displayName);
             const elapsedMs = Date.now() - executionStart;
             console.log(
                 `[sim-exec] END shell=${shell} step="${displayName}" exit=${run.exitCode} durationMs=${elapsedMs}`
@@ -895,7 +904,7 @@ class PipelineSimulator {
                 const stepEnv = this._resolveStepEnv(stepDoc.env, variables);
                 const executionStart = Date.now();
                 console.log(`[sim-exec] START shell=${nativeShell} step="${displayName}" cwd=${workDir}`);
-                const run = this._executeScript(nativeShell, substituted, variables, workDir, stepEnv);
+                const run = this._executeScript(nativeShell, substituted, variables, workDir, stepEnv, displayName);
                 const elapsedMs = Date.now() - executionStart;
                 console.log(
                     `[sim-exec] END shell=${nativeShell} step="${displayName}" exit=${run.exitCode} durationMs=${elapsedMs}`
@@ -1248,15 +1257,6 @@ class PipelineSimulator {
      * Applies runtime expression mocking.
      * @param {object} parentVariables - Already-resolved variables to use when a value references $(anotherVar)
      */
-    _extractVariablesFromDoc(doc, parentVariables = {}, libraryVariables = {}) {
-        return this._extractPipelineVariables(doc, parentVariables, libraryVariables);
-    }
-
-    /**
-     * Extract top-level pipeline variables from the expanded document.
-     * Handles both object format ({ varName: value }) and array format
-     * ([{ name, value }, { name, value }]).
-     */
     _extractPipelineVariables(document, parentVariables = {}, libraryVariables = {}) {
         const vars = {};
         const raw = document.variables;
@@ -1443,7 +1443,7 @@ class PipelineSimulator {
      * Runtime expressions $[...] are handled by _mockRuntimeExpression().
      */
     _substituteVariables(text, variables) {
-        return text.replace(/\$\(([A-Za-z_][A-Za-z0-9_.-]*)\)/g, (match, name) => {
+        return text.replace(RE_SUBSTITUTE_VARS, (match, name) => {
             if (Object.prototype.hasOwnProperty.call(variables, name)) {
                 return variables[name];
             }
@@ -1496,12 +1496,12 @@ class PipelineSimulator {
         const resolved = {};
         if (!envBlock || typeof envBlock !== 'object') return resolved;
         for (const [key, value] of Object.entries(envBlock)) {
-            resolved[key] = this._substituteVariables(String(value), variables);
+            resolved[key] = this._substituteVariables(this._normalizeValue(String(value), variables), variables);
         }
         return resolved;
     }
 
-    _executeScript(shell, script, variables, workingDirectory, extraEnv = {}) {
+    _executeScript(shell, script, variables, workingDirectory, extraEnv = {}, displayName = '') {
         const shimDir = this._getShimDir();
         const ext = shell === 'bash' ? '.sh' : '.ps1';
         const tmpFile = path.join(os.tmpdir(), `aps-sim-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
@@ -1607,7 +1607,8 @@ class PipelineSimulator {
                     '}',
                     '',
                 ].join('\n');
-                scriptContent = preamble + scriptContent;
+                const debugInjection = this.debugScript ? 'set -x\n' : '';
+                scriptContent = preamble + debugInjection + scriptContent;
 
                 // Safety rail: mock remote-mutating update operations so simulation never writes remotely.
                 // This avoids shell wrapper compatibility issues while still blocking commands like `git push`.
@@ -1704,6 +1705,70 @@ class PipelineSimulator {
             }
 
             const effectiveCwd = resolvedCwd;
+
+            // For pwsh scripts that invoke msbuild/dotnet build, always create mock build outputs
+            // BEFORE trying to run the script. This ensures test DLLs exist in the workspace
+            // regardless of whether pwsh is available locally or the script fails.
+            let _mockBuildOutputsMessage = '';
+            if (shell === 'pwsh' && /\b(msbuild|dotnet\s+build|dotnet\s+test|devenv)\b/i.test(script) && resolvedCwd) {
+                // Try to extract /p:Configuration=, /p:Platform=, and the .sln path from the script text
+                // (template parameters expand to literals before simulation runs).
+                const configMatch = script.match(/\/p:Configuration=(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_.-]+))/i);
+                const platformMatch = script.match(
+                    /\/p:Platform=(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9][A-Za-z0-9 _]*)(?=\s*(?:\/|\r?\n|$)))/i
+                );
+                const slnMatch = script.match(/["']([^"'\r\n]*\.sln)["']/i);
+                const buildContext = {
+                    solution: slnMatch ? slnMatch[1] : '',
+                    configuration: configMatch
+                        ? configMatch[1] || configMatch[2] || configMatch[3] || ''
+                        : String(variables['CURRENT_CONFIG'] || variables['Configuration'] || ''),
+                    platform: platformMatch
+                        ? (platformMatch[1] || platformMatch[2] || platformMatch[3] || '').trim()
+                        : String(variables['CURRENT_PLATFORM'] || variables['Platform'] || ''),
+                };
+                try {
+                    const discoveredFiles = this._materializeMockBuildOutputs(resolvedCwd, buildContext);
+                    if (discoveredFiles.length > 0) {
+                        _mockBuildOutputsMessage =
+                            `[sim] build outputs (${displayName}):\n` +
+                            discoveredFiles.map((f) => `[sim]   ${f}`).join('\n');
+                        console.log(_mockBuildOutputsMessage);
+                    } else {
+                        _mockBuildOutputsMessage = `[sim] build outputs: none discovered (no .csproj/.vcxproj outputs found for ${buildContext.solution || 'solution'} ${buildContext.configuration}|${buildContext.platform})`;
+                    }
+                } catch (e) {
+                    _mockBuildOutputsMessage = `[sim] build outputs: unavailable — ${e.message}`;
+                }
+            }
+
+            // When the pwsh script explicitly invokes a Windows-only MSBuild.exe path,
+            // mock the entire step — the binary doesn't exist outside a Windows build agent.
+            if (shell === 'pwsh' && /MSBuild\.exe/i.test(script)) {
+                const _cfgM = script.match(/\/p:Configuration=(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_.-]+))/i);
+                const _pltM = script.match(
+                    /\/p:Platform=(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9][A-Za-z0-9 _]*)(?=\s*(?:\/|\r?\n|$)))/i
+                );
+                const _slnM = script.match(/["']([^"'\r\n]*\.sln)["']/i);
+                const _cfgStr = _cfgM ? ` /p:Configuration=${_cfgM[1] || _cfgM[2] || _cfgM[3] || ''}` : '';
+                const _pltStr = _pltM ? ` /p:Platform=${(_pltM[1] || _pltM[2] || _pltM[3] || '').trim()}` : '';
+                const _slnStr = _slnM ? ` ${_slnM[1]}` : '';
+                const mockMSBuildLines = [
+                    `Running: MSBuild.exe${_slnStr}${_cfgStr}${_pltStr} (mock)`,
+                    'MSBuild version 17.0.0 (mock)',
+                    'Build succeeded.',
+                    '    0 Warning(s)',
+                    '    0 Error(s)',
+                    'Build completed successfully',
+                ].join('\n');
+                return {
+                    stdout: _mockBuildOutputsMessage
+                        ? `${mockMSBuildLines}\n${_mockBuildOutputsMessage}`
+                        : mockMSBuildLines,
+                    stderr: '',
+                    exitCode: 0,
+                };
+            }
 
             // Git Bash (MSYS2) requires the script path in MSYS format (/c/Users/... not C:\Users\...).
             // BusyBox and other native Windows shells expect the plain Windows path.
@@ -1821,9 +1886,6 @@ class PipelineSimulator {
                             }
                         }
                     } else if (shell === 'pwsh') {
-                        if (/\b(msbuild|dotnet\s+build|dotnet\s+test|devenv)\b/i.test(script) && resolvedCwd) {
-                            this._materializeMockBuildOutputs(resolvedCwd);
-                        }
                         if (/signatures\.json/i.test(script) && workingDirectory) {
                             const signatureCandidates = new Set([
                                 path.join(resolvedCwd, 'signatures.json'),
@@ -1842,8 +1904,9 @@ class PipelineSimulator {
                             }
                         }
                         // Keep simulation moving when pwsh is unavailable locally.
+                        const mockNote = '[mock] pwsh not available locally; step simulated.';
                         return {
-                            stdout: '[mock] pwsh not available locally; step simulated.',
+                            stdout: _mockBuildOutputsMessage ? `${_mockBuildOutputsMessage}\n${mockNote}` : mockNote,
                             stderr: '',
                             exitCode: 0,
                         };
@@ -1852,7 +1915,9 @@ class PipelineSimulator {
             }
 
             const _result = {
-                stdout: run.stdout || '',
+                stdout: _mockBuildOutputsMessage
+                    ? `${_mockBuildOutputsMessage}\n${run.stdout || ''}`.trim()
+                    : run.stdout || '',
                 stderr: run.stderr || (run.error ? run.error.message : ''),
                 exitCode: run.status !== null ? run.status : 1,
                 _scriptContent: scriptContent,
@@ -2385,8 +2450,63 @@ exit 0
             return;
         }
 
+        if (taskName === 'VSTest') {
+            const rawPatterns = String(
+                inputs.testAssemblyVer2 || inputs.testAssemblyVer3 || inputs.testAssemblies || ''
+            );
+            const testPatterns = rawPatterns
+                .split('\n')
+                // Normalize Windows path separators and any \t-as-tab from YAML double-quoted strings
+                .map((p) => p.replace(/[\\\t]/g, '/').trim())
+                .filter(Boolean);
+            const includePatterns = testPatterns.filter((p) => !p.startsWith('!'));
+            const excludePatterns = testPatterns.filter((p) => p.startsWith('!')).map((p) => p.slice(1));
+            const effectiveIncludes = includePatterns;
+            const effectiveExcludes = excludePatterns;
+            const allFiles = this._scanWorkDirFiles(workDir);
+            const matched = this.filterByGlobPatterns(allFiles, effectiveIncludes, effectiveExcludes);
+            const debugOutput = this.debugScript
+                ? `[sim] VSTest: Processing patterns:\n` +
+                  effectiveIncludes.map((p) => `[sim]   ${p}`).join('\n') +
+                  '\n' +
+                  effectiveExcludes.map((p) => `[sim]   !${p}`).join('\n') +
+                  '\n'
+                : '';
+            if (matched.length === 0) {
+                return `${debugOutput}[sim] VSTest: no test assemblies found`;
+            }
+            return (
+                `${debugOutput}[sim] VSTest: ${matched.length} test assembl${matched.length === 1 ? 'y' : 'ies'}:\n` +
+                matched.map((f) => `[sim]   ${f}`).join('\n')
+            );
+        }
+
         if (taskName === 'VSBuild' || taskName === 'MSBuild') {
-            this._materializeMockBuildOutputs(workDir);
+            const buildContext = {
+                solution:
+                    inputs.solution ||
+                    inputs.solutionFile ||
+                    inputs.project ||
+                    inputs.projects ||
+                    inputs.projectFile ||
+                    '',
+                configuration: this._substituteTaskInputVariables(
+                    String(inputs.configuration || inputs.buildConfiguration || ''),
+                    variables
+                ),
+                platform: this._substituteTaskInputVariables(
+                    String(inputs.platform || inputs.buildPlatform || ''),
+                    variables
+                ),
+            };
+            try {
+                const discoveredFiles = this._materializeMockBuildOutputs(workDir, buildContext);
+                if (discoveredFiles.length > 0) {
+                    return (
+                        `[sim] build outputs (${taskRef}):\n` + discoveredFiles.map((f) => `[sim]   ${f}`).join('\n')
+                    );
+                }
+            } catch (_) {}
             return;
         }
 
@@ -2653,33 +2773,617 @@ exit 0
         );
     }
 
-    _materializeMockBuildOutputs(workDir) {
+    _scanWorkDirFiles(workDir) {
         const root = path.resolve(String(workDir || process.cwd()));
-        const mockFiles = [
-            'bin/mock.dll',
-            'bin/mock.pdb',
-            'bin/Any.Tests.dll',
-            'bin/testhost.dll',
-            'bin/testhost.exe',
-            'bin/x64/Release/mock.dll',
-            'bin/ARM64/Release/mock.dll',
-            'VoiceSdk/bin/mock.dll',
-            'VoiceSdk/bin/mock.pdb',
-            'VoiceSdk/bin/Any.Tests.dll',
-            'VoiceService/bin/x64/Release/mock.dll',
-            'VoiceService/bin/ARM64/Release/mock.dll',
-            'VoiceService/bin/mock.json',
-        ];
+        const results = [];
+        const walk = (dir) => {
+            let entries;
+            try {
+                entries = fs.readdirSync(dir, { withFileTypes: true });
+            } catch (_) {
+                return;
+            }
+            for (const entry of entries) {
+                const full = path.join(dir, entry.name);
+                if (entry.isDirectory()) {
+                    walk(full);
+                } else if (entry.isFile()) {
+                    results.push(path.relative(root, full).replace(/\\/g, '/'));
+                }
+            }
+        };
+        walk(root);
+        return results;
+    }
 
-        for (const relativeFile of mockFiles) {
+    _materializeMockBuildOutputs(workDir, buildContext = {}) {
+        const root = path.resolve(String(workDir || process.cwd()));
+        const inferredBuildOutputs = this._discoverBuildOutputsFromSolution(root, buildContext);
+        for (const relativeFile of inferredBuildOutputs) {
             const absoluteFile = path.join(root, relativeFile);
             try {
                 fs.mkdirSync(path.dirname(absoluteFile), { recursive: true });
                 if (!fs.existsSync(absoluteFile)) {
                     fs.writeFileSync(absoluteFile, 'mock\n', 'utf8');
+                    this._recordCreatedBuildFile(absoluteFile, root);
                 }
             } catch (_) {}
         }
+        return [...inferredBuildOutputs].sort();
+    }
+
+    _recordCreatedBuildFile(absoluteFilePath, rootDir) {
+        const absolute = path.resolve(String(absoluteFilePath || ''));
+        const root = path.resolve(String(rootDir || process.cwd()));
+        const relative = path.relative(root, absolute).replace(/\\/g, '/');
+        if (!relative || relative.startsWith('..')) {
+            this._createdBuildFiles.add(absolute.replace(/\\/g, '/'));
+            return;
+        }
+        this._createdBuildFiles.add(relative);
+    }
+
+    _discoverBuildOutputsFromSolution(workDir, buildContext = {}) {
+        const discovered = new Set();
+        const slnPath = this._findTopLevelSolutionFile(workDir, buildContext.solution || '');
+        if (!slnPath) {
+            const hint = String(buildContext.solution || '').trim();
+            const detail = hint ? ` (from build task input '${hint}')` : '';
+            throw new Error(
+                `No solution file (.sln) found in '${workDir}'${detail}. ` +
+                    'Ensure the repository contains a .sln file or pass the solution path via the pipeline task inputs.'
+            );
+        }
+        if (!fs.existsSync(slnPath)) {
+            throw new Error(
+                `Solution file not found on disk: ${slnPath}. ` + 'Ensure the repository checkout path is correct.'
+            );
+        }
+
+        let slnContent = '';
+        try {
+            slnContent = fs.readFileSync(slnPath, 'utf8');
+        } catch (err) {
+            throw new Error(`Failed to read solution file '${slnPath}': ${err.message}`);
+        }
+
+        const slnDir = path.dirname(slnPath);
+        const solutionConfigs = this._parseSolutionConfigurations(slnContent);
+        const selectedBuildConfig = this._selectSolutionConfiguration(
+            solutionConfigs,
+            buildContext.configuration,
+            buildContext.platform
+        );
+
+        const projectRefs = this._parseSolutionProjectReferences(slnContent);
+        const missingProjects = [];
+        for (const projectRef of projectRefs) {
+            const absoluteProjectPath = path.resolve(slnDir, projectRef.path);
+            if (!fs.existsSync(absoluteProjectPath)) {
+                missingProjects.push(projectRef.path);
+                continue;
+            }
+
+            const ext = path.extname(absoluteProjectPath).toLowerCase();
+            let inferredProjectOutputs = [];
+            if (ext === '.csproj') {
+                inferredProjectOutputs = this._inferCsprojOutputs(absoluteProjectPath, selectedBuildConfig, slnDir);
+            } else if (ext === '.vcxproj' || ext === '.vcproj') {
+                inferredProjectOutputs = this._inferVcprojOutputs(absoluteProjectPath, selectedBuildConfig, slnDir);
+            }
+
+            for (const relativeOutput of inferredProjectOutputs) {
+                const normalized = String(relativeOutput || '')
+                    .replace(/\\/g, '/')
+                    .replace(/^\.\//, '');
+                if (normalized) {
+                    discovered.add(normalized);
+                }
+            }
+        }
+
+        if (missingProjects.length > 0) {
+            process.stderr.write(
+                `[warn] ${missingProjects.length} project file(s) referenced in '${path.basename(slnPath)}' not found on disk:\n` +
+                    missingProjects.map((p) => `  ${p}`).join('\n') +
+                    '\n'
+            );
+        }
+
+        return [...discovered];
+    }
+
+    discoverBuildOutputs(workDir, buildContexts = []) {
+        const root = path.resolve(String(workDir || process.cwd()));
+        const contexts = Array.isArray(buildContexts) && buildContexts.length > 0 ? buildContexts : [{}];
+        const discovered = new Set();
+        const errors = [];
+
+        for (const buildContext of contexts) {
+            try {
+                for (const filePath of this._discoverBuildOutputsFromSolution(root, buildContext || {})) {
+                    discovered.add(filePath);
+                }
+            } catch (err) {
+                errors.push(err.message);
+            }
+        }
+
+        if (errors.length > 0 && discovered.size === 0) {
+            throw new Error(errors.join('\n'));
+        }
+
+        for (const errorMessage of errors) {
+            process.stderr.write(`[warn] ${errorMessage}\n`);
+        }
+
+        return [...discovered].sort();
+    }
+
+    _globToRegex(pattern) {
+        let p = String(pattern || '')
+            .replace(/\\/g, '/')
+            .trim();
+        // Replace wildcards with unique placeholders before escaping literal chars,
+        // so that added regex syntax (e.g. the '?' in '(?:') is never re-processed.
+        p = p.replace(/\*\*\//g, '\x00DS\x00'); // **/ → zero-or-more segments
+        p = p.replace(/\*\*/g, '\x00D\x00'); // ** → anything
+        p = p.replace(/\*/g, '\x00S\x00'); // * → within-segment wildcard
+        p = p.replace(/\?/g, '\x00Q\x00'); // ? → single char within segment
+        // Escape regex special characters in literal text
+        p = p.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+        // Restore wildcards as regex patterns
+        p = p.replace(/\x00DS\x00/g, '(?:[^/]+/)*');
+        p = p.replace(/\x00D\x00/g, '.*');
+        p = p.replace(/\x00S\x00/g, '[^/]*');
+        p = p.replace(/\x00Q\x00/g, '[^/]');
+        return new RegExp(`^${p}$`, 'i');
+    }
+
+    filterByGlobPatterns(files, includePatterns, excludePatterns) {
+        const includeRegexes = (includePatterns || []).map((p) => this._globToRegex(p));
+        const excludeRegexes = (excludePatterns || []).map((p) => this._globToRegex(p));
+        return files.filter((file) => {
+            const normalized = String(file || '').replace(/\\/g, '/');
+            const included = includeRegexes.length === 0 || includeRegexes.some((rx) => rx.test(normalized));
+            if (!included) return false;
+            return !excludeRegexes.some((rx) => rx.test(normalized));
+        });
+    }
+
+    discoverTestInputs(workDir, buildContexts = [], testPatterns = []) {
+        const allBuildOutputs = this.discoverBuildOutputs(workDir, buildContexts);
+        const includePatterns = [];
+        const excludePatterns = [];
+
+        for (const pattern of testPatterns) {
+            const normalized = String(pattern || '')
+                .replace(/\\/g, '/')
+                .trim();
+            if (!normalized) continue;
+            if (normalized.startsWith('!')) {
+                excludePatterns.push(normalized.slice(1));
+            } else {
+                includePatterns.push(normalized);
+            }
+        }
+
+        return this.filterByGlobPatterns(allBuildOutputs, includePatterns, excludePatterns);
+    }
+
+    _findTopLevelSolutionFile(workDir, solutionHint = '') {
+        const root = path.resolve(String(workDir || process.cwd()));
+        const hint = String(solutionHint || '').trim();
+        if (hint) {
+            const segments = hint
+                .split(';')
+                .map((entry) => entry.trim())
+                .filter(Boolean);
+            for (const entry of segments) {
+                if (entry.includes('*') || entry.includes('?')) {
+                    continue;
+                }
+                const candidate = path.isAbsolute(entry) ? entry : path.resolve(root, entry);
+                if (candidate.toLowerCase().endsWith('.sln') && fs.existsSync(candidate)) {
+                    return candidate;
+                }
+            }
+        }
+
+        try {
+            const entries = fs.readdirSync(root, { withFileTypes: true });
+            const slnEntry = entries.find((entry) => entry.isFile() && /\.sln$/i.test(entry.name));
+            if (slnEntry) {
+                return path.join(root, slnEntry.name);
+            }
+        } catch (_) {}
+
+        // Fallback: search the repository root (the actual source tree) when workDir is
+        // a simulated job workspace that is empty.
+        const repoRoot = this._currentRepositoryRoot ? path.resolve(String(this._currentRepositoryRoot)) : '';
+        if (repoRoot && repoRoot !== root) {
+            if (hint) {
+                const segments = hint
+                    .split(';')
+                    .map((entry) => entry.trim())
+                    .filter(Boolean);
+                for (const entry of segments) {
+                    if (entry.includes('*') || entry.includes('?')) {
+                        continue;
+                    }
+                    const candidate = path.isAbsolute(entry) ? entry : path.resolve(repoRoot, entry);
+                    if (candidate.toLowerCase().endsWith('.sln') && fs.existsSync(candidate)) {
+                        return candidate;
+                    }
+                }
+            }
+            try {
+                const repoEntries = fs.readdirSync(repoRoot, { withFileTypes: true });
+                const repoSlnEntry = repoEntries.find((entry) => entry.isFile() && /\.sln$/i.test(entry.name));
+                if (repoSlnEntry) {
+                    return path.join(repoRoot, repoSlnEntry.name);
+                }
+            } catch (_) {}
+        }
+
+        return '';
+    }
+
+    _parseSolutionConfigurations(slnContent) {
+        const configs = [];
+        const sectionMatch =
+            /GlobalSection\(SolutionConfigurationPlatforms\)\s*=\s*preSolution([\s\S]*?)EndGlobalSection/i.exec(
+                String(slnContent || '')
+            );
+        if (!sectionMatch) {
+            return configs;
+        }
+
+        const lineRegex = /^\s*([^=\r\n]+)=/gm;
+        let match;
+        while ((match = lineRegex.exec(sectionMatch[1])) !== null) {
+            const raw = String(match[1] || '').trim();
+            const [configuration, platform] = raw.split('|').map((v) => String(v || '').trim());
+            if (!configuration) {
+                continue;
+            }
+            configs.push({
+                configuration,
+                platform: platform || 'Any CPU',
+            });
+        }
+        return configs;
+    }
+
+    _selectSolutionConfiguration(solutionConfigs, requestedConfiguration, requestedPlatform) {
+        const requestedConfig = String(requestedConfiguration || '').trim();
+        const requestedPlat = String(requestedPlatform || '').trim();
+
+        const normalizePlatform = (value) =>
+            String(value || '')
+                .toLowerCase()
+                .replace(/\s+/g, '');
+        const normalizeConfig = (value) => String(value || '').toLowerCase();
+
+        if (requestedConfig && requestedPlat) {
+            const direct = solutionConfigs.find(
+                (entry) =>
+                    normalizeConfig(entry.configuration) === normalizeConfig(requestedConfig) &&
+                    normalizePlatform(entry.platform) === normalizePlatform(requestedPlat)
+            );
+            if (direct) {
+                return direct;
+            }
+        }
+
+        if (requestedConfig) {
+            const sameConfig = solutionConfigs.find(
+                (entry) => normalizeConfig(entry.configuration) === normalizeConfig(requestedConfig)
+            );
+            if (sameConfig) {
+                return sameConfig;
+            }
+        }
+
+        const release = solutionConfigs.find((entry) => normalizeConfig(entry.configuration) === 'release');
+        if (release) {
+            return release;
+        }
+
+        const debug = solutionConfigs.find((entry) => normalizeConfig(entry.configuration) === 'debug');
+        if (debug) {
+            return debug;
+        }
+
+        return solutionConfigs[0] || { configuration: 'Release', platform: 'Any CPU' };
+    }
+
+    _parseSolutionProjectReferences(slnContent) {
+        const projectRefs = [];
+        const regex = /^Project\("\{[^\}]+\}"\)\s*=\s*"([^"]+)",\s*"([^"]+)"/gm;
+        let match;
+        while ((match = regex.exec(String(slnContent || ''))) !== null) {
+            const projectPath = String(match[2] || '')
+                .replace(/\\/g, '/')
+                .trim();
+            if (!projectPath || !/\.(csproj|vcxproj|vcproj)$/i.test(projectPath)) {
+                continue;
+            }
+            projectRefs.push({
+                name: String(match[1] || '').trim(),
+                path: projectPath,
+            });
+        }
+        return projectRefs;
+    }
+
+    _inferCsprojOutputs(projectPath, buildConfig, workspaceRoot) {
+        let content = '';
+        try {
+            content = fs.readFileSync(projectPath, 'utf8');
+        } catch (_) {
+            return [];
+        }
+
+        const projectDir = path.dirname(projectPath);
+        const projectName = path.basename(projectPath, path.extname(projectPath));
+        const assemblyName = this._readXmlTag(content, 'AssemblyName') || projectName;
+        const outputType = (this._readXmlTag(content, 'OutputType') || 'Library').toLowerCase();
+        const outputExtension = outputType.includes('exe') ? '.exe' : '.dll';
+        const frameworkVersion = this._resolveFrameworkVersion(projectDir, buildConfig, content);
+        const tokenValues = {};
+        if (frameworkVersion) {
+            tokenValues.FrameworkVersion = frameworkVersion;
+            tokenValues.TargetFramework = frameworkVersion;
+            tokenValues.TargetFrameworkVersion = frameworkVersion;
+        }
+
+        const appendTargetFrameworkToOutputPath =
+            (this._readXmlTag(content, 'AppendTargetFrameworkToOutputPath') || 'true').toLowerCase() !== 'false';
+
+        const cfgPlatform = String((buildConfig && buildConfig.platform) || '').trim();
+        const isAnyCpu =
+            !cfgPlatform || cfgPlatform.toLowerCase() === 'anycpu' || cfgPlatform.toLowerCase() === 'any cpu';
+
+        const explicitOutputPath =
+            this._readConditionalProperty(content, 'OutputPath', buildConfig) ||
+            this._readXmlTag(content, 'OutputPath');
+        const outputPath =
+            explicitOutputPath ||
+            (isAnyCpu ? `bin/${buildConfig.configuration}/` : `bin/${cfgPlatform}/${buildConfig.configuration}/`);
+
+        const targetFrameworksRaw =
+            this._readXmlTag(content, 'TargetFrameworks') ||
+            this._readConditionalProperty(content, 'TargetFramework', buildConfig) ||
+            this._readXmlTag(content, 'TargetFramework') ||
+            '';
+        const expandedTargetFrameworksRaw = this._expandBuildPathTokens(targetFrameworksRaw, buildConfig, tokenValues);
+        const targetFrameworks = expandedTargetFrameworksRaw
+            .split(';')
+            .map((entry) => entry.trim())
+            .filter(Boolean);
+
+        const normalizedOutputBase = this._expandBuildPathTokens(outputPath, buildConfig, tokenValues)
+            .replace(/\\/g, '/')
+            .replace(/\/+$/, '');
+        const outputFiles = [];
+        const resolvedWorkspaceRoot = path.resolve(String(workspaceRoot || projectDir));
+
+        if (targetFrameworks.length > 0 && appendTargetFrameworkToOutputPath) {
+            for (const tfm of targetFrameworks) {
+                outputFiles.push(
+                    path.relative(
+                        resolvedWorkspaceRoot,
+                        path.join(projectDir, normalizedOutputBase, tfm, `${assemblyName}${outputExtension}`)
+                    )
+                );
+                outputFiles.push(
+                    path.relative(
+                        resolvedWorkspaceRoot,
+                        path.join(projectDir, normalizedOutputBase, tfm, `${assemblyName}.pdb`)
+                    )
+                );
+            }
+        } else {
+            outputFiles.push(
+                path.relative(
+                    resolvedWorkspaceRoot,
+                    path.join(projectDir, normalizedOutputBase, `${assemblyName}${outputExtension}`)
+                )
+            );
+            outputFiles.push(
+                path.relative(resolvedWorkspaceRoot, path.join(projectDir, normalizedOutputBase, `${assemblyName}.pdb`))
+            );
+        }
+
+        return outputFiles.map((entry) => entry.replace(/\\/g, '/').replace(/^\.\//, ''));
+    }
+
+    _inferVcprojOutputs(projectPath, buildConfig, workspaceRoot) {
+        let content = '';
+        try {
+            content = fs.readFileSync(projectPath, 'utf8');
+        } catch (_) {
+            return [];
+        }
+
+        const projectDir = path.dirname(projectPath);
+        const projectName = path.basename(projectPath, path.extname(projectPath));
+        const targetName = this._readXmlTag(content, 'TargetName') || projectName;
+
+        const configurationType = (
+            this._readConditionalProperty(content, 'ConfigurationType', buildConfig) ||
+            this._readXmlTag(content, 'ConfigurationType') ||
+            'DynamicLibrary'
+        ).toLowerCase();
+        const outputExtension = configurationType.includes('application')
+            ? '.exe'
+            : configurationType.includes('static')
+              ? '.lib'
+              : '.dll';
+
+        const outDir =
+            this._readConditionalProperty(content, 'OutDir', buildConfig) ||
+            this._readConditionalProperty(content, 'OutputDirectory', buildConfig) ||
+            this._readXmlTag(content, 'OutDir') ||
+            this._readXmlTag(content, 'OutputDirectory') ||
+            `bin/${buildConfig.configuration}/${buildConfig.platform}/`;
+
+        const normalizedOutDir = this._expandBuildPathTokens(outDir, buildConfig)
+            .replace(/\\/g, '/')
+            .replace(/\/+$/, '');
+        const resolvedWorkspaceRoot = path.resolve(String(workspaceRoot || projectDir));
+        const outputs = [
+            path.relative(
+                resolvedWorkspaceRoot,
+                path.join(projectDir, normalizedOutDir, `${targetName}${outputExtension}`)
+            ),
+        ];
+        if (outputExtension !== '.lib') {
+            outputs.push(
+                path.relative(resolvedWorkspaceRoot, path.join(projectDir, normalizedOutDir, `${targetName}.pdb`))
+            );
+        }
+
+        return outputs.map((entry) => entry.replace(/\\/g, '/').replace(/^\.\//, ''));
+    }
+
+    _readXmlTag(content, tagName) {
+        const regex = new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)<\/${tagName}>`, 'i');
+        const match = regex.exec(String(content || ''));
+        return match ? String(match[1] || '').trim() : '';
+    }
+
+    _readConditionalProperty(content, propertyName, buildConfig) {
+        const configuration = String((buildConfig && buildConfig.configuration) || '').trim();
+        const platform = String((buildConfig && buildConfig.platform) || '').trim();
+        if (!configuration) {
+            return '';
+        }
+
+        const groupsRegex = /<PropertyGroup\b([^>]*)>([\s\S]*?)<\/PropertyGroup>/gi;
+        let groupMatch;
+        const normalize = (value) =>
+            String(value || '')
+                .toLowerCase()
+                .replace(/\s+/g, '');
+
+        while ((groupMatch = groupsRegex.exec(String(content || ''))) !== null) {
+            const attrs = String(groupMatch[1] || '');
+            const body = String(groupMatch[2] || '');
+            const conditionMatch = /Condition\s*=\s*"([^"]+)"/i.exec(attrs);
+            if (!conditionMatch) {
+                continue;
+            }
+
+            const condition = conditionMatch[1];
+            const conditionConfigPlatform = /\$\(Configuration\)\s*\|\s*\$\(Platform\)\s*==\s*'([^']+)'/i.exec(
+                condition
+            );
+            if (conditionConfigPlatform) {
+                const [cfg, plt] = String(conditionConfigPlatform[1] || '')
+                    .split('|')
+                    .map((v) => String(v || '').trim());
+                if (normalize(cfg) !== normalize(configuration)) {
+                    continue;
+                }
+                if (platform && normalize(plt) !== normalize(platform)) {
+                    continue;
+                }
+                const propertyValue = this._readXmlTag(body, propertyName);
+                if (propertyValue) {
+                    return propertyValue;
+                }
+            }
+        }
+
+        return '';
+    }
+
+    _normalizeFrameworkVersionValue(rawValue) {
+        const value = String(rawValue || '').trim();
+        if (!value) {
+            return '';
+        }
+        if (/^net\d/i.test(value)) {
+            return value;
+        }
+
+        const versionMatch = /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?$/.exec(value);
+        if (!versionMatch) {
+            return value;
+        }
+
+        const major = versionMatch[1] || '0';
+        const minor = versionMatch[2] || '0';
+        const patch = versionMatch[3] || '';
+        if (patch && patch !== '0') {
+            return `net${major}${minor}${patch}`;
+        }
+        return `net${major}${minor}`;
+    }
+
+    _resolveFrameworkVersion(projectDir, buildConfig, projectContent = '') {
+        const fromProject =
+            this._readConditionalProperty(projectContent, 'FrameworkVersion', buildConfig) ||
+            this._readXmlTag(projectContent, 'FrameworkVersion') ||
+            this._readConditionalProperty(projectContent, 'TargetFrameworkVersion', buildConfig) ||
+            this._readXmlTag(projectContent, 'TargetFrameworkVersion');
+        const normalizedFromProject = this._normalizeFrameworkVersionValue(fromProject);
+        if (normalizedFromProject) {
+            return normalizedFromProject;
+        }
+
+        let current = path.resolve(String(projectDir || process.cwd()));
+        while (true) {
+            const propsPath = path.join(current, 'Directory.Build.props');
+            if (fs.existsSync(propsPath)) {
+                try {
+                    const propsContent = fs.readFileSync(propsPath, 'utf8');
+                    const fromProps =
+                        this._readConditionalProperty(propsContent, 'FrameworkVersion', buildConfig) ||
+                        this._readXmlTag(propsContent, 'FrameworkVersion') ||
+                        this._readConditionalProperty(propsContent, 'TargetFrameworkVersion', buildConfig) ||
+                        this._readXmlTag(propsContent, 'TargetFrameworkVersion');
+                    const normalizedFromProps = this._normalizeFrameworkVersionValue(fromProps);
+                    if (normalizedFromProps) {
+                        return normalizedFromProps;
+                    }
+                } catch (_) {}
+            }
+
+            const parent = path.dirname(current);
+            if (parent === current) {
+                break;
+            }
+            current = parent;
+        }
+
+        return '';
+    }
+
+    _expandBuildPathTokens(rawPath, buildConfig, tokenValues = {}) {
+        const configuration = String((buildConfig && buildConfig.configuration) || 'Release');
+        const platform = String((buildConfig && buildConfig.platform) || 'Any CPU');
+        let expanded = String(rawPath || '')
+            .replace(/\$\(Configuration\)/gi, configuration)
+            .replace(/\$\(PlatformName\)/gi, platform)
+            .replace(/\$\(Platform\)/gi, platform);
+
+        for (const [tokenName, tokenValue] of Object.entries(tokenValues || {})) {
+            if (!tokenName) {
+                continue;
+            }
+            const value = String(tokenValue || '').trim();
+            if (!value) {
+                continue;
+            }
+            const escapedTokenName = String(tokenName).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const tokenRegex = new RegExp(`\\$\\(${escapedTokenName}\\)`, 'gi');
+            expanded = expanded.replace(tokenRegex, value);
+        }
+
+        return expanded;
     }
 
     _materializeDummyNugetPackages(targetDir, variables = {}) {

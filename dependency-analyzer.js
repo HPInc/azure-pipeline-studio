@@ -272,12 +272,7 @@ class DependencyAnalyzer {
                 const styleClass = isOnCriticalPath ? 'critical' : getStageType(stage.displayName);
                 const displayText = stage.displayName || stage.name;
 
-                // Add job names as bullet points if they exist
-                let nodeLabel = `${emoji} ${displayText}`;
-                if (stage.jobs && stage.jobs.length > 0) {
-                    const jobBullets = stage.jobs.map((job) => `&nbsp;&nbsp;&nbsp;&nbsp;• ${job}`).join('<br/>');
-                    nodeLabel += `<br/><span style='font-size: 0.85em; opacity: 0.8;'>${jobBullets}</span>`;
-                }
+                const nodeLabel = `${emoji} ${displayText}`;
 
                 lines.push(`    ${nodeId}["${nodeLabel}"]:::${styleClass}`);
             });

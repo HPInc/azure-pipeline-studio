@@ -7,6 +7,15 @@ const jsep = require('jsep');
 const adoFunctions = require('./ado-functions');
 const { analyzeTemplateHints, findFirstKeyOccurrence } = require('./formatter');
 
+function stripInternalProperties(node) {
+    if (Array.isArray(node)) {
+        node.forEach(stripInternalProperties);
+    } else if (node && typeof node === 'object') {
+        delete node.__templateParams;
+        Object.values(node).forEach(stripInternalProperties);
+    }
+}
+
 const CHECKOUT_TASK = '6d15af64-176c-496d-b583-fd2ae21d4df4@1';
 // Mapping of shorthand keys to Azure task identifiers
 const TASK_TYPE_MAP = Object.freeze({
@@ -122,11 +131,14 @@ class AzurePipelineParser {
         te('4. convertVariablesToArrayFormat');
 
         t('5. YAML.parseDocument + restoreQuoteStyles');
-        const finalYamlDoc = YAML.parseDocument(YAML.stringify(expandedDocument));
+        // Deep-clone before stripping so __templateParams survives on the returned document
+        // for extractSimulationTree to read. The clone is used only for YAML serialization.
+        const expandedDocumentForYaml = JSON.parse(JSON.stringify(expandedDocument));
+        stripInternalProperties(expandedDocumentForYaml);
+        const finalYamlDoc = YAML.parseDocument(YAML.stringify(expandedDocumentForYaml));
         this.restoreQuoteStyles(finalYamlDoc.contents, [], context);
         te('5. YAML.parseDocument + restoreQuoteStyles');
 
-        console.log(`Azure Compatibility mode: ${context.azureCompatible}`);
         t('6. applyBlockScalarStyles');
         this.applyBlockScalarStyles(finalYamlDoc.contents, context);
         te('6. applyBlockScalarStyles');
@@ -384,6 +396,28 @@ class AzurePipelineParser {
                 Scalar(_key, node) {
                     if (typeof node.value === 'number' && node.source && node.source.includes('.')) {
                         node.value = node.source;
+                    }
+                },
+                Map(_key, node) {
+                    // Consolidate duplicate ${{ insert }} keys into a single key with an array value.
+                    // toJSON() only keeps the last duplicate key, so we must combine them here
+                    // before conversion to preserve all insert directives.
+                    const insertItems = node.items.filter(
+                        (pair) =>
+                            pair.key &&
+                            typeof pair.key.value === 'string' &&
+                            /^\$\{\{\s*insert\s*\}\}$/.test(pair.key.value.trim())
+                    );
+                    if (insertItems.length > 1) {
+                        const firstItem = insertItems[0];
+                        const seq = new YAML.YAMLSeq();
+                        insertItems.forEach((pair) => seq.add(pair.value));
+                        firstItem.value = seq;
+                        // Remove the extra duplicate items, keep only the first
+                        for (let idx = insertItems.length - 1; idx >= 1; idx--) {
+                            const pos = node.items.indexOf(insertItems[idx]);
+                            if (pos !== -1) node.items.splice(pos, 1);
+                        }
                     }
                 },
             });
@@ -1901,24 +1935,29 @@ class AzurePipelineParser {
                 index = conditional.nextIndex;
                 continue;
             } else if (this.isInsertDirective(rawKey)) {
-                const expandedValue = this.expandNodePreservingTemplates(value, context);
-                if (this.isNonArrayObject(expandedValue)) {
-                    const duplicateKeys = Object.keys(expandedValue).filter((k) =>
-                        Object.prototype.hasOwnProperty.call(result, k)
-                    );
-                    if (duplicateKeys.length > 0 && context && context.errors) {
-                        for (const dupKey of duplicateKeys) {
-                            context.errors.push({
-                                message: this.formatErrorWithStack(
-                                    "Duplicate key '" +
-                                        dupKey +
-                                        "' introduced by ${{ insert }} expansion conflicts with an existing key.",
-                                    context
-                                ),
-                            });
+                // Value may be an array when multiple ${{ insert }} directives were present
+                // (consolidated before YAML toJSON to avoid duplicate key loss)
+                const insertValues = Array.isArray(value) ? value : [value];
+                for (const insertVal of insertValues) {
+                    const expandedValue = this.expandNodePreservingTemplates(insertVal, context);
+                    if (this.isNonArrayObject(expandedValue)) {
+                        const duplicateKeys = Object.keys(expandedValue).filter((k) =>
+                            Object.prototype.hasOwnProperty.call(result, k)
+                        );
+                        if (duplicateKeys.length > 0 && context && context.errors) {
+                            for (const dupKey of duplicateKeys) {
+                                context.errors.push({
+                                    message: this.formatErrorWithStack(
+                                        "Duplicate key '" +
+                                            dupKey +
+                                            "' introduced by ${{ insert }} expansion conflicts with an existing key.",
+                                        context
+                                    ),
+                                });
+                            }
                         }
+                        Object.assign(result, expandedValue);
                     }
-                    Object.assign(result, expandedValue);
                 }
                 continue;
             }
@@ -3302,6 +3341,83 @@ class AzurePipelineParser {
 
         const body = this.extractTemplateBody(expandedTemplate);
 
+        // Annotate each expanded item with the template parameter context so the
+        // "Run Single Step" modal can show the parameters used in this expansion.
+        // Only set on items that haven't already been annotated by a nested template.
+        if (Array.isArray(body) && body.length > 0) {
+            const rawParams = templateJson && templateJson.parameters;
+            if (rawParams) {
+                const toType = (t) =>
+                    String(t || 'string')
+                        .trim()
+                        .toLowerCase() || 'string';
+                const defs = [];
+                if (Array.isArray(rawParams)) {
+                    for (const p of rawParams) {
+                        if (!p || !p.name) continue;
+                        const hasDefault = Object.prototype.hasOwnProperty.call(p, 'default');
+                        defs.push({
+                            name: String(p.name),
+                            type: toType(p.type),
+                            hasDefault,
+                            defaultValue: hasDefault ? p.default : '',
+                            values: Array.isArray(p.values) ? p.values : null,
+                            value: mergedParameters[p.name],
+                        });
+                    }
+                } else if (typeof rawParams === 'object') {
+                    for (const [name, p] of Object.entries(rawParams)) {
+                        const hasDefault =
+                            p && typeof p === 'object'
+                                ? Object.prototype.hasOwnProperty.call(p, 'default') ||
+                                  Object.prototype.hasOwnProperty.call(p, 'value')
+                                : p !== undefined;
+                        const defaultValue =
+                            p && typeof p === 'object' ? (p.default !== undefined ? p.default : p.value) : p;
+                        defs.push({
+                            name: String(name),
+                            type: 'string',
+                            hasDefault,
+                            defaultValue: hasDefault ? defaultValue : '',
+                            values: null,
+                            value: mergedParameters[name],
+                        });
+                    }
+                }
+                if (defs.length > 0) {
+                    // Scan unexpanded items to determine which params each item actually references.
+                    // Falls back to all params when counts differ (conditional template blocks).
+                    const rawBodyItems = this.extractTemplateBody(templateJson) || [];
+                    const paramRefSets =
+                        rawBodyItems.length === body.length
+                            ? rawBodyItems.map((rawItem) => {
+                                  const refs = new Set();
+                                  const scan = (val) => {
+                                      if (typeof val === 'string') {
+                                          for (const m of val.matchAll(/\$\{\{\s*parameters\.(\w+)\s*\}\}/g))
+                                              refs.add(m[1]);
+                                      } else if (val && typeof val === 'object') {
+                                          for (const v of Array.isArray(val) ? val : Object.values(val)) scan(v);
+                                      }
+                                  };
+                                  scan(rawItem);
+                                  return refs;
+                              })
+                            : null;
+
+                    for (let i = 0; i < body.length; i++) {
+                        const item = body[i];
+                        if (!item || typeof item !== 'object' || Array.isArray(item) || item.__templateParams) continue;
+                        const itemDefs =
+                            paramRefSets && paramRefSets[i] && paramRefSets[i].size > 0
+                                ? defs.filter((d) => paramRefSets[i].has(d.name))
+                                : defs;
+                        if (itemDefs.length > 0) item.__templateParams = itemDefs;
+                    }
+                }
+            }
+        }
+
         if (templateTimingLabel) console.timeEnd('[aps] ' + templateTimingLabel);
 
         return body;
@@ -3632,24 +3748,29 @@ class AzurePipelineParser {
 
             // Handle ${{ insert }} directive
             if (this.isInsertDirective(key)) {
-                const expandedValue = this.expandNodePreservingTemplates(value, context);
-                if (expandedValue && this.isNonArrayObject(expandedValue)) {
-                    const duplicateKeys = Object.keys(expandedValue).filter((k) =>
-                        Object.prototype.hasOwnProperty.call(result, k)
-                    );
-                    if (duplicateKeys.length > 0 && context && context.errors) {
-                        for (const dupKey of duplicateKeys) {
-                            context.errors.push({
-                                message: this.formatErrorWithStack(
-                                    "Duplicate key '" +
-                                        dupKey +
-                                        "' introduced by ${{ insert }} expansion conflicts with an existing key.",
-                                    context
-                                ),
-                            });
+                // Value may be an array when multiple ${{ insert }} directives were present
+                // (consolidated before YAML toJSON to avoid duplicate key loss)
+                const insertValues = Array.isArray(value) ? value : [value];
+                for (const insertVal of insertValues) {
+                    const expandedValue = this.expandNodePreservingTemplates(insertVal, context);
+                    if (expandedValue && this.isNonArrayObject(expandedValue)) {
+                        const duplicateKeys = Object.keys(expandedValue).filter((k) =>
+                            Object.prototype.hasOwnProperty.call(result, k)
+                        );
+                        if (duplicateKeys.length > 0 && context && context.errors) {
+                            for (const dupKey of duplicateKeys) {
+                                context.errors.push({
+                                    message: this.formatErrorWithStack(
+                                        "Duplicate key '" +
+                                            dupKey +
+                                            "' introduced by ${{ insert }} expansion conflicts with an existing key.",
+                                        context
+                                    ),
+                                });
+                            }
                         }
+                        Object.assign(result, expandedValue);
                     }
-                    Object.assign(result, expandedValue);
                 }
                 i++;
                 continue;
