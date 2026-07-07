@@ -5,6 +5,24 @@ All notable changes to Azure Pipeline Studio will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-07-07
+
+### Added
+- **CLI `runscript` and `getscriptinfo` commands**: New CLI commands to run an individual pipeline step as a standalone script and to inspect the generated script content with resolved parameters and variables.
+- **Repository resource location picker**: The "Configure Resource Location" command now shows all `resources.repositories` entries from the open YAML in a single multi-select picker, each with its type and name visible (e.g. `githubenterprise · codeway/templates`). Multiple resources can be selected and configured at once without navigating a two-step flow.
+
+### Changed
+- **Webview code split into separate files**: Dependency, error, and simulation panel webviews have been extracted from the main extension bundle into dedicated source files, improving maintainability and reducing bundle size.
+- **Settings persistence**: Tool path and resource location settings are now saved to user-level settings and persist across VS Code sessions.
+- **Simulation settings panel auto-expands on error**: When a simulation step fails, the settings panel automatically expands so tool path configuration is immediately visible.
+
+### Fixed
+- **Simulation: bash `set -x` variable corruption**: Fixed a bug where `set -x` trace output written to stderr could corrupt `##vso[task.setvariable]` values — causing subsequent steps to receive variables with trailing quote characters and producing script syntax errors.
+- **Simulation: EPERM workspace errors surfaced**: Permission errors during simulation workspace cleanup are now shown as actionable VS Code error messages that include the locked directory path.
+- **Simulation: Windows multi-line env var corruption**: Fixed multi-line variable values being incorrectly injected with real newlines into the Windows process environment block passed to Git Bash/WSL.
+
+[1.6.0]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.6.0
+
 ## [1.5.0] - 2026-06-26
 
 ### Added

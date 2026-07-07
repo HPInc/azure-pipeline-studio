@@ -3413,6 +3413,7 @@ class AzurePipelineParser {
                                 ? defs.filter((d) => paramRefSets[i].has(d.name))
                                 : defs;
                         if (itemDefs.length > 0) item.__templateParams = itemDefs;
+                        if (resolvedPath && !item.__templateFile) item.__templateFile = resolvedPath;
                     }
                 }
             }

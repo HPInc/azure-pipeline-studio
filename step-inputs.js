@@ -156,6 +156,7 @@ function extractSimulationTree(document) {
                 stepEnv: step.env && typeof step.env === 'object' ? { ...step.env } : {},
                 rawStep: step,
                 templateParams: Array.isArray(step.__templateParams) ? step.__templateParams : null,
+                templateFile: step.__templateFile || null,
             };
         });
 

@@ -41,6 +41,7 @@ const tests = [
     'test-pipeline-diagram.js',
     'test-resources.js',
     'test-cli.js',
+    'test-set-vars.js',
 ];
 
 console.log('='.repeat(70));

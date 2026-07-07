@@ -22,6 +22,71 @@ const CHECKOUT_TASK = '6d15af64-176c-496d-b583-fd2ae21d4df4@1';
 // Pre-compiled regex for Azure Pipelines variable substitution syntax: $(VarName)
 const RE_SUBSTITUTE_VARS = /\$\(([A-Za-z_][A-Za-z0-9_.-]*)\)/g;
 
+/**
+ * Rewrite bash-specific constructs to POSIX sh / BusyBox ash equivalents:
+ *
+ * Arithmetic:
+ *   if (( EXPR )); then  →  if [ "$(( EXPR ))" -ne 0 ]; then
+ *   standalone (( EXPR ))  →  : $(( EXPR ))
+ *
+ * Arrays (bash arrays are not supported in BusyBox ash; replace with no-ops
+ * so the script does not crash; array contents will be empty during simulation):
+ *   arr=()               →  arr=''
+ *   arr+=("$x")          →  : # aps: array append
+ *   arr+=( ... )         →  : # aps: array append
+ *   "${arr[@]}"          →  $arr  (best-effort approximation)
+ *   "${!arr[@]}"         →  ''    (index expansion — dropped)
+ *   "${#arr[@]}"         →  0
+ *
+ * Process substitution (not supported in BusyBox ash):
+ *   done < <(cmd)        →  done < /dev/null  # cmd not executed; loop gets empty input
+ */
+function _rewriteArithmeticForPosixAsh(s) {
+    // ── Arithmetic ──────────────────────────────────────────────────────────
+    s = s.replace(
+        /\b(if|elif|while|until)([ \t]+)\(\([ \t]*(.*?)[ \t]*\)\)([ \t]*;?[ \t]*)(then|do)\b/g,
+        (m, kw, sp1, expr, sp2, td) => {
+            const cmp = kw === 'until' ? '-eq' : '-ne';
+            return `${kw}${sp1}[ "$(( ${expr.trim()} ))" ${cmp} 0 ]${sp2}${td}`;
+        }
+    );
+    s = s.replace(
+        /^([ \t]*)\(\([ \t]*(.*?)[ \t]*\)\)[ \t]*$/gm,
+        (m, indent, expr) => `${indent}: $(( ${expr.trim()} ))`
+    );
+
+    // ── Arrays ───────────────────────────────────────────────────────────────
+    // varname=()  →  varname=''
+    s = s.replace(
+        /^([ \t]*)([A-Za-z_][A-Za-z0-9_]*)=(\(\))[ \t]*$/gm,
+        (m, indent, name) => `${indent}${name}='' # aps: array init`
+    );
+
+    // varname+=( ... )  →  : # aps: array append
+    s = s.replace(
+        /^([ \t]*)[A-Za-z_][A-Za-z0-9_]*\+=(\([^)]*\))[ \t]*$/gm,
+        (m, indent) => `${indent}: # aps: array append`
+    );
+
+    // "${arr[@]}"  →  $arr  (approximation)
+    s = s.replace(/"\$\{([A-Za-z_][A-Za-z0-9_]*)\[@\]}"/g, '"$$$1"');
+
+    // "${!arr[@]}"  →  ''
+    s = s.replace(/"\$\{![A-Za-z_][A-Za-z0-9_]*\[@\]}"/g, "''");
+
+    // "${#arr[@]}"  →  0
+    s = s.replace(/"\$\{#[A-Za-z_][A-Za-z0-9_]*\[@\]}"/g, '0');
+
+    // ── Process substitution ─────────────────────────────────────────────────
+    // done < <(cmd)  →  done < /dev/null  (loop body runs 0 times)
+    s = s.replace(
+        /\bdone([ \t]*)<([ \t]*)<\([^)]+\)/g,
+        (m, sp1, sp2) => `done${sp1}< /dev/null # aps: process subst. skipped`
+    );
+
+    return s;
+}
+
 // Default values for Azure DevOps built-in variables when running locally.
 // Users can override any of these via -v flags on the CLI.
 const AZURE_DEFAULTS = Object.freeze({
@@ -297,6 +362,19 @@ class PipelineSimulator {
         console.log('[sim-context]', JSON.stringify(context, null, 2));
     }
 
+    _isBusyBoxShell(shellPath) {
+        const cacheKey = String(shellPath || 'default');
+        if (!this._busyboxCache) this._busyboxCache = new Map();
+        if (this._busyboxCache.has(cacheKey)) return this._busyboxCache.get(cacheKey);
+        let result = false;
+        try {
+            const r = spawnSync(shellPath || 'bash', ['--version'], { encoding: 'utf8', timeout: 2000 });
+            result = /busybox/i.test((r.stdout || '') + (r.stderr || ''));
+        } catch (_) {}
+        this._busyboxCache.set(cacheKey, result);
+        return result;
+    }
+
     _resolveCommandPath(commandName) {
         const configuredPath = this.executablePaths && this.executablePaths[commandName];
         if (configuredPath) {
@@ -374,40 +452,34 @@ class PipelineSimulator {
     }
 
     _removeDirectoryWithFallback(targetDirectory) {
-        let lastError = null;
-        for (let attempt = 0; attempt < 3; attempt++) {
-            try {
-                fs.rmSync(targetDirectory, { recursive: true, force: true });
-                return;
-            } catch (error) {
-                lastError = error;
-                const code = error && error.code;
-                if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'ENOTEMPTY') {
-                    throw error;
-                }
-            }
-        }
-
-        // Last-resort fallback on Windows: keep the root and clear child entries.
         try {
-            if (!fs.existsSync(targetDirectory)) {
-                return;
+            fs.rmSync(targetDirectory, { recursive: true, force: true });
+            return;
+        } catch (error) {
+            const code = error && error.code;
+            if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'ENOTEMPTY') {
+                throw error;
             }
-
-            for (const childName of fs.readdirSync(targetDirectory)) {
-                const childPath = path.join(targetDirectory, childName);
-                fs.rmSync(childPath, { recursive: true, force: true });
-            }
-        } catch (fallbackError) {
-            const fallbackCode = fallbackError && fallbackError.code;
-            if (fallbackCode === 'EPERM' || fallbackCode === 'EBUSY') {
-                const details = lastError && lastError.message ? lastError.message : String(lastError || 'unknown');
-                throw new Error(
-                    `Unable to reset simulation workspace at ${targetDirectory}. A process is locking files in this folder. ${details}`
-                );
-            }
-            throw fallbackError;
         }
+
+        // Single fallback: clear child entries individually.
+        if (fs.existsSync(targetDirectory)) {
+            try {
+                for (const childName of fs.readdirSync(targetDirectory)) {
+                    const childPath = path.join(targetDirectory, childName);
+                    try {
+                        fs.rmSync(childPath, { recursive: true, force: true });
+                    } catch (_) {}
+                }
+                return;
+            } catch (_) {}
+        }
+
+        // Files are locked — ask the user to delete the folder manually.
+        throw new Error(
+            `Simulation workspace is locked by another process.\n` +
+                `Please delete the simulation folder and try again:\n  ${targetDirectory}`
+        );
     }
 
     _ensureSimulationDirectories(variables) {
@@ -724,7 +796,20 @@ class PipelineSimulator {
         const jobFolderName = `${String(this._jobRunCounter).padStart(3, '0')}-${this._sanitizePathSegment(jobName)}`;
         const jobRoot = path.join(simulationRoot, 'workspace', 'jobs', jobFolderName);
 
-        fs.rmSync(jobRoot, { recursive: true, force: true });
+        try {
+            fs.rmSync(jobRoot, { recursive: true, force: true });
+        } catch (rmErr) {
+            try {
+                fs.rmSync(simulationRoot, { recursive: true, force: true });
+            } catch (_) {
+                const err = new Error(
+                    `Simulation failed: permission denied. Please remove the simulation folder manually and try again: ${simulationRoot}`
+                );
+                err.code = rmErr.code;
+                err.path = simulationRoot;
+                throw err;
+            }
+        }
 
         const sourcesDirectory = path.join(jobRoot, 's');
         const tempDirectory = path.join(jobRoot, 'temp');
@@ -879,7 +964,15 @@ class PipelineSimulator {
                     );
                 }
             }
-            applyDirectives(this._parseVsoDirectives(run.stdout));
+            applyDirectives(
+                this._parseVsoDirectives(
+                    (run.stdout || '') +
+                        (run.stderr || '')
+                            .split('\n')
+                            .filter((l) => !/^\+/.test(l))
+                            .join('\n')
+                )
+            );
         } else if (stepDoc.task) {
             // After template expansion, bash:/script:/pwsh: become task: Bash@3/CmdLine@2/PowerShell@2.
             // Detect these and run them natively; all other tasks go to the mock catalog.
@@ -923,7 +1016,15 @@ class PipelineSimulator {
                 if (ignoreFailure) {
                     stepResult.result = 'Succeeded';
                 }
-                applyDirectives(this._parseVsoDirectives(run.stdout));
+                applyDirectives(
+                    this._parseVsoDirectives(
+                        (run.stdout || '') +
+                            (run.stderr || '')
+                                .split('\n')
+                                .filter((l) => !/^\+/.test(l))
+                                .join('\n')
+                    )
+                );
             } else if (nativeShell && inputs.filePath) {
                 const scriptPath = path.resolve(workDir, inputs.filePath);
                 const env = { ...process.env };
@@ -1504,7 +1605,10 @@ class PipelineSimulator {
     _executeScript(shell, script, variables, workingDirectory, extraEnv = {}, displayName = '') {
         const shimDir = this._getShimDir();
         const ext = shell === 'bash' ? '.sh' : '.ps1';
-        const tmpFile = path.join(os.tmpdir(), `aps-sim-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
+        const tmpFile = path.join(
+            process.env.HOME || os.homedir(),
+            `aps-sim-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`
+        );
         let pythonApiShimDir;
         let keepTmpFile = false;
         let lastShellInvocation = shell;
@@ -1608,7 +1712,38 @@ class PipelineSimulator {
                     '',
                 ].join('\n');
                 const debugInjection = this.debugScript ? 'set -x\n' : '';
-                scriptContent = preamble + debugInjection + scriptContent;
+
+                // On Windows, Git Bash may not reliably receive env var values that
+                // contain real newlines via the spawnSync env block. Re-export any
+                // such variables inside the script using bash $'...' string literals,
+                // which guarantee the correct value regardless of OS env-block limits.
+                let _multilineReExports = '';
+                if (process.platform === 'win32') {
+                    const _bashEscape = (s) =>
+                        s
+                            .replace(/\\/g, '\\\\')
+                            .replace(/'/g, "\\'")
+                            .replace(/\n/g, '\\n')
+                            .replace(/\r/g, '\\r')
+                            .replace(/\t/g, '\\t');
+                    const _allEnvSources = [
+                        ...Object.entries(variables).map(([k, v]) => [
+                            k.toUpperCase().replace(/[^A-Z0-9_]/g, '_'),
+                            String(v),
+                        ]),
+                        ...Object.entries(extraEnv).map(([k, v]) => [k, String(v)]),
+                    ];
+                    const _seen = new Set();
+                    for (const [k, v] of _allEnvSources) {
+                        if (_seen.has(k)) continue;
+                        _seen.add(k);
+                        if (v.includes('\n') || v.includes('\r')) {
+                            _multilineReExports += `export ${k}=$'${_bashEscape(v)}'\n`;
+                        }
+                    }
+                }
+
+                scriptContent = preamble + _multilineReExports + debugInjection + scriptContent;
 
                 // Safety rail: mock remote-mutating update operations so simulation never writes remotely.
                 // This avoids shell wrapper compatibility issues while still blocking commands like `git push`.
@@ -1667,7 +1802,10 @@ class PipelineSimulator {
                     ),
                 ];
                 const extraDirs = toolDirs.length ? toolDirs.join(':') + ':' : '';
-                env.PATH = `${bashShimDir}:${extraDirs}${env.PATH || ''}`;
+                // /usr/bin and /bin must be explicitly included: Git Bash does not source
+                // its profile when invoked as `bash.exe script.sh`, so it never auto-adds
+                // its bundled Unix tools (grep, sed, tr, tee, rm, etc.) to PATH.
+                env.PATH = `${bashShimDir}:${extraDirs}/usr/bin:/bin:${env.PATH || ''}`;
             }
             if (pythonApiShimDir) {
                 env.PYTHONPATH = pythonApiShimDir + path.delimiter + (env.PYTHONPATH || '');
@@ -1780,16 +1918,46 @@ class PipelineSimulator {
                     : tmpFile;
 
             const configuredShell = this.executablePaths[shell];
+            // Derive Git Bash candidates. Modern Git for Windows puts bash
+            // in usr\bin\bash.exe (not bin\bash.exe). Also derive path from
+            // the configured git executable if available.
+            const _gitExePath = this.executablePaths && (this.executablePaths['git'] || this.executablePaths['Git']);
+            const _gitRootFromExe = _gitExePath
+                ? (() => {
+                      // e.g. C:\Program Files\Git\cmd\git.exe -> C:\Program Files\Git
+                      const d = path.dirname(_gitExePath); // cmd/ or bin/
+                      const root = path.dirname(d);
+                      return fs.existsSync(path.join(root, 'usr', 'bin', 'bash.exe')) ||
+                          fs.existsSync(path.join(root, 'bin', 'bash.exe'))
+                          ? root
+                          : null;
+                  })()
+                : null;
             const windowsGitBashCandidates =
                 shell === 'bash' && process.platform === 'win32'
                     ? [
+                          // Derived from configured git path (most reliable)
+                          _gitRootFromExe ? path.join(_gitRootFromExe, 'usr', 'bin', 'bash.exe') : null,
+                          _gitRootFromExe ? path.join(_gitRootFromExe, 'bin', 'bash.exe') : null,
+                          // Standard installation paths — usr\bin first (modern Git for Windows)
+                          'C:\\Program Files\\Git\\usr\\bin\\bash.exe',
                           'C:\\Program Files\\Git\\bin\\bash.exe',
+                          'C:\\Program Files (x86)\\Git\\usr\\bin\\bash.exe',
                           'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
+                          process.env.ProgramFiles
+                              ? path.join(process.env.ProgramFiles, 'Git', 'usr', 'bin', 'bash.exe')
+                              : null,
                           process.env.ProgramFiles
                               ? path.join(process.env.ProgramFiles, 'Git', 'bin', 'bash.exe')
                               : null,
                           process.env['ProgramFiles(x86)']
+                              ? path.join(process.env['ProgramFiles(x86)'], 'Git', 'usr', 'bin', 'bash.exe')
+                              : null,
+                          process.env['ProgramFiles(x86)']
                               ? path.join(process.env['ProgramFiles(x86)'], 'Git', 'bin', 'bash.exe')
+                              : null,
+                          process.env.LOCALAPPDATA
+                              ? path.join(process.env.LOCALAPPDATA, 'Programs', 'Git', 'usr', 'bin', 'bash.exe')
                               : null,
                           process.env.LOCALAPPDATA
                               ? path.join(process.env.LOCALAPPDATA, 'Programs', 'Git', 'bin', 'bash.exe')
@@ -1809,6 +1977,53 @@ class PipelineSimulator {
                 });
             };
 
+            // Convert a Windows path to a WSL /mnt/... path.
+            const _toWslPath = (p) =>
+                String(p || '')
+                    .replace(/^([A-Za-z]):[/\\]/, (_, d) => `/mnt/${d.toLowerCase()}/`)
+                    .replace(/\\/g, '/');
+
+            // tryRunWsl: run the script via wsl.exe -- bash <wslPath>.
+            // WSL bash fully supports arrays and process substitution.
+            const _wslExe = 'C:\\Windows\\System32\\wsl.exe';
+            const tryRunWsl = (scriptPath = scriptArg) => {
+                lastShellInvocation = _wslExe;
+                const wslScript = _toWslPath(scriptPath);
+                const wslCwd = _toWslPath(String(effectiveCwd || ''));
+                // WSL does not inherit custom Windows env vars (only those in
+                // WSLENV). Export step-level env vars (extraEnv) explicitly
+                // inside the bash command, converting Windows paths to WSL paths.
+                const _extraExports = Object.entries(extraEnv)
+                    .map(([k, v]) => `export ${k}=${JSON.stringify(_toWslPath(String(v)))}`)
+                    .join('; ');
+                const _cmd = _extraExports
+                    ? `{ ${_extraExports}; cd ${JSON.stringify(wslCwd)} && bash ${JSON.stringify(wslScript)}; } 2>&1`
+                    : `{ cd ${JSON.stringify(wslCwd)} && bash ${JSON.stringify(wslScript)}; } 2>&1`;
+                // Use 2>&1 inside WSL: WSL's stderr pipe is unreliable from
+                // Node.js spawnSync; merging stderr into stdout ensures all
+                // script output (including set -x trace) is captured.
+                const raw = spawnSync(_wslExe, ['--', 'bash', '-c', _cmd], {
+                    env,
+                    encoding: 'utf8',
+                    timeout: 60000,
+                });
+                // Expose the merged output as stderr so it appears as [stderr]
+                // lines in the simulation panel (matching normal bash behaviour).
+                return { ...raw, stdout: '', stderr: (raw.stdout || '') + (raw.stderr || '') };
+            };
+            const _wslAvailable =
+                process.platform === 'win32' &&
+                (() => {
+                    try {
+                        return fs.existsSync(_wslExe);
+                    } catch (_) {
+                        return false;
+                    }
+                })();
+
+            // If the user configured wsl.exe as the bash, handle it specially.
+            const _configuredIsWsl = configuredShell && /[/\\]wsl\.exe$/i.test(configuredShell);
+
             let run;
             if (shell === 'bash' && process.platform === 'win32' && !configuredShell) {
                 // Prefer full Git Bash first on Windows because some lightweight bash
@@ -1821,27 +2036,73 @@ class PipelineSimulator {
                 if (!run || (run.error && run.error.code === 'ENOENT')) {
                     run = tryRun(shell);
                 }
+            } else if (_configuredIsWsl) {
+                // User explicitly configured wsl.exe as bash; use WSL invocation.
+                run = tryRunWsl(scriptArg);
             } else {
                 run = tryRun(configuredShell || shell);
             }
 
-            // If the selected bash cannot parse bash-specific syntax (notably process
-            // substitution `< <(...)`), retry once with Git Bash on Windows.
             const _bashParseErrorPattern =
                 /syntax error:\s*unexpected\s+"?\(|unexpected token\s+`?"?\(|expecting\s+"fi"/i;
 
+            // When using a lightweight configured shell (e.g. BusyBox) that may not support
+            // full bash syntax, fall back to Git Bash on Windows when the script fails.
+            // Try POSIX arithmetic rewrite first, then full Git Bash.
             if (
                 shell === 'bash' &&
                 process.platform === 'win32' &&
+                configuredShell &&
+                run &&
+                run.status !== 0 &&
+                windowsGitBashCandidates.length > 0
+            ) {
+                // First: rewrite ((...)) to POSIX and retry with the configured shell.
+                // When configured shell is wsl.exe, use tryRunWsl so the path
+                // is correctly converted to a WSL /mnt/... path.
+                const _posixScript = _rewriteArithmeticForPosixAsh(scriptContent);
+                fs.writeFileSync(tmpFile, _posixScript, { mode: 0o755 });
+                const _posixRun = _configuredIsWsl ? tryRunWsl(scriptArg) : tryRun(configuredShell);
+                if (!_posixRun.error || _posixRun.error.code !== 'ENOENT') {
+                    run = _posixRun;
+                }
+
+                // If still failing, try Git Bash / WSL which support full bash syntax.
+                if (run.status !== 0) {
+                    fs.writeFileSync(tmpFile, scriptContent, { mode: 0o755 });
+                    process.stderr.write(
+                        `[aps-gitbash] BusyBox failed (status=${run.status}), trying Git Bash / WSL\n`
+                    );
+                    for (const gitBash of windowsGitBashCandidates) {
+                        const retried = tryRun(gitBash, scriptArgMsys);
+                        process.stderr.write(
+                            `[aps-gitbash] ${gitBash}: status=${retried.status} error=${retried.error ? retried.error.code : 'none'}\n`
+                        );
+                        if (retried.error && retried.error.code === 'ENOENT') continue;
+                        run = retried;
+                        break;
+                    }
+                    // If no Git Bash found, try WSL bash as last resort.
+                    if (run.status !== 0 && _wslAvailable) {
+                        process.stderr.write('[aps-gitbash] no Git Bash found, trying WSL bash\n');
+                        const wslRun = tryRunWsl(scriptArg);
+                        if (!wslRun.error) run = wslRun;
+                    }
+                }
+            }
+
+            // If no configured shell: retry with Git Bash when parse error detected.
+            if (
+                shell === 'bash' &&
+                process.platform === 'win32' &&
+                !configuredShell &&
                 run &&
                 run.status !== 0 &&
                 _bashParseErrorPattern.test(String(run.stderr || ''))
             ) {
                 for (const gitBash of windowsGitBashCandidates) {
                     const retried = tryRun(gitBash, scriptArgMsys);
-                    if (retried.error && retried.error.code === 'ENOENT') {
-                        continue;
-                    }
+                    if (retried.error && retried.error.code === 'ENOENT') continue;
                     run = retried;
                     break;
                 }
@@ -1977,6 +2238,9 @@ class PipelineSimulator {
                 } else {
                     const _tail = (s, n) => (s ? s.split('\n').slice(-n).join('\n') : '');
                     process.stderr.write('[aps-debug] stdout(last 10):\n' + _tail(_result.stdout, 10) + '\n');
+                    if (_result.stderr && _result.stderr.length) {
+                        process.stderr.write('[aps-debug] stderr(last 10):\n' + _tail(_result.stderr, 10) + '\n');
+                    }
                 }
             }
             return _result;
@@ -2007,7 +2271,7 @@ class PipelineSimulator {
     }
 
     _createPythonApiShim() {
-        const shimDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aps-pyshim-'));
+        const shimDir = fs.mkdtempSync(path.join(process.env.HOME || os.homedir(), 'aps-pyshim-'));
         const shimPath = path.join(shimDir, 'sitecustomize.py');
         const shimSource = [
             'import json',
@@ -2083,7 +2347,7 @@ class PipelineSimulator {
     _getShimDir() {
         if (this._shimDir) return this._shimDir;
 
-        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aps-shims-'));
+        const dir = fs.mkdtempSync(path.join(process.env.HOME || os.homedir(), 'aps-shims-'));
         this._shimDir = dir;
 
         for (const tool of this.mockTools) {
@@ -4033,7 +4297,7 @@ exit 0
     }
 }
 
-function printSimulationResults(results) {
+function printSimulationResults(results, { verbose = false } = {}) {
     const ICON = { Succeeded: '\u2714', Failed: '\u2716', Skipped: '\u29d8' };
     const COLOR = { Succeeded: '\x1b[32m', Failed: '\x1b[31m', Skipped: '\x1b[33m' };
     const RESET = '\x1b[0m';
@@ -4124,13 +4388,13 @@ function printSimulationResults(results) {
                 if (stepResult.stdout) {
                     stepResult.stdout
                         .split('\n')
-                        .filter((l) => shouldShowStdoutLine(l))
+                        .filter((l) => (verbose ? l.trim() : shouldShowStdoutLine(l)))
                         .forEach((l) => console.log(`      ${formatLogLine(l)}`));
                 }
                 if (stepResult.stderr) {
                     stepResult.stderr
                         .split('\n')
-                        .filter((l) => l.trim() && !isHiddenTraceNoise(l))
+                        .filter((l) => l.trim() && (verbose || !isHiddenTraceNoise(l)))
                         .forEach((l) => console.error(`      ${formatLogLine(l, true)}`));
                 }
                 const localVars = Object.entries(stepResult.variables).filter(

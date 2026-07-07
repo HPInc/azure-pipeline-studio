@@ -148,8 +148,8 @@
                 "description": "Optional endpoint/service connection used for matching (for example: 'ghe').",
                 "type": "string"
               },
-              "location": {
-                "description": "Alias for 'path'.",
+              "linuxPath": {
+                "description": "Linux-specific local directory for this repository mapping. Takes priority over 'path' on Linux.",
                 "type": "string"
               },
               "name": {
@@ -157,7 +157,7 @@
                 "type": "string"
               },
               "path": {
-                "description": "Local directory that mirrors the repository contents. Relative paths are resolved against the workspace folder.",
+                "description": "Local directory that mirrors the repository contents. Used on all platforms when the OS-specific field (windowsPath/linuxPath) is not set. Relative paths are resolved against the workspace folder.",
                 "type": "string"
               },
               "ref": {
@@ -170,6 +170,10 @@
               },
               "type": {
                 "description": "Optional repository type used for matching (for example: 'githubenterprise').",
+                "type": "string"
+              },
+              "windowsPath": {
+                "description": "Windows-specific local directory for this repository mapping. Takes priority over 'path' on Windows.",
                 "type": "string"
               }
             },
@@ -285,5 +289,5 @@
     "test:module": "node tests/test-azure-expressions-module.js"
   },
   "type": "commonjs",
-  "version": "1.5.0"
+  "version": "1.6.0"
 }
