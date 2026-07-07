@@ -405,7 +405,7 @@ runTest('CLI liststeps: outputs steps for stage 1 job 1', () => {
 });
 
 runTest('CLI getscriptinfo: outputs JSON with scriptContent for bash step', () => {
-    const out = runCli(`getscriptinfo -stage 1 -job 1 -step 2 "${DEMO_PIPELINE}"`);
+    const out = runCli(`getscriptinfo --verbose -stage 1 -job 1 -step 2 "${DEMO_PIPELINE}"`);
     const json = JSON.parse(out);
     assert(json.success, 'expected success');
     assert(
