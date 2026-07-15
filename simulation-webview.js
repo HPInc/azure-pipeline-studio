@@ -430,7 +430,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 window.onerror=function(msg,src,line,col,err){var l=document.getElementById('pageLoader');if(l){l.innerHTML='<div style="color:#f47174;padding:20px;font-family:monospace;font-size:13px"><b>JS Error (line '+line+'):</b><br>'+msg+'<br><br>'+(err&&err.stack?err.stack.replace(/\\n/g,'<br>'):'')+'</div>';}return false;};
 window.addEventListener('unhandledrejection',function(e){var l=document.getElementById('pageLoader');if(l){l.innerHTML='<div style="color:#f47174;padding:20px;font-family:monospace;font-size:13px"><b>Unhandled Promise Rejection:</b><br>'+String(e.reason)+'</div>';}});
 const vscode=acquireVsCodeApi();let varCount=0;let libVarCount=0;let taskFilter=null;let lastResults=null;
-const _b64Decode=(str)=>{try{return new TextDecoder().decode(Uint8Array.from(atob(str),c=>c.charCodeAt(0)));}catch(e){console.error('b64Decode error:',e,str&&str.slice(0,40));return str;}};const dataEl=document.getElementById('__aps_data');function _safeJsonParse(b64,fallback){try{var dec=_b64Decode(b64||'');console.log('[aps] decoded (first 80):', dec&&dec.slice(0,80));return JSON.parse(dec);}catch(e){console.error('[aps] _safeJsonParse failed, b64=',b64&&b64.slice(0,40),e);return fallback;}}const _rawKnownVars=_safeJsonParse(dataEl.getAttribute('data-known-vars'),{});const knownVars={azure:Array.isArray(_rawKnownVars.azure)?_rawKnownVars.azure:[],pipeline:Array.isArray(_rawKnownVars.pipeline)?_rawKnownVars.pipeline:[],groups:Array.isArray(_rawKnownVars.groups)?_rawKnownVars.groups:[]};const _rawSavedVars=_safeJsonParse(dataEl.getAttribute('data-saved-vars'),{});const savedVars={overrides:(_rawSavedVars.overrides&&typeof _rawSavedVars.overrides==='object')?_rawSavedVars.overrides:{},libData:Array.isArray(_rawSavedVars.libData)?_rawSavedVars.libData:[],toolPaths:(_rawSavedVars.toolPaths&&typeof _rawSavedVars.toolPaths==='object')?_rawSavedVars.toolPaths:{}};const topLevelParameterDefinitions=_safeJsonParse(dataEl.getAttribute('data-top-params'),[]);window._expandedSteps=_safeJsonParse(dataEl.getAttribute('data-expanded-steps'),[]);window._originalSourceText=_safeJsonParse(dataEl.getAttribute('data-source-text'),'');window._pipelineDir=dataEl.getAttribute('data-pipeline-dir')||'';console.log('[aps] init: stages=',document.querySelectorAll('.sidebar-stage').length,'knownVars.azure=',knownVars.azure.length,'topLevelParams=',topLevelParameterDefinitions.length);function _normParamType(t){return String(t||'string').trim().toLowerCase();}
+const _b64Decode=(str)=>{try{return new TextDecoder().decode(Uint8Array.from(atob(str),c=>c.charCodeAt(0)));}catch(e){console.error('b64Decode error:',e,str&&str.slice(0,40));return str;}};const dataEl=document.getElementById('__aps_data');function _safeJsonParse(b64,fallback){try{var dec=_b64Decode(b64||'');console.log('[aps] decoded (first 80):', dec&&dec.slice(0,80));return JSON.parse(dec);}catch(e){console.error('[aps] _safeJsonParse failed, b64=',b64&&b64.slice(0,40),e);return fallback;}}const _rawKnownVars=_safeJsonParse(dataEl.getAttribute('data-known-vars'),{});const knownVars={azure:Array.isArray(_rawKnownVars.azure)?_rawKnownVars.azure:[],pipeline:Array.isArray(_rawKnownVars.pipeline)?_rawKnownVars.pipeline:[],groups:Array.isArray(_rawKnownVars.groups)?_rawKnownVars.groups:[]};const _rawSavedVars=_safeJsonParse(dataEl.getAttribute('data-saved-vars'),{});const savedVars={overrides:(_rawSavedVars.overrides&&typeof _rawSavedVars.overrides==='object')?_rawSavedVars.overrides:{},libData:Array.isArray(_rawSavedVars.libData)?_rawSavedVars.libData:[],toolPaths:(_rawSavedVars.toolPaths&&typeof _rawSavedVars.toolPaths==='object')?_rawSavedVars.toolPaths:{}};const topLevelParameterDefinitions=_safeJsonParse(dataEl.getAttribute('data-top-params'),[]);window._expandedSteps=_safeJsonParse(dataEl.getAttribute('data-expanded-steps'),[]);window._originalSourceText=_safeJsonParse(dataEl.getAttribute('data-source-text'),'');window._pipelineDir=dataEl.getAttribute('data-pipeline-dir')||'';console.log('[aps] init: stages=',document.querySelectorAll('.sidebar-stage').length,'knownVars.azure=',knownVars.azure.length,'topLevelParams=',topLevelParameterDefinitions.length);console.log('[aps-diag] webview script loaded — WSL_PROXY_FILTER_MARKER=2026-07-15-v4');function _normParamType(t){return String(t||'string').trim().toLowerCase();}
 function _asBool(v){if(typeof v==='boolean')return v;var s=String(v||'').trim().toLowerCase();return s==='true'||s==='1'||s==='yes';}
 function _stringifyParamValue(v){if(v===undefined||v===null)return '';if(typeof v==='object'){try{return JSON.stringify(v);}catch(_){return String(v);}}return String(v);}
 function _createParamControl(def){
@@ -902,6 +902,8 @@ function runSimulation(){
   }catch(e){console.error('[aps] runSimulation error',e);document.getElementById('resultsPanel').innerHTML='';document.getElementById('statusMsg').textContent='⚠ JS error: '+String(e);document.getElementById('runBtn').disabled=false;}
 }
 function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+const RE_WSL_PROXY_WARNING=/\\s*(?:wsl:\\s*A localhost proxy configuration was detected[^\\n]*|WSL in NAT mode does not support localhost proxies[^\\n]*)\\n?/gi;
+function stripWslProxyWarning(s){return String(s||'').replace(/\\u0000/g,'').replace(RE_WSL_PROXY_WARNING,'');}
 let _rsmState={si:0,ji:0,ti:0};
 function _extractRefsFromYaml(sourceText,searchContext){
   const params=new Set(),vars=new Set(),macros=new Set();
@@ -1211,8 +1213,17 @@ function _populateSdpResult(sdpEl,si,ji,ti){
   var res=step.result||'Skipped';
   var col=COL[res]||'#888';
   var body='<div style="margin-bottom:10px"><span style="color:'+col+'">'+(ICON[res]||'?')+' '+escHtml(res)+'</span></div>';
-  if(step.stdout&&step.stdout.trim()){body+='<div class="sdp-section"><div class="sdp-section-title">Output</div><pre class="sdp-script">'+escHtml(step.stdout.trim())+'</pre></div>';}
-  if(step.stderr&&step.stderr.trim()){body+='<div class="sdp-section"><div class="sdp-section-title">Errors / Warnings</div><pre class="sdp-script" style="color:#f47174">'+escHtml(step.stderr.trim())+'</pre></div>';}
+  var sdpStdout=stripWslProxyWarning(step.stdout).trim();
+  var sdpStderr=stripWslProxyWarning(step.stderr).trim().split('\\n').filter(function(l){
+    var t=l.trim();
+    if(!t)return false;
+    if(/^##vso\\[/i.test(t)){
+      return /^##vso\\[task\\.logissue\\s+type=(error|warning)[^\\]]*\\]/i.test(t)||/^##vso\\[task\\.debug\\]/i.test(t);
+    }
+    return true;
+  }).join('\\n');
+  if(sdpStdout){body+='<div class="sdp-section"><div class="sdp-section-title">Output</div><pre class="sdp-script">'+escHtml(sdpStdout)+'</pre></div>';}
+  if(sdpStderr){body+='<div class="sdp-section"><div class="sdp-section-title">Errors / Warnings</div><pre class="sdp-script" style="color:#f47174">'+escHtml(sdpStderr)+'</pre></div>';}
   var ov=Object.entries(step.outputVariables||{});
   if(ov.length)body+='<div class="sdp-section"><div class="sdp-section-title">Output Variables</div><table class="sdp-table">'+ov.map(function(kv){return '<tr><td class="sdp-k">'+escHtml(kv[0])+'</td><td class="sdp-v">'+escHtml(String(kv[1]))+'</td></tr>';}).join('')+'</table></div>';
   var hd=sdpEl.querySelector('.sdp-hd');
@@ -1274,12 +1285,14 @@ function renderResults(r){
         const icon=ICON[res]||'?';
         const col=COL[res]||'#888';
                 html+='<div class="res-step" data-stage-index="'+si+'" data-job-index="'+ji+'" data-step-index="'+ti+'"><span class="res-icon" style="color:'+col+'">'+icon+'</span><span class="res-step-name">'+escHtml(step.displayName||'')+'</span>';
-        if(step.stdout&&step.stdout.trim()){
-                    const lines=step.stdout.split('\\n').filter(l=>shouldShowStdoutLine(l)).map(l=>formatRenderedLine(l,false)).join('');
+        const cleanStdout=stripWslProxyWarning(step.stdout);
+        const cleanStderr=stripWslProxyWarning(step.stderr);
+        if(cleanStdout&&cleanStdout.trim()){
+                    const lines=cleanStdout.split('\\n').filter(l=>shouldShowStdoutLine(l)).map(l=>formatRenderedLine(l,false)).join('');
           html+='<div class="res-out">'+lines+'</div>';
         }
-                if(step.stderr&&step.stderr.trim()){
-                                        const errLines=step.stderr.split('\\n').filter(l=>normalizeLogLine(l)&&!isHiddenTraceNoise(l)).map(l=>formatRenderedLine(l,true)).join('');
+                if(cleanStderr&&cleanStderr.trim()){
+                                        const errLines=cleanStderr.split('\\n').filter(l=>normalizeLogLine(l)&&!isHiddenTraceNoise(l)).map(l=>formatRenderedLine(l,true)).join('');
                     html+='<div class="res-out">'+errLines+'</div>';
                 }
         const ov=Object.entries(step.outputVariables||{});

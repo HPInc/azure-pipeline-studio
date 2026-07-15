@@ -22,6 +22,24 @@ const CHECKOUT_TASK = '6d15af64-176c-496d-b583-fd2ae21d4df4@1';
 // Pre-compiled regex for Azure Pipelines variable substitution syntax: $(VarName)
 const RE_SUBSTITUTE_VARS = /\$\(([A-Za-z_][A-Za-z0-9_.-]*)\)/g;
 
+// wsl.exe prints this diagnostic banner to its own stderr on some Windows hosts
+// (localhost proxy detected but not mirrored into WSL NAT). It is not related
+// to the simulated pipeline and must never surface in step output. The banner
+// may end up concatenated onto the end of unrelated output (no guaranteed
+// leading newline), so this pattern is intentionally not anchored to line start.
+const RE_WSL_PROXY_WARNING =
+    /\s*(?:wsl:\s*A localhost proxy configuration was detected[^\n]*|WSL in NAT mode does not support localhost proxies[^\n]*)\n?/gi;
+
+function stripWslProxyWarning(text) {
+    // wsl.exe sometimes writes this banner to its stderr as UTF-16LE while the
+    // rest of the stream is UTF-8; when captured with encoding:'utf8' each
+    // character ends up interleaved with a stray NUL byte (e.g. "w\0s\0l\0:\0"),
+    // which defeats the regex above. NUL bytes never legitimately appear in
+    // step output, so stripping them first fixes the encoding mismatch.
+    const str = String(text || '').replace(/\u0000/g, '');
+    return str.replace(RE_WSL_PROXY_WARNING, '');
+}
+
 /**
  * Rewrite bash-specific constructs to POSIX sh / BusyBox ash equivalents:
  *
@@ -183,6 +201,7 @@ class PipelineSimulator {
             { name: 'git', onlyIfMissing: true },
         ];
         this._shimDir = null;
+        this._failedConfiguredShells = new Set();
         this._publishedArtifacts = [];
         this._feedPublishes = [];
         this._releaseStageNugetFeed = null;
@@ -366,6 +385,11 @@ class PipelineSimulator {
         const cacheKey = String(shellPath || 'default');
         if (!this._busyboxCache) this._busyboxCache = new Map();
         if (this._busyboxCache.has(cacheKey)) return this._busyboxCache.get(cacheKey);
+        // WSL is a full Linux environment, never BusyBox — skip the check to avoid WSL startup
+        if (shellPath && /[/\\]wsl\.exe$/i.test(shellPath)) {
+            this._busyboxCache.set(cacheKey, false);
+            return false;
+        }
         let result = false;
         try {
             const r = spawnSync(shellPath || 'bash', ['--version'], { encoding: 'utf8', timeout: 2000 });
@@ -1151,6 +1175,14 @@ class PipelineSimulator {
             stepResult.stdout = `[skip] publish ${stepDoc.publish}`;
         }
 
+        // Strip WSL proxy warning from step output regardless of which code path set it
+        if (stepResult.stderr) {
+            stepResult.stderr = stripWslProxyWarning(stepResult.stderr);
+        }
+        if (stepResult.stdout) {
+            stepResult.stdout = stripWslProxyWarning(stepResult.stdout);
+        }
+
         return stepResult;
     }
 
@@ -1335,6 +1367,23 @@ class PipelineSimulator {
         return args;
     }
 
+    /**
+     * Look up a variable by name, case-insensitively, matching Azure DevOps
+     * behaviour (variable names are not case-sensitive — e.g. a variable set
+     * as VERSION is also reachable via $(version) or $(Version)).
+     * Exact-case matches win when present; otherwise the first case-insensitive
+     * match is returned. Returns undefined if no match exists at all.
+     */
+    _lookupVariable(variables, name) {
+        if (!variables || !name) return undefined;
+        if (Object.prototype.hasOwnProperty.call(variables, name)) return variables[name];
+        const lower = name.toLowerCase();
+        for (const key of Object.keys(variables)) {
+            if (key.toLowerCase() === lower) return variables[key];
+        }
+        return undefined;
+    }
+
     _resolveConditionValue(token, variables) {
         const v = String(token || '').trim();
         if (/^'.*'$/.test(v) || /^".*"$/.test(v)) {
@@ -1344,12 +1393,12 @@ class PipelineSimulator {
 
         const varMatch = /^variables\[['"]([^'"]+)['"]\]$/i.exec(v);
         if (varMatch) {
-            const key = varMatch[1];
-            return Object.prototype.hasOwnProperty.call(variables, key) ? variables[key] : '';
+            const found = this._lookupVariable(variables, varMatch[1]);
+            return found !== undefined ? found : '';
         }
 
-        if (Object.prototype.hasOwnProperty.call(variables, v)) return variables[v];
-        return v;
+        const found = this._lookupVariable(variables, v);
+        return found !== undefined ? found : v;
     }
 
     /**
@@ -1455,14 +1504,14 @@ class PipelineSimulator {
         const varsPrefixMatch = /^variables\.(.+)$/i.exec(inner);
         if (varsPrefixMatch) {
             const varName = varsPrefixMatch[1].trim();
-            return Object.prototype.hasOwnProperty.call(variables, varName) ? variables[varName] : '';
+            const found = this._lookupVariable(variables, varName);
+            return found !== undefined ? found : '';
         }
 
         // Direct lookup: handles stageDependencies.S.J.outputs['s.v'],
         // dependencies.J.outputs['s.v'], and any other keyed expression.
-        if (Object.prototype.hasOwnProperty.call(variables, inner)) {
-            return variables[inner];
-        }
+        const found = this._lookupVariable(variables, inner);
+        if (found !== undefined) return found;
 
         return ''; // Unresolved runtime expression → empty string
     }
@@ -1515,14 +1564,13 @@ class PipelineSimulator {
         const varsPrefixMatch = /^variables\.(.+)$/i.exec(arg);
         if (varsPrefixMatch) {
             const resolvedKey = varsPrefixMatch[1].trim();
-            const resolvedValue = variables[resolvedKey];
+            const resolvedValue = this._lookupVariable(variables, resolvedKey);
             return resolvedValue !== undefined && resolvedValue !== null ? resolvedValue : '';
         }
 
         // Direct lookup: stageDependencies.S.J.outputs['key'], etc.
-        if (Object.prototype.hasOwnProperty.call(variables, arg)) {
-            return variables[arg];
-        }
+        const found = this._lookupVariable(variables, arg);
+        if (found !== undefined) return found;
 
         return '';
     }
@@ -1545,9 +1593,8 @@ class PipelineSimulator {
      */
     _substituteVariables(text, variables) {
         return text.replace(RE_SUBSTITUTE_VARS, (match, name) => {
-            if (Object.prototype.hasOwnProperty.call(variables, name)) {
-                return variables[name];
-            }
+            const found = this._lookupVariable(variables, name);
+            if (found !== undefined) return found;
             // All-lowercase single word not in variables is likely a shell
             // built-in (e.g. pwd, date, whoami) → leave intact.
             if (/^[a-z][a-z0-9_]*$/.test(name)) return match;
@@ -1575,9 +1622,8 @@ class PipelineSimulator {
             return undefined;
         }
 
-        if (Object.prototype.hasOwnProperty.call(variables, trimmed)) {
-            return variables[trimmed];
-        }
+        const found = this._lookupVariable(variables, trimmed);
+        if (found !== undefined) return found;
 
         // Also support env-style names (e.g. BUILD_ARTIFACTSTAGINGDIRECTORY)
         // for task inputs that use ${...} syntax.
@@ -1709,6 +1755,54 @@ class PipelineSimulator {
                     '    fi',
                     '    _aps_trace_resume',
                     '}',
+                    '',
+                    '# Provide cygpath fallback for Linux/WSL environments where Cygwin is not installed',
+                    'if ! command -v cygpath >/dev/null 2>&1; then',
+                    '    cygpath() {',
+                    '        local _mode="" _target=""',
+                    '        for _arg in "$@"; do',
+                    '            case "$_arg" in',
+                    '                -u|-w|-m) _mode="$_arg" ;;',
+                    '                -*) ;;',
+                    '                *) _target="$_arg" ;;',
+                    '            esac',
+                    '        done',
+                    '        [ -z "$_target" ] && return 0',
+                    '        if [ "$_mode" = "-w" ] || [ "$_mode" = "-m" ]; then',
+                    '            printf "%s\\n" "$_target"',
+                    '        elif printf "%s" "$_target" | grep -qE "^[A-Za-z]:[/\\\\]"; then',
+                    '            _drive=$(printf "%s" "$_target" | cut -c1 | tr "[:upper:]" "[:lower:]")',
+                    '            _rest="${_target:2}"',
+                    '            _rest="${_rest#/}"; _rest="${_rest#\\\\}"',
+                    '            _rest=$(printf "%s" "$_rest" | tr "\\134" "/")',
+                    '            printf "/%s/%s\\n" "$_drive" "$_rest"',
+                    '        else',
+                    '            printf "%s\\n" "$(printf "%s" "$_target" | tr "\\134" "/")"',
+                    '        fi',
+                    '    }',
+                    'fi',
+                    '',
+                    '# Ensure Unix find is used rather than Windows FIND.EXE (which does not support -name/-type etc.)',
+                    'if ! find --version >/dev/null 2>&1 && command -v /usr/bin/find >/dev/null 2>&1; then',
+                    '    find() { /usr/bin/find "$@"; }',
+                    'fi',
+                    '',
+                    '# Mock jq if not available (e.g. Git Bash on Windows)',
+                    'if ! command -v jq >/dev/null 2>&1; then',
+                    "    jq() { printf 'null\\n'; return 0; }",
+                    'fi',
+                    '',
+                    '# Mock python3/python if not available (e.g. Git Bash on Windows)',
+                    'if ! command -v python3 >/dev/null 2>&1; then',
+                    '    if command -v python >/dev/null 2>&1; then',
+                    '        python3() { python "$@"; }',
+                    '    else',
+                    "        python3() { printf '[sim] python3 not available\\n' >&2; return 0; }",
+                    '    fi',
+                    'fi',
+                    'if ! command -v python >/dev/null 2>&1; then',
+                    '    python() { python3 "$@"; }',
+                    'fi',
                     '',
                 ].join('\n');
                 const debugInjection = this.debugScript ? 'set -x\n' : '';
@@ -1917,7 +2011,12 @@ class PipelineSimulator {
                     ? tmpFile.replace(/^([A-Za-z]):\\/, (_, d) => `/${d.toLowerCase()}/`).replace(/\\/g, '/')
                     : tmpFile;
 
-            const configuredShell = this.executablePaths[shell];
+            const _rawConfiguredShell = this.executablePaths[shell];
+            // Skip a configured shell that already failed in this simulation run — go straight to Git Bash.
+            const configuredShell =
+                _rawConfiguredShell && this._failedConfiguredShells.has(_rawConfiguredShell)
+                    ? null
+                    : _rawConfiguredShell;
             // Derive Git Bash candidates. Modern Git for Windows puts bash
             // in usr\bin\bash.exe (not bin\bash.exe). Also derive path from
             // the configured git executable if available.
@@ -1996,20 +2095,48 @@ class PipelineSimulator {
                 const _extraExports = Object.entries(extraEnv)
                     .map(([k, v]) => `export ${k}=${JSON.stringify(_toWslPath(String(v)))}`)
                     .join('; ');
-                const _cmd = _extraExports
-                    ? `{ ${_extraExports}; cd ${JSON.stringify(wslCwd)} && bash ${JSON.stringify(wslScript)}; } 2>&1`
-                    : `{ cd ${JSON.stringify(wslCwd)} && bash ${JSON.stringify(wslScript)}; } 2>&1`;
-                // Use 2>&1 inside WSL: WSL's stderr pipe is unreliable from
-                // Node.js spawnSync; merging stderr into stdout ensures all
-                // script output (including set -x trace) is captured.
+                // Reading WSL's stderr pipe directly from Node.js spawnSync is
+                // unreliable, so the script's stdout/stderr are each redirected
+                // to a temp file inside WSL, then streamed back through the
+                // single (reliable) stdout channel of this wrapper command,
+                // delimited by unique markers. This preserves which lines were
+                // really stdout vs stderr instead of merging everything into
+                // one stream.
+                const _token = `aps${Date.now()}${Math.random().toString(36).slice(2)}`;
+                const _outFile = `/tmp/${_token}.out`;
+                const _errFile = `/tmp/${_token}.err`;
+                const _marker = `__APS_MARKER_${_token}__`;
+                const _runScript = `cd ${JSON.stringify(wslCwd)} && bash ${JSON.stringify(wslScript)} >${JSON.stringify(_outFile)} 2>${JSON.stringify(_errFile)}`;
+                const _cmd =
+                    `${_extraExports ? _extraExports + '; ' : ''}` +
+                    `${_runScript}; _aps_exit=$?; ` +
+                    `printf '%s\\n' "${_marker}EXIT:$_aps_exit"; ` +
+                    `printf '%s\\n' "${_marker}OUT_START"; cat ${JSON.stringify(_outFile)} 2>/dev/null; printf '%s\\n' "${_marker}OUT_END"; ` +
+                    `printf '%s\\n' "${_marker}ERR_START"; cat ${JSON.stringify(_errFile)} 2>/dev/null; printf '%s\\n' "${_marker}ERR_END"; ` +
+                    `rm -f ${JSON.stringify(_outFile)} ${JSON.stringify(_errFile)}`;
                 const raw = spawnSync(_wslExe, ['--', 'bash', '-c', _cmd], {
                     env,
                     encoding: 'utf8',
                     timeout: 60000,
                 });
-                // Expose the merged output as stderr so it appears as [stderr]
-                // lines in the simulation panel (matching normal bash behaviour).
-                return { ...raw, stdout: '', stderr: (raw.stdout || '') + (raw.stderr || '') };
+                const _rawOut = raw.stdout || '';
+                const _extractBetween = (text, startMarker, endMarker) => {
+                    const startIdx = text.indexOf(startMarker);
+                    if (startIdx === -1) return '';
+                    const contentStart = text.indexOf('\n', startIdx) + 1;
+                    const endIdx = contentStart > 0 ? text.indexOf(endMarker, contentStart) : -1;
+                    if (contentStart === 0 || endIdx === -1) return '';
+                    return text.slice(contentStart, endIdx);
+                };
+                const _exitMatch = new RegExp(`${_marker}EXIT:(-?\\d+)`).exec(_rawOut);
+                const _stdout = _extractBetween(_rawOut, `${_marker}OUT_START`, `${_marker}OUT_END`);
+                const _stderr = _extractBetween(_rawOut, `${_marker}ERR_START`, `${_marker}ERR_END`);
+                return {
+                    ...raw,
+                    status: _exitMatch ? parseInt(_exitMatch[1], 10) : raw.status,
+                    stdout: stripWslProxyWarning(_stdout),
+                    stderr: stripWslProxyWarning(_stderr),
+                };
             };
             const _wslAvailable =
                 process.platform === 'win32' &&
@@ -2069,6 +2196,7 @@ class PipelineSimulator {
 
                 // If still failing, try Git Bash / WSL which support full bash syntax.
                 if (run.status !== 0) {
+                    this._failedConfiguredShells.add(configuredShell);
                     fs.writeFileSync(tmpFile, scriptContent, { mode: 0o755 });
                     process.stderr.write(
                         `[aps-gitbash] BusyBox failed (status=${run.status}), trying Git Bash / WSL\n`
@@ -2243,6 +2371,8 @@ class PipelineSimulator {
                     }
                 }
             }
+            if (_result.stderr) _result.stderr = stripWslProxyWarning(_result.stderr);
+            if (_result.stdout) _result.stdout = stripWslProxyWarning(_result.stdout);
             return _result;
         } finally {
             if (!keepTmpFile) {
@@ -2323,22 +2453,11 @@ class PipelineSimulator {
      * shim scripts for tools listed in this.mockTools that aren't on the PATH.
      */
     _isToolOnPath(name) {
-        // On Windows, check accessibility from the bash context that will actually run scripts,
-        // since the Windows PATH (used by `where`) differs from what bash sees.
+        // On Windows, use 'where' to check tool availability — avoids spawning WSL (which
+        // prints the localhost-proxy warning on every startup) just to check for a tool.
         if (process.platform === 'win32') {
-            const configuredBash = this.executablePaths && this.executablePaths['bash'];
-            const bashCandidates = [
-                configuredBash,
-                'bash',
-                'C:\\Program Files\\Git\\bin\\bash.exe',
-                process.env.ProgramFiles ? `${process.env.ProgramFiles}\\Git\\bin\\bash.exe` : null,
-            ].filter(Boolean);
-            for (const bash of bashCandidates) {
-                const result = spawnSync(bash, ['-c', `command -v ${name}`], { encoding: 'utf8' });
-                if (result.status === 0) return true;
-                if (!result.error || result.error.code !== 'ENOENT') break;
-            }
-            return false;
+            const result = spawnSync('where', [name], { encoding: 'utf8' });
+            return result.status === 0;
         }
         const result = spawnSync('which', [name], { encoding: 'utf8' });
         return result.status === 0;
@@ -4351,7 +4470,9 @@ function printSimulationResults(results, { verbose = false } = {}) {
             /^\+{1,3}\s+_APS_TRACE_WAS_ON=/.test(raw) ||
             /^\+{1,3}\s+set\s+\+x\b/.test(raw) ||
             /^\+{1,3}\s+set\s+-x\b/.test(raw) ||
-            /^\+{1,3}\s+exit\s+1$/.test(raw)
+            /^\+{1,3}\s+exit\s+1$/.test(raw) ||
+            /^wsl:\s+A localhost proxy configuration was detected/i.test(raw) ||
+            /^WSL in NAT mode does not support localhost proxies/i.test(raw)
         );
     };
 
@@ -4392,9 +4513,16 @@ function printSimulationResults(results, { verbose = false } = {}) {
                         .forEach((l) => console.log(`      ${formatLogLine(l)}`));
                 }
                 if (stepResult.stderr) {
-                    stepResult.stderr
+                    const _isWslProxyLine = (l) => {
+                        const r = String(l || '').trim();
+                        return (
+                            r.startsWith('wsl: A localhost proxy configuration was detected') ||
+                            r.startsWith('WSL in NAT mode does not support localhost proxies')
+                        );
+                    };
+                    String(stepResult.stderr)
                         .split('\n')
-                        .filter((l) => l.trim() && (verbose || !isHiddenTraceNoise(l)))
+                        .filter((l) => l.trim() && !_isWslProxyLine(l) && (verbose || !isHiddenTraceNoise(l)))
                         .forEach((l) => console.error(`      ${formatLogLine(l, true)}`));
                 }
                 const localVars = Object.entries(stepResult.variables).filter(
