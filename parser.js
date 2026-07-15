@@ -12,6 +12,7 @@ function stripInternalProperties(node) {
         node.forEach(stripInternalProperties);
     } else if (node && typeof node === 'object') {
         delete node.__templateParams;
+        delete node.__templateFile;
         Object.values(node).forEach(stripInternalProperties);
     }
 }

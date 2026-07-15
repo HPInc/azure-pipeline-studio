@@ -5,6 +5,15 @@ All notable changes to Azure Pipeline Studio will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.1] - 2026-07-16
+
+### Fixed
+- **Simulation: WSL proxy banner no longer leaks into output**: The "A localhost proxy configuration was detected..." banner that `wsl.exe` sometimes writes to stderr as UTF-16LE (interleaved with NUL bytes) now bypasses every stripping filter correctly instead of surviving in the simulation output.
+- **Expansion: internal `__templateFile` metadata no longer leaks into expanded YAML**: Fixed the expanded-YAML preview (CLI, Expand Pipeline, and diagram stage view) showing an internal `__templateFile` bookkeeping field alongside template parameters.
+- **Simulation: benign `##vso` logging commands no longer shown as errors**: The step-detail panel's "Errors / Warnings" section no longer flags `##vso[task.setvariable]`/`##vso[build.updatebuildnumber]` lines in red for steps that actually succeeded.
+- **Simulation: real stdout/stderr are now split for WSL-executed steps**: Previously, running a step's script through WSL merged its actual stdout and stderr into a single stream and labeled all of it as stderr, causing normal script output to be misclassified as errors/warnings. Output is now captured separately so only genuine stderr content is flagged.
+- **Simulation: variable names are now resolved case-insensitively**: Matching real Azure Pipelines behavior, a variable set as `VERSION` is now also correctly resolved when referenced as `$(version)` or `$(Version)` in conditions, task inputs, environment blocks, and script substitution — previously only bash script macro expansion handled this correctly.
+
 ## [1.6.0] - 2026-07-07
 
 ### Added
