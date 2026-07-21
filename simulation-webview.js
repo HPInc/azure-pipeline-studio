@@ -194,9 +194,21 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 .settings-panel.collapsed #settingsContent{display:none!important}
 .settings-panel-title{padding:10px 20px 8px;flex-shrink:0;border-bottom:1px solid #333}
 #settingsContent{padding:8px 20px 12px;overflow-y:auto;flex:1}
-.body{flex:1;overflow-y:auto;padding:16px 20px}
+.body{flex:1;display:flex;flex-direction:column;overflow:hidden;padding:16px 20px}
 .body.hidden{display:none}
-.body-toolbar{display:flex;justify-content:flex-end;align-items:center;margin-bottom:4px}
+.body-toolbar{display:flex;justify-content:flex-end;align-items:center;margin-bottom:4px;background:#1e1e1e;padding:4px 0;flex:0 0 auto}
+#resultsViewport{flex:1;min-height:0;overflow-y:auto;padding-top:4px}
+#stageContents{flex:0 0 auto}
+#resultsPanel{overflow:visible}
+.results-search{display:flex;align-items:center;gap:8px;margin-right:auto;min-width:300px;flex-wrap:nowrap}
+.results-search-hidden{display:none}
+.results-search input{background:#2d2d30;border:1px solid #3e3e42;color:#e0e0e0;padding:5px 8px;border-radius:3px;font-size:.82em;width:100%;min-width:220px}
+.results-search input:focus{outline:none;border-color:#0078d4}
+.results-search-status{font-size:.76em;color:#888;white-space:nowrap}
+.results-search-clear{background:#2d2d30;border:1px solid #3e3e42;color:#aaa;padding:4px 8px;border-radius:3px;cursor:pointer;font-size:.75em;flex-shrink:0;white-space:nowrap}
+.results-search-nav{min-width:86px;text-align:center}
+.results-search-clear:hover{border-color:#555;color:#ddd}
+.results-search-clear:disabled{opacity:1;cursor:not-allowed;color:#777;border-color:#444;background:#2a2a2c}
 .stage-content{display:none}
 .stage-content.active{display:block}
 .stage-content-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:12px;border-bottom:2px solid #0078d4}
@@ -302,11 +314,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 .res-step{margin:4px 0 4px 20px;font-size:1.02em}
 .res-icon{margin-right:6px;font-size:1.04em}
 .res-step-name{color:#ccc}
-.res-out{margin:3px 0 3px 20px;font-family:monospace;font-size:.96em;color:#9fa8b0;white-space:pre-wrap;word-break:break-all;max-height:min(65vh,calc(100vh - 260px));overflow-y:auto;background:#1a1a1a;padding:5px 8px;border-radius:2px}
+.res-out{margin:3px 0 3px 20px;font-family:monospace;font-size:.96em;color:#9fa8b0;white-space:pre-wrap;word-break:break-all;max-height:min(65vh,calc(100vh - 260px));overflow-y:auto;background:#1a1a1a;padding:5px 8px;border-radius:2px;scroll-padding-top:10px}
+.res-step,.res-out{scroll-margin-top:var(--aps-sticky-offset,8px)}
 .res-vars{margin:2px 0 2px 20px}
 .res-var{font-size:.94em;color:#8f98a1;font-family:monospace}
 .res-out-var{color:#7eb8d4}
 .res-vk{color:#444;margin-right:3px}
+.res-search-hit{background:#f3d56b;color:#111;padding:0 1px;border-radius:2px}
+.res-search-hit-active{outline:1px solid #d4a100;box-shadow:0 0 0 1px rgba(212,161,0,.25)}
 .res-summary{margin-top:12px;padding:8px 10px;background:#252526;border:1px solid #3e3e42;border-radius:3px;font-size:.84em;font-weight:600}
 @keyframes aps-spin{to{transform:rotate(360deg)}}
 .sim-loading{display:flex;align-items:center;gap:10px;padding:24px 0;color:#888;font-size:.9em}
@@ -396,9 +411,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
       </div>
     </div>
         <div class="body" id="renderBody">
-            <div class="body-toolbar"><button class="res-browser-btn" id="browserBtn" onclick="openResultsInBrowser()" style="display:none">&#127760; Open in Browser</button></div>
-      <div id="stageContents">${stageContentsHtml || '<div class="empty-msg">No stages found</div>'}</div>
-      <div id="resultsPanel"></div>
+            <div class="body-toolbar"><div class="results-search results-search-hidden" id="resultsSearchBar"><input id="resultsSearchInput" type="text" placeholder="Search output messages..." oninput="onResultsSearchInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();if(event.shiftKey){findPrevSearchHit();}else{findNextSearchHit();}}" disabled><button class="results-search-clear" id="resultsSearchClearBtn" onclick="clearResultsSearch()" disabled>Clear</button><button class="results-search-clear results-search-nav" id="resultsSearchPrevBtn" onclick="findPrevSearchHit()" disabled>Find Prev</button><button class="results-search-clear results-search-nav" id="resultsSearchNextBtn" onclick="findNextSearchHit()" disabled>Find Next</button><span class="results-search-status" id="resultsSearchStatus"></span></div><button class="res-browser-btn" id="browserBtn" onclick="openResultsInBrowser()" style="display:none">&#127760; Open in Browser</button></div>
+            <div id="resultsViewport"><div id="stageContents">${stageContentsHtml || '<div class="empty-msg">No stages found</div>'}</div><div id="resultsPanel"></div></div>
     </div>
   </div>
 </div>
@@ -438,7 +452,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 <script>
 window.onerror=function(msg,src,line,col,err){var l=document.getElementById('pageLoader');if(l){l.innerHTML='<div style="color:#f47174;padding:20px;font-family:monospace;font-size:13px"><b>JS Error (line '+line+'):</b><br>'+msg+'<br><br>'+(err&&err.stack?err.stack.replace(/\\n/g,'<br>'):'')+'</div>';}return false;};
 window.addEventListener('unhandledrejection',function(e){var l=document.getElementById('pageLoader');if(l){l.innerHTML='<div style="color:#f47174;padding:20px;font-family:monospace;font-size:13px"><b>Unhandled Promise Rejection:</b><br>'+String(e.reason)+'</div>';}});
-const vscode=acquireVsCodeApi();let varCount=0;let libVarCount=0;let taskFilter=null;let lastResults=null;
+const vscode=acquireVsCodeApi();let varCount=0;let libVarCount=0;let taskFilter=null;let lastResults=null;let searchMatchIndex=-1;let searchMatchTerm='';
 const _b64Decode=(str)=>{try{return new TextDecoder().decode(Uint8Array.from(atob(str),c=>c.charCodeAt(0)));}catch(e){console.error('b64Decode error:',e,str&&str.slice(0,40));return str;}};const dataEl=document.getElementById('__aps_data');function _safeJsonParse(b64,fallback){try{var dec=_b64Decode(b64||'');console.log('[aps] decoded (first 80):', dec&&dec.slice(0,80));return JSON.parse(dec);}catch(e){console.error('[aps] _safeJsonParse failed, b64=',b64&&b64.slice(0,40),e);return fallback;}}const _rawKnownVars=_safeJsonParse(dataEl.getAttribute('data-known-vars'),{});const knownVars={azure:Array.isArray(_rawKnownVars.azure)?_rawKnownVars.azure:[],pipeline:Array.isArray(_rawKnownVars.pipeline)?_rawKnownVars.pipeline:[],groups:Array.isArray(_rawKnownVars.groups)?_rawKnownVars.groups:[]};const _rawSavedVars=_safeJsonParse(dataEl.getAttribute('data-saved-vars'),{});const savedVars={overrides:(_rawSavedVars.overrides&&typeof _rawSavedVars.overrides==='object')?_rawSavedVars.overrides:{},libData:Array.isArray(_rawSavedVars.libData)?_rawSavedVars.libData:[],toolPaths:(_rawSavedVars.toolPaths&&typeof _rawSavedVars.toolPaths==='object')?_rawSavedVars.toolPaths:{},toolsDirectory:_rawSavedVars.toolsDirectory||null};const topLevelParameterDefinitions=_safeJsonParse(dataEl.getAttribute('data-top-params'),[]);window._expandedSteps=_safeJsonParse(dataEl.getAttribute('data-expanded-steps'),[]);window._originalSourceText=_safeJsonParse(dataEl.getAttribute('data-source-text'),'');window._pipelineDir=dataEl.getAttribute('data-pipeline-dir')||'';console.log('[aps] init: stages=',document.querySelectorAll('.sidebar-stage').length,'knownVars.azure=',knownVars.azure.length,'topLevelParams=',topLevelParameterDefinitions.length);console.log('[aps-diag] webview script loaded — WSL_PROXY_FILTER_MARKER=2026-07-15-v4');function _normParamType(t){return String(t||'string').trim().toLowerCase();}
 function _asBool(v){if(typeof v==='boolean')return v;var s=String(v||'').trim().toLowerCase();return s==='true'||s==='1'||s==='yes';}
 function _stringifyParamValue(v){if(v===undefined||v===null)return '';if(typeof v==='object'){try{return JSON.stringify(v);}catch(_){return String(v);}}return String(v);}
@@ -761,34 +775,198 @@ function updateSidebarResults(r){
         }
     }
 }
+function _getResultsSearchTerm(){
+    const input=document.getElementById('resultsSearchInput');
+    return input?String(input.value||'').trim().toLowerCase():'';
+}
+function _setSearchControlsEnabled(enabled){
+    const searchBar=document.getElementById('resultsSearchBar');
+    const input=document.getElementById('resultsSearchInput');
+    const clearBtn=document.getElementById('resultsSearchClearBtn');
+    const prevBtn=document.getElementById('resultsSearchPrevBtn');
+    const nextBtn=document.getElementById('resultsSearchNextBtn');
+    const status=document.getElementById('resultsSearchStatus');
+    const isEnabled=!!enabled;
+    if(searchBar)searchBar.classList.toggle('results-search-hidden',!isEnabled);
+    if(input)input.disabled=!isEnabled;
+    if(clearBtn)clearBtn.disabled=!isEnabled;
+    if(prevBtn)prevBtn.disabled=!isEnabled;
+    if(nextBtn)nextBtn.disabled=!isEnabled;
+    if(!isEnabled&&status)status.textContent='';
+}
+function _updateStickySearchOffset(){
+    const viewport=document.getElementById('resultsViewport');
+    if(!viewport)return;
+    viewport.style.setProperty('--aps-sticky-offset','8px');
+}
+function _clearActiveSearchHit(){
+    document.querySelectorAll('.res-search-hit-active').forEach(function(el){el.classList.remove('res-search-hit-active');});
+}
+function _collectVisibleSearchHits(){
+    const panel=document.getElementById('resultsPanel');
+    if(!panel)return[];
+    return Array.from(panel.querySelectorAll('.res-search-hit')).filter(function(el){
+        const step=el.closest('.res-step');
+        if(!step)return false;
+        return step.style.display!=='none';
+    });
+}
+function _setResultsSearchStatus(){
+    const status=document.getElementById('resultsSearchStatus');
+    if(!status)return;
+    const term=_getResultsSearchTerm();
+    if(!term){
+        status.textContent='';
+        _clearActiveSearchHit();
+        searchMatchIndex=-1;
+        searchMatchTerm='';
+        return;
+    }
+    const hits=_collectVisibleSearchHits();
+    if(!hits.length){
+        status.textContent='0 matches';
+        _clearActiveSearchHit();
+        searchMatchIndex=-1;
+        searchMatchTerm=term;
+        return;
+    }
+    if(searchMatchTerm!==term||searchMatchIndex<0||searchMatchIndex>=hits.length){
+        searchMatchIndex=0;
+    }
+    searchMatchTerm=term;
+    _clearActiveSearchHit();
+    const activeHit=hits[searchMatchIndex];
+    if(activeHit)activeHit.classList.add('res-search-hit-active');
+    status.textContent=String(searchMatchIndex+1)+' / '+String(hits.length)+' matches';
+}
+function _scrollSearchHitBelowToolbar(activeHit){
+    if(!activeHit)return;
+
+    const container=document.getElementById('resultsViewport');
+    const stepEl=activeHit.closest('.res-step')||activeHit;
+    const logPanel=activeHit.closest('.res-out');
+    const topOffset=8;
+
+    if(container){
+        const containerRect=container.getBoundingClientRect();
+        const stepRect=stepEl.getBoundingClientRect();
+        const containerTarget=container.scrollTop+(stepRect.top-containerRect.top)-topOffset;
+        container.scrollTop=Math.max(0,containerTarget);
+    }else if(typeof stepEl.scrollIntoView==='function'){
+        stepEl.scrollIntoView({block:'start',inline:'nearest',behavior:'auto'});
+    }
+
+    if(logPanel){
+        const logRect=logPanel.getBoundingClientRect();
+        const hitRectAfterBody=activeHit.getBoundingClientRect();
+        const logTarget=logPanel.scrollTop+(hitRectAfterBody.top-logRect.top)-10;
+        logPanel.scrollTop=Math.max(0,logTarget);
+    }
+
+    if(!container&&typeof activeHit.scrollIntoView==='function'){
+        activeHit.scrollIntoView({block:'start',inline:'nearest',behavior:'auto'});
+    }
+}
+function findNextSearchHit(){
+    const term=_getResultsSearchTerm();
+    if(!term){
+        _setResultsSearchStatus();
+        return;
+    }
+    const hits=_collectVisibleSearchHits();
+    if(!hits.length){
+        _setResultsSearchStatus();
+        return;
+    }
+    if(searchMatchTerm!==term||searchMatchIndex<0||searchMatchIndex>=hits.length){
+        searchMatchIndex=0;
+    }else{
+        searchMatchIndex=(searchMatchIndex+1)%hits.length;
+    }
+    searchMatchTerm=term;
+    _setResultsSearchStatus();
+    const refreshed=_collectVisibleSearchHits();
+    const activeHit=refreshed[searchMatchIndex];
+    _scrollSearchHitBelowToolbar(activeHit);
+}
+function findPrevSearchHit(){
+    const term=_getResultsSearchTerm();
+    if(!term){
+        _setResultsSearchStatus();
+        return;
+    }
+    const hits=_collectVisibleSearchHits();
+    if(!hits.length){
+        _setResultsSearchStatus();
+        return;
+    }
+    if(searchMatchTerm!==term||searchMatchIndex<0||searchMatchIndex>=hits.length){
+        searchMatchIndex=hits.length-1;
+    }else{
+        searchMatchIndex=(searchMatchIndex-1+hits.length)%hits.length;
+    }
+    searchMatchTerm=term;
+    _setResultsSearchStatus();
+    const refreshed=_collectVisibleSearchHits();
+    const activeHit=refreshed[searchMatchIndex];
+    _scrollSearchHitBelowToolbar(activeHit);
+}
+function onResultsSearchInput(){
+    if(lastResults){
+        renderResults(lastResults);
+        return;
+    }
+    applyTaskFilter();
+}
+function clearResultsSearch(){
+    const input=document.getElementById('resultsSearchInput');
+    if(input){
+        input.value='';
+        input.focus();
+    }
+    if(lastResults){
+        renderResults(lastResults);
+        return;
+    }
+    applyTaskFilter();
+}
 function applyTaskFilter(){
     const panel=document.getElementById('resultsPanel');
     if(!panel)return;
     const summary=panel.querySelector('.res-summary');
     const steps=panel.querySelectorAll('.res-step');
-    if(!steps.length)return;
-    if(!taskFilter){
-        panel.querySelectorAll('.res-stage,.res-job,.res-step').forEach(el=>{el.style.display='';});
-        if(summary)summary.style.display='';
+    if(!steps.length){
+        _setResultsSearchStatus();
         return;
     }
-    const s=String(taskFilter.stageIndex),j=String(taskFilter.jobIndex),t=String(taskFilter.stepIndex);
+    const term=_getResultsSearchTerm();
+    const hasTaskFilter=!!taskFilter;
+    const s=hasTaskFilter?String(taskFilter.stageIndex):'';
+    const j=hasTaskFilter?String(taskFilter.jobIndex):'';
+    const t=hasTaskFilter?String(taskFilter.stepIndex):'';
     steps.forEach(el=>{
-        const show=el.getAttribute('data-stage-index')===s&&el.getAttribute('data-job-index')===j&&el.getAttribute('data-step-index')===t;
+        const matchesTask=!hasTaskFilter||(
+            el.getAttribute('data-stage-index')===s&&
+            el.getAttribute('data-job-index')===j&&
+            el.getAttribute('data-step-index')===t
+        );
+        const searchText=String(el.getAttribute('data-search-text')||'').toLowerCase();
+        const matchesSearch=!term||searchText.includes(term);
+        const show=matchesTask&&matchesSearch;
         el.style.display=show?'':'none';
     });
-    panel.querySelectorAll('.res-stage').forEach(stageEl=>{
-        const stageIdx=stageEl.getAttribute('data-stage-index');
-        const matchesStage=stageIdx===s;
-        stageEl.style.display=matchesStage?'':'none';
-    });
+
     panel.querySelectorAll('.res-job').forEach(jobEl=>{
-        const stageIdx=jobEl.getAttribute('data-stage-index');
-        const jobIdx=jobEl.getAttribute('data-job-index');
-        const matchesJob=stageIdx===s&&jobIdx===j;
-        jobEl.style.display=matchesJob?'':'none';
+        const visible=Array.from(jobEl.querySelectorAll('.res-step')).some(stepEl=>stepEl.style.display!=='none');
+        jobEl.style.display=visible?'':'none';
     });
-    if(summary)summary.style.display='none';
+    panel.querySelectorAll('.res-stage').forEach(stageEl=>{
+        const visible=Array.from(stageEl.querySelectorAll('.res-job')).some(jobEl=>jobEl.style.display!=='none');
+        stageEl.style.display=visible?'':'none';
+    });
+
+    if(summary)summary.style.display=(hasTaskFilter||!!term)?'none':'';
+    _setResultsSearchStatus();
 }
 function toggleSteps(id){const el=document.getElementById(id);if(!el)return;el.classList.toggle('collapsed');}
 function toggleSettingsPanel(){var s=document.getElementById('settingsContent');var p=document.getElementById('settingsPanel');var btn=document.getElementById('settingsToggle');if(!s||!p)return;var c=s.classList.toggle('collapsed');p.classList.toggle('collapsed');btn.textContent=c?'▼ Settings':'▲ Collapse';}
@@ -926,6 +1104,7 @@ function runSimulation(){
   const buildReason=document.getElementById('buildReason').value;if(buildReason)variables['Build.Reason']=buildReason;
   const sourceBranch=document.getElementById('sourceBranch').value.trim();if(sourceBranch){variables['Build.SourceBranch']=sourceBranch;const sbn=sourceBranch.replace(/^refs\\/heads\\//,'');variables['Build.SourceBranchName']=sbn!==sourceBranch?sbn:sourceBranch.split('/').pop()||sourceBranch;}
   document.getElementById('runBtn').disabled=true;
+    _setSearchControlsEnabled(false);
   
   document.getElementById('statusMsg').textContent='';
     var ob=document.getElementById('browserBtn');if(ob)ob.style.display='none';
@@ -1105,6 +1284,7 @@ function submitRunStep(){
   clearSingleStepContent(_rsmState.si,_rsmState.ji,_rsmState.ti);
   closeRunStepModal();
   document.getElementById('runBtn').disabled=true;
+    _setSearchControlsEnabled(false);
   document.getElementById('statusMsg').textContent='Running single step\u2026';
   document.getElementById('resultsPanel').innerHTML='<div class="sim-loading"><div class="sim-spinner"></div><span>Running single step\u2026</span></div>';
   var rb=document.getElementById('renderBody');if(rb)rb.classList.remove('hidden');
@@ -1303,6 +1483,7 @@ function _populateSdpResult(sdpEl,si,ji,ti){
 function renderResults(r){
   lastResults=r;
   const panel=document.getElementById('resultsPanel');
+    const searchTerm=_getResultsSearchTerm();
   const ICON={Succeeded:'\u2714',Failed:'\u2716',Skipped:'\u29d8'};
   const COL={Succeeded:'#4ec94e',Failed:'#f47174',Skipped:'#c8a84b'};
     const WARN='#c8a84b';
@@ -1334,13 +1515,33 @@ function renderResults(r){
     const formatRenderedLine=(line,isStderr)=>{
         const tracedVso=extractVsoFromTraceEcho(line);
         const raw=tracedVso||normalizeLogLine(line);
+        const highlightMessage=(text)=>{
+            const source=String(text||'');
+            if(!searchTerm)return escHtml(source);
+            const needle=String(searchTerm).toLowerCase();
+            if(!needle)return escHtml(source);
+            const lower=source.toLowerCase();
+            let out='';
+            let pos=0;
+            while(pos<source.length){
+                const hit=lower.indexOf(needle,pos);
+                if(hit===-1){
+                    out+=escHtml(source.slice(pos));
+                    break;
+                }
+                out+=escHtml(source.slice(pos,hit));
+                out+='<span class="res-search-hit">'+escHtml(source.slice(hit,hit+needle.length))+'</span>';
+                pos=hit+needle.length;
+            }
+            return out;
+        };
         let color='';
         if(/^##\\s*\\[debug\\]/i.test(raw)||/^##vso\\[task\\.debug\\]/i.test(raw)||/^##vso\\[task\\.logissue\\s+type=warning[^\\]]*\\]/i.test(raw)) color=WARN;
         if(/^##\\s*\\[error\\]/i.test(raw)||/^##vso\\[task\\.logissue\\s+type=error[^\\]]*\\]/i.test(raw)) color=ERR;
         if(/^\\[sim-missing-tool\\]/i.test(raw)) color=ERR;
         if(isStderr&&/permission denied/i.test(raw)) color=ERR;
         const prefix=isStderr?'<span class="res-vk">[stderr]</span> ':'';
-        const content=escHtml(raw);
+        const content=highlightMessage(raw);
         return color?'<div>'+prefix+'<span style="color:'+color+'">'+content+'</span></div>':'<div>'+prefix+content+'</div>';
     };
     const _rr_nameToIdx=_buildStageNameToIndexMap();
@@ -1359,7 +1560,11 @@ function renderResults(r){
         const res=step.result||'Skipped';
         const icon=ICON[res]||'?';
         const col=COL[res]||'#888';
-                html+='<div class="res-step" data-stage-index="'+si+'" data-job-index="'+ji+'" data-step-index="'+ti+'"><span class="res-icon" style="color:'+col+'">'+icon+'</span><span class="res-step-name">'+escHtml(step.displayName||'')+'</span>';
+                const _searchText=[
+                    String(step.stdout||''),
+                    String(step.stderr||'')
+                ].join('\\n').toLowerCase();
+                html+='<div class="res-step" data-stage-index="'+si+'" data-job-index="'+ji+'" data-step-index="'+ti+'" data-search-text="'+escHtml(_searchText)+'"><span class="res-icon" style="color:'+col+'">'+icon+'</span><span class="res-step-name">'+escHtml(step.displayName||'')+'</span>';
         const cleanStdout=stripWslProxyWarning(step.stdout);
         const cleanStderr=stripWslProxyWarning(step.stderr);
         if(cleanStdout&&cleanStdout.trim()){
@@ -1407,6 +1612,9 @@ document.getElementById('resultsPanel').addEventListener('click',function(e){
   var t=hd.querySelector('.res-tog');if(t)t.textContent=c?'\u25b6':'\u25bc';
 });
 requestAnimationFrame(function(){requestAnimationFrame(function(){var l=document.getElementById('pageLoader');if(l)l.remove();});});
+_setSearchControlsEnabled(false);
+_updateStickySearchOffset();
+window.addEventListener('resize',_updateStickySearchOffset);
 renderTopLevelParameters();
 function _syncOverrideToSettings(vn,val){if(vn==='Build.SourceBranch'){var sb=document.getElementById('sourceBranch');if(sb)sb.value=val;}else if(vn==='Build.SourceBranchName'){/* skip */}else if(vn==='Build.Reason'){var br=document.getElementById('buildReason');if(br)br.value=val;}else if(vn==='System.Debug'){var dbg=document.getElementById('debugMode');if(dbg)dbg.checked=val==='true'||val==='1';}else if(vn==='Build.BuildNumber'||vn==='Build.BuildId'){var bc=document.getElementById('buildCounter');if(bc&&vn==='Build.BuildNumber')bc.value=val;}}function _applyVarsLoaded(data){if(!data)return;var o=data.overrides||{};document.querySelectorAll('.var-override-input').forEach(function(inp){var name=inp.getAttribute('data-varname');if(o[name]!==undefined)inp.value=o[name];});if(Array.isArray(data.libData)){data.libData.forEach(function(entry){var gi=knownVars.groups.indexOf(entry.group);if(gi<0)return;var tb=document.getElementById('libvars-'+gi);if(!tb)return;tb.innerHTML='';if(!Array.isArray(entry.vars))return;entry.vars.forEach(function(v){var tr=document.createElement('tr');tr.setAttribute('data-group',entry.group);var en=escHtml(v.name||'');var ev=escHtml(v.value||'');tr.innerHTML='<td style="width:44%"><input class="var-key lib-name" placeholder="variable" value="'+en+'"></td><td><div style="display:flex;gap:4px;align-items:center"><input class="var-val lib-val" placeholder="value" value="'+ev+'" style="flex:1;min-width:0"><button class="remove-var-btn">&times;</button></div></td>';tr.querySelector('.remove-var-btn').onclick=function(){tr.remove();};tb.appendChild(tr);});});}if(data.toolPaths&&typeof data.toolPaths==='object'){var ttp=document.getElementById('toolPathsRows');if(ttp){ttp.innerHTML='';Object.entries(data.toolPaths).forEach(function(kv){var tr=document.createElement('tr');var en=escHtml(kv[0]||'');var ev=escHtml(kv[1]||'');tr.innerHTML='<td style="width:48%"><input class="var-key tool-name" placeholder="tool (e.g. bash)" value="'+en+'"></td><td><div style="display:flex;gap:4px;align-items:center"><input class="var-val tool-path" placeholder="path" value="'+ev+'" style="flex:1;min-width:0"><button class="add-var-btn" title="Browse for executable" onclick="browseToolPath(this)" style="flex-shrink:0;padding:2px 6px">&#128193;</button></div></td><td><button class="remove-var-btn">&times;</button></td>';tr.querySelector('.remove-var-btn').onclick=function(){tr.remove();};ttp.appendChild(tr);});}}if(data.toolsDirectory){var tfd=document.getElementById('toolsFolderInput');if(tfd)tfd.value=data.toolsDirectory;}try{syncSpecialVarToPanel();}catch(e){}}window.addEventListener('load',function(){_renderVariablesPanel();_renderToolPathsPanel();_applyVarsLoaded(savedVars);setTimeout(function(){expandAll(false);selectStage(0);syncSpecialVarToPanel();syncSelectAllStages();var pb=document.getElementById('variablesPanelBody');if(pb)pb.addEventListener('input',function(e){var inp=e.target;if(!inp.classList.contains('var-override-input'))return;_syncOverrideToSettings(inp.getAttribute('data-varname'),inp.value);});vscode.postMessage({command:'loadVars'});},50);});
 window.addEventListener('message',e=>{
@@ -1414,6 +1622,8 @@ window.addEventListener('message',e=>{
   if(d.command==='simulationStarted'){/* simulation is running — keep button disabled until results arrive */}
   else if(d.command==='simulationResults'){
     document.getElementById('runBtn').disabled=false;
+        _setSearchControlsEnabled(true);
+        _updateStickySearchOffset();
     if(d.singleStep){
       const _savedFilter=taskFilter;
       taskFilter=null;
@@ -1425,7 +1635,7 @@ window.addEventListener('message',e=>{
             if(_activeSdp)_populateSdpResult(_activeSdp,d.si,d.ji,d.ti);
     }else{renderResults(d.results);}
   }
-    else if(d.command==='simulationError'){document.getElementById('resultsPanel').innerHTML='';document.getElementById('statusMsg').textContent='\u26a0 '+d.error;document.getElementById('runBtn').disabled=false;var browserBtn=document.getElementById('browserBtn');if(browserBtn)browserBtn.style.display='none';var _sc=document.getElementById('settingsContent');if(_sc){_sc.classList.remove('collapsed');var _sp=document.getElementById('settingsPanel');if(_sp)_sp.classList.remove('collapsed');var _sb=document.getElementById('settingsToggle');if(_sb)_sb.innerHTML='&#9650; Collapse';}}
+    else if(d.command==='simulationError'){document.getElementById('resultsPanel').innerHTML='';document.getElementById('statusMsg').textContent='\u26a0 '+d.error;document.getElementById('runBtn').disabled=false;_setSearchControlsEnabled(false);var browserBtn=document.getElementById('browserBtn');if(browserBtn)browserBtn.style.display='none';var _sc=document.getElementById('settingsContent');if(_sc){_sc.classList.remove('collapsed');var _sp=document.getElementById('settingsPanel');if(_sp)_sp.classList.remove('collapsed');var _sb=document.getElementById('settingsToggle');if(_sb)_sb.innerHTML='&#9650; Collapse';}}
   else if(d.command==='triggerRerun'){runSimulation();}
   else if(d.command==='varsLoaded'){_applyVarsLoaded(d.data);}
   else if(d.command==='toolPathBrowseResult'){if(_toolPathBrowseRow&&d.path){var _tp=_toolPathBrowseRow.querySelector('.tool-path');if(_tp)_tp.value=d.path;}_toolPathBrowseRow=null;}

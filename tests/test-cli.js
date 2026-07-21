@@ -336,6 +336,114 @@ runTest('runscript: prefers explicit HOME env for Bash@3 steps', () => {
     }
 });
 
+runTest('simulator: PowerShell tasks choose Windows PowerShell on win32 unless pwsh is requested', () => {
+    const simulator = new PipelineSimulator();
+
+    assertEqual(
+        simulator._getNativeTaskShell('PowerShell@2', {}, 'win32'),
+        'powershell',
+        'PowerShell@2 default shell on win32'
+    );
+    assertEqual(
+        simulator._getNativeTaskShell('PowerShell@2', { pwsh: false }, 'win32'),
+        'powershell',
+        'PowerShell@2 pwsh:false shell on win32'
+    );
+    assertEqual(
+        simulator._getNativeTaskShell('PowerShell@2', { pwsh: true }, 'win32'),
+        'pwsh',
+        'PowerShell@2 pwsh:true shell on win32'
+    );
+    assertEqual(simulator._getNativeTaskShell('PowerShell@2', {}, 'linux'), 'pwsh', 'PowerShell@2 shell on linux');
+});
+
+runTest('simulator: rewrites PowerShell ADO macros to env references', () => {
+    const simulator = new PipelineSimulator();
+    const script = [
+        '"/p:Version=$(version)"',
+        '"/p:Configuration=$(CURRENT_CONFIG)"',
+        '"/p:Platform=$(CURRENT_PLATFORM)"',
+        '$(if (__FALSE__) { "/maxcpucount" } else { "/maxcpucount:1" })',
+        '$buildArgs = "$(CURRENT_BUILD_ARGS)"',
+    ].join('\n');
+
+    const rewritten = simulator._rewritePowerShellMacros(script, {
+        version: '1.2.3',
+        CURRENT_CONFIG: 'Release',
+        CURRENT_PLATFORM: 'x64',
+        CURRENT_BUILD_ARGS: '/p:Foo=Bar',
+    });
+
+    assert(rewritten.includes('"/p:Version=$env:VERSION"'), 'version macro should map to env var');
+    assert(rewritten.includes('"/p:Configuration=$env:CURRENT_CONFIG"'), 'CURRENT_CONFIG macro should map to env var');
+    assert(rewritten.includes('"/p:Platform=$env:CURRENT_PLATFORM"'), 'CURRENT_PLATFORM macro should map to env var');
+    assert(rewritten.includes('if ($false)'), '__FALSE__ should be rewritten to $false');
+    assert(
+        rewritten.includes('$buildArgs = "$env:CURRENT_BUILD_ARGS"'),
+        'CURRENT_BUILD_ARGS macro should map to env var'
+    );
+
+    const escapedMatchScript =
+        'if (-not ("$env:YQ_VERSION" -match "\\\\Av\\\\d+\\.\\\\d+\\.\\\\d+\\\\Z")) { Write-Error "bad" }';
+    const escapedMatchRewritten = simulator._rewritePowerShellMacros(escapedMatchScript, {
+        YQ_VERSION: 'v4.44.3',
+    });
+    assert(
+        escapedMatchRewritten.includes('-match "\\Av\\d+\\.\\d+\\.\\d+\\Z"'),
+        'over-escaped PowerShell -match pattern should be normalized'
+    );
+});
+
+runTest('simulator: detects build-wrapper win executable for PowerShell mocking', () => {
+    const simulator = new PipelineSimulator();
+    const shouldMock = simulator._shouldMockBuildWrapperExecution(
+        '& "C:\\tools\\build-wrapper-win-x86\\build-wrapper-win-x86-64.exe" --out-dir bw-output msbuild My.sln'
+    );
+    const shouldNotMock = simulator._shouldMockBuildWrapperExecution('& "C:\\tools\\other.exe" --help');
+
+    assertEqual(shouldMock, true, 'build-wrapper detector should match win-x86-64 executable');
+    assertEqual(shouldNotMock, false, 'build-wrapper detector should ignore non-wrapper executables');
+});
+
+runTest('simulator: normalizes PowerShell *_VERSION env values', () => {
+    const simulator = new PipelineSimulator();
+
+    assertEqual(
+        simulator._normalizeShellEnvValue('powershell', 'YQ_VERSION', "  'v4.44.3'  "),
+        'v4.44.3',
+        'quoted version should be trimmed and unquoted'
+    );
+    assertEqual(
+        simulator._normalizeShellEnvValue('pwsh', 'TOOL_VERSION', '  v1.2.3  '),
+        'v1.2.3',
+        'plain version should be trimmed'
+    );
+    assertEqual(
+        simulator._normalizeShellEnvValue('bash', 'YQ_VERSION', "  'v4.44.3'  "),
+        "  'v4.44.3'  ",
+        'non-PowerShell shells should not normalize'
+    );
+    assertEqual(
+        simulator._normalizeShellEnvValue('powershell', 'YQ_VERSION', '\u001b[31;1mv4.44.3\u001b[0m\u200B'),
+        'v4.44.3',
+        'ANSI/control/zero-width noise should be removed'
+    );
+});
+
+runTest('simulator: fallback package materialization avoids synthetic nupkg files', () => {
+    const simulator = new PipelineSimulator();
+    const tmpDir = fs.mkdtempSync('/tmp/aps-sim-no-nupkg-');
+    try {
+        simulator._materializeDummyNugetPackages(tmpDir, { version: '0.2.1' });
+        const entries = fs.readdirSync(tmpDir);
+        const packageFiles = entries.filter((name) => /\.(?:snupkg|nupkg)$/i.test(name));
+        assertEqual(packageFiles.length, 0, 'should not create synthetic package files');
+        assert(entries.includes('NO_PACKAGES_FOUND.txt'), 'should leave a placeholder note for diagnostics');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 runTest('simulator: WSL env normalization preserves globs and repairs tab-corrupted testhost patterns', () => {
     const simulator = new PipelineSimulator();
     const corruptedPattern = '!**\testhost.dll';

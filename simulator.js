@@ -316,6 +316,7 @@ class PipelineSimulator {
         this._jobRunCounter = 0;
         this._createdBuildFiles = new Set();
         this._currentRepositoryRoot = '';
+        this._resolvedToolsPaths = null;
         this._windowsShellDiscoveryDone = false;
         this._initializeWindowsShellDiscovery();
 
@@ -481,6 +482,45 @@ class PipelineSimulator {
         return result;
     }
 
+    _getNativeTaskShell(taskRef, inputs = {}, platform = process.platform) {
+        const taskName = String(taskRef || '').trim();
+        if (taskName === 'PowerShell@1' || taskName === 'PowerShell@2') {
+            const rawPwsh = inputs && Object.prototype.hasOwnProperty.call(inputs, 'pwsh') ? inputs.pwsh : undefined;
+            const normalizedPwsh = String(rawPwsh === undefined ? '' : rawPwsh)
+                .trim()
+                .toLowerCase();
+            const usePwsh = rawPwsh === true || normalizedPwsh === 'true' || normalizedPwsh === '1';
+            if (platform === 'win32') {
+                return usePwsh ? 'pwsh' : 'powershell';
+            }
+            return 'pwsh';
+        }
+
+        return NATIVE_TASK_SHELLS[taskName];
+    }
+
+    _buildPowerShellUnavailableResult(shellName, extraStdout = '') {
+        const unavailableShell = String(shellName || '').trim() || 'powershell';
+        const mockNote = `[mock] ${unavailableShell} not available locally; step simulated.`;
+        return {
+            stdout: extraStdout ? `${extraStdout}\n${mockNote}` : mockNote,
+            stderr: '',
+            exitCode: 0,
+        };
+    }
+
+    _resolveShellCommand(shellName) {
+        const normalizedShell = String(shellName || '').trim();
+        if (!normalizedShell) return normalizedShell;
+
+        if (normalizedShell === 'pwsh' || normalizedShell === 'powershell') {
+            return this._resolveCommandPath(normalizedShell) || normalizedShell;
+        }
+
+        const configuredPath = this.executablePaths && this.executablePaths[normalizedShell];
+        return configuredPath ? path.normalize(String(configuredPath)) : normalizedShell;
+    }
+
     _resolveCommandPath(commandName) {
         const configuredPath = this.executablePaths && this.executablePaths[commandName];
         if (configuredPath) {
@@ -521,16 +561,139 @@ class PipelineSimulator {
         return '';
     }
 
+    _rewritePowerShellMacros(scriptContent, variables = {}) {
+        const text = String(scriptContent || '');
+        if (!text) return text;
+
+        const variablesLower = Object.create(null);
+        for (const key of Object.keys(variables || {})) {
+            variablesLower[String(key).toLowerCase()] = key;
+        }
+
+        const toEnvRef = (name) => {
+            const safeName = String(name || '')
+                .toUpperCase()
+                .replace(/[^A-Z0-9_]/g, '_');
+            return `$env:${safeName}`;
+        };
+
+        let rewritten = text.replace(/\$\(([A-Za-z_][A-Za-z0-9_.-]*)\)/g, (match, name) => {
+            const trimmed = String(name || '').trim();
+            if (!trimmed) return match;
+
+            if (Object.prototype.hasOwnProperty.call(variables, trimmed)) {
+                return toEnvRef(trimmed);
+            }
+
+            const foundKey = variablesLower[trimmed.toLowerCase()];
+            if (foundKey) {
+                return toEnvRef(foundKey);
+            }
+
+            // Leave common PowerShell command substitutions intact (e.g. $(Get-Date)).
+            if (trimmed.includes('-')) {
+                return match;
+            }
+
+            // Treat unresolved ADO-like macros as env variable references to avoid
+            // PowerShell subexpression invocation errors.
+            if (/^[A-Za-z_][A-Za-z0-9_.]*$/.test(trimmed)) {
+                return toEnvRef(trimmed);
+            }
+
+            return match;
+        });
+
+        rewritten = rewritten.replace(/\b__TRUE__\b/g, '$true').replace(/\b__FALSE__\b/g, '$false');
+
+        // Some expanded YAML emits over-escaped regex literals for -match/-notmatch,
+        // e.g. "\\Av\\d+\.\\d+\.\\d+\\Z". In PowerShell that pattern matches
+        // literal backslashes instead of regex anchors/classes. Normalize those
+        // sequences inside match-pattern string literals only.
+        const normalizeMatchPattern = (pattern) =>
+            String(pattern || '')
+                .replace(/\\\\([AbBdDsSwWZz])/g, '\\$1')
+                .replace(/\\\\\./g, '\\.')
+                .replace(/\\\\\+/g, '\\+')
+                .replace(/\\\\\*/g, '\\*')
+                .replace(/\\\\\?/g, '\\?')
+                .replace(/\\\\\{/g, '\\{')
+                .replace(/\\\\\}/g, '\\}')
+                .replace(/\\\\\(/g, '\\(')
+                .replace(/\\\\\)/g, '\\)');
+
+        rewritten = rewritten.replace(/(-(?:not)?match\s+")([^"\r\n]*)(")/gi, (m, pre, body, post) => {
+            return `${pre}${normalizeMatchPattern(body)}${post}`;
+        });
+        rewritten = rewritten.replace(/(-(?:not)?match\s+')([^'\r\n]*)(')/gi, (m, pre, body, post) => {
+            return `${pre}${normalizeMatchPattern(body)}${post}`;
+        });
+        return rewritten;
+    }
+
+    _normalizeShellEnvValue(shell, key, value) {
+        const normalizedShell = String(shell || '')
+            .trim()
+            .toLowerCase();
+        const envKey = String(key || '').trim();
+        const raw = String(value === undefined || value === null ? '' : value);
+
+        if (normalizedShell !== 'pwsh' && normalizedShell !== 'powershell') {
+            return raw;
+        }
+
+        // Preserve multiline env values as-is (e.g. cert blobs).
+        if (/\r|\n/.test(raw)) {
+            return raw;
+        }
+
+        // Normalization for common version-style env vars passed to PowerShell.
+        // This prevents hidden whitespace/quoting from failing strict validators.
+        if (/_VERSION$/i.test(envKey)) {
+            let trimmed = raw.trim();
+            if (
+                (trimmed.startsWith("'") && trimmed.endsWith("'")) ||
+                (trimmed.startsWith('"') && trimmed.endsWith('"'))
+            ) {
+                trimmed = trimmed.slice(1, -1).trim();
+            }
+            // Strip ANSI escapes/control chars/zero-width Unicode that can leak
+            // into env values during local simulation and break strict regex checks.
+            trimmed = trimmed
+                .replace(/\u001b\[[0-9;]*[A-Za-z]/g, '')
+                .replace(/[\u0000-\u001F\u007F]/g, '')
+                .replace(/[\u200B-\u200D\uFEFF]/g, '')
+                .trim();
+            return trimmed;
+        }
+
+        return raw;
+    }
+
+    _shouldMockBuildWrapperExecution(scriptContent) {
+        const text = String(scriptContent || '');
+        if (!text) return false;
+        return /build-wrapper[^\r\n]*win[^\r\n]*x86[^\r\n]*64\.exe/i.test(text);
+    }
+
     _getResolvedToolsPaths() {
         if (this._resolvedToolsPaths) {
             return { ...this._resolvedToolsPaths };
         }
 
-        const toolNames = ['bash', 'pwsh', 'git', 'dotnet', 'node', 'nuget', 'msbuild', 'jq'];
         const resolved = {};
-        for (const name of toolNames) {
-            resolved[name] = this._resolveCommandPath(name);
+        for (const [toolName, configuredPath] of Object.entries(this.executablePaths || {})) {
+            const name = String(toolName || '').trim();
+            const value = String(configuredPath || '').trim();
+            if (!name || !value) continue;
+            resolved[name] = path.normalize(value);
         }
+
+        const gitFromLookup = this._resolveCommandPath('git');
+        if (gitFromLookup) {
+            resolved.git = gitFromLookup;
+        }
+
         this._resolvedToolsPaths = resolved;
         return { ...resolved };
     }
@@ -1087,8 +1250,8 @@ class PipelineSimulator {
         } else if (stepDoc.task) {
             // After template expansion, bash:/script:/pwsh: become task: Bash@3/CmdLine@2/PowerShell@2.
             // Detect these and run them natively; all other tasks go to the mock catalog.
-            const nativeShell = NATIVE_TASK_SHELLS[stepDoc.task];
             const inputs = stepDoc.inputs || {};
+            const nativeShell = this._getNativeTaskShell(stepDoc.task, inputs);
             const rawWorkDir = inputs.workingDirectory || (options && options.workingDirectory) || '';
             const workDir = rawWorkDir
                 ? this._substituteVariables(rawWorkDir, variables) || process.cwd()
@@ -1129,10 +1292,11 @@ class PipelineSimulator {
             } else if (nativeShell && inputs.filePath) {
                 const scriptPath = path.resolve(workDir, inputs.filePath);
                 const env = { ...process.env };
+                const nativeShellCommand = this._resolveShellCommand(nativeShell);
                 for (const [key, value] of Object.entries(variables)) {
                     env[key.toUpperCase().replace(/[^A-Z0-9_]/g, '_')] = String(value);
                 }
-                const run = spawnSync(nativeShell, [scriptPath], {
+                const run = spawnSync(nativeShellCommand, [scriptPath], {
                     env,
                     cwd: workDir,
                     encoding: 'utf8',
@@ -1140,8 +1304,8 @@ class PipelineSimulator {
                 });
 
                 if (run.error && run.error.code === 'ENOENT') {
-                    if (nativeShell === 'pwsh') {
-                        stepResult.stdout = '[mock] pwsh not available locally; step simulated.';
+                    if (nativeShell === 'pwsh' || nativeShell === 'powershell') {
+                        stepResult.stdout = this._buildPowerShellUnavailableResult(nativeShell).stdout;
                         stepResult.stderr = '';
                         stepResult.exitCode = 0;
                     } else if (nativeShell === 'bash') {
@@ -2053,6 +2217,8 @@ class PipelineSimulator {
                 if (this._shouldInjectPythonApiShim(scriptContent)) {
                     pythonApiShimDir = this._createPythonApiShim();
                 }
+            } else if (shell === 'pwsh' || shell === 'powershell') {
+                scriptContent = this._rewritePowerShellMacros(scriptContent, variables);
             }
 
             fs.writeFileSync(tmpFile, scriptContent, { mode: 0o755 });
@@ -2063,13 +2229,13 @@ class PipelineSimulator {
             const resolvedToolsPaths = this._getResolvedToolsPaths();
             for (const [key, value] of Object.entries(variables)) {
                 const safeKey = key.toUpperCase().replace(/[^A-Z0-9_]/g, '_');
-                env[safeKey] = String(value);
+                env[safeKey] = this._normalizeShellEnvValue(shell, safeKey, value);
             }
             const preferredHome = extraEnv.HOME || this._lookupVariable(variables, 'Agent.HomeDirectory');
             env.HOME = String(preferredHome);
             // Step-level env: (from YAML `env:` block) — applied with their original key names
             for (const [key, value] of Object.entries(extraEnv)) {
-                env[key] = String(value);
+                env[key] = this._normalizeShellEnvValue(shell, key, value);
             }
             // Prefer configured real tools before the shim directory, which should only
             // satisfy missing commands rather than shadow valid local installations.
@@ -2145,11 +2311,15 @@ class PipelineSimulator {
 
             const effectiveCwd = resolvedCwd;
 
-            // For pwsh scripts that invoke msbuild/dotnet build, always create mock build outputs
+            // For PowerShell scripts that invoke msbuild/dotnet build, always create mock build outputs
             // BEFORE trying to run the script. This ensures test DLLs exist in the workspace
-            // regardless of whether pwsh is available locally or the script fails.
+            // regardless of whether PowerShell is available locally or the script fails.
             let _mockBuildOutputsMessage = '';
-            if (shell === 'pwsh' && /\b(msbuild|dotnet\s+build|dotnet\s+test|devenv)\b/i.test(script) && resolvedCwd) {
+            if (
+                (shell === 'pwsh' || shell === 'powershell') &&
+                /\b(msbuild|dotnet\s+build|dotnet\s+test|devenv)\b/i.test(script) &&
+                resolvedCwd
+            ) {
                 // Try to extract /p:Configuration=, /p:Platform=, and the .sln path from the script text
                 // (template parameters expand to literals before simulation runs).
                 const configMatch = script.match(/\/p:Configuration=(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_.-]+))/i);
@@ -2181,9 +2351,27 @@ class PipelineSimulator {
                 }
             }
 
+            // build-wrapper-win-x86-64.exe is frequently materialized as a dummy file
+            // in offline simulation mode; executing that placeholder fails on Windows.
+            // Mock the wrapper invocation but keep generated build output artifacts.
+            if ((shell === 'pwsh' || shell === 'powershell') && this._shouldMockBuildWrapperExecution(script)) {
+                const mockBuildWrapperLines = [
+                    'Running: build-wrapper-win-x86-64.exe (mock)',
+                    '[sim] build-wrapper execution skipped in simulation mode',
+                    'Build wrapper completed successfully',
+                ].join('\n');
+                return {
+                    stdout: _mockBuildOutputsMessage
+                        ? `${mockBuildWrapperLines}\n${_mockBuildOutputsMessage}`
+                        : mockBuildWrapperLines,
+                    stderr: '',
+                    exitCode: 0,
+                };
+            }
+
             // When the pwsh script explicitly invokes a Windows-only MSBuild.exe path,
             // mock the entire step — the binary doesn't exist outside a Windows build agent.
-            if (shell === 'pwsh' && /MSBuild\.exe/i.test(script)) {
+            if ((shell === 'pwsh' || shell === 'powershell') && /MSBuild\.exe/i.test(script)) {
                 const _cfgM = script.match(/\/p:Configuration=(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_.-]+))/i);
                 const _pltM = script.match(
                     /\/p:Platform=(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9][A-Za-z0-9 _]*)(?=\s*(?:\/|\r?\n|$)))/i
@@ -2218,6 +2406,7 @@ class PipelineSimulator {
                     ? tmpFile.replace(/^([A-Za-z]):\\/, (_, d) => `/${d.toLowerCase()}/`).replace(/\\/g, '/')
                     : tmpFile;
 
+            const resolvedShellCommand = this._resolveShellCommand(shell);
             const _rawConfiguredShell = this.executablePaths[shell];
             // Skip a configured shell that already failed in this simulation run — go straight to Git Bash.
             const configuredShell =
@@ -2277,7 +2466,7 @@ class PipelineSimulator {
                 // User explicitly configured wsl.exe as bash; use WSL invocation.
                 run = tryRunWsl(scriptArg);
             } else {
-                run = tryRun(configuredShell || shell);
+                run = tryRun(configuredShell || resolvedShellCommand || shell);
             }
 
             const _bashParseErrorPattern =
@@ -2358,7 +2547,7 @@ class PipelineSimulator {
                     process.stderr.write(
                         `[bash-lookup] configured path not found: ${configuredShell}; falling back to auto-discovery\n`
                     );
-                    run = tryRun(shell);
+                    run = tryRun(resolvedShellCommand || shell);
                 }
                 if (run.error && run.error.code === 'ENOENT') {
                     if (shell === 'bash') {
@@ -2390,7 +2579,7 @@ class PipelineSimulator {
                                 };
                             }
                         }
-                    } else if (shell === 'pwsh') {
+                    } else if (shell === 'pwsh' || shell === 'powershell') {
                         if (/signatures\.json/i.test(script) && workingDirectory) {
                             const signatureCandidates = new Set([
                                 path.join(resolvedCwd, 'signatures.json'),
@@ -2408,13 +2597,7 @@ class PipelineSimulator {
                                 }
                             }
                         }
-                        // Keep simulation moving when pwsh is unavailable locally.
-                        const mockNote = '[mock] pwsh not available locally; step simulated.';
-                        return {
-                            stdout: _mockBuildOutputsMessage ? `${_mockBuildOutputsMessage}\n${mockNote}` : mockNote,
-                            stderr: '',
-                            exitCode: 0,
-                        };
+                        return this._buildPowerShellUnavailableResult(shell, _mockBuildOutputsMessage);
                     }
                 } // end: if (run.error && run.error.code === 'ENOENT') after configured-shell fallback
             }
@@ -2430,6 +2613,13 @@ class PipelineSimulator {
             const _exitCode = _result.exitCode;
             const _lineMatch = /line (\d+):/i.exec(_result.stderr || '');
             const _isShellParseError = _exitCode !== 0 && _bashParseErrorPattern.test(_result.stderr || '');
+
+            if (_exitCode !== 0) {
+                keepTmpFile = true;
+                process.stderr.write(
+                    `[aps-script-preserved] shell=${lastShellInvocation} tmp=${tmpFile} exit=${_exitCode}\n`
+                );
+            }
 
             if (_isShellParseError) {
                 keepTmpFile = true;
@@ -3916,42 +4106,20 @@ exit 0
 
     _materializeDummyNugetPackages(targetDir, variables = {}) {
         fs.mkdirSync(targetDir, { recursive: true });
+        this._materializePackagePlaceholderNote(targetDir, variables);
+    }
+
+    _materializePackagePlaceholderNote(targetDir, variables = {}) {
+        fs.mkdirSync(targetDir, { recursive: true });
         const rawVersion = String(variables.version || variables.VERSION || variables['Build.BuildNumber'] || '0.0.0');
         const defaultVersion = rawVersion.replace(/[^A-Za-z0-9._-]/g, '-') || '0.0.0';
-        const packageDefinitions = ['my.package.sdk', 'my.package.svc'];
-        const includedFiles = [
-            'lib/mock.dll',
-            'lib/mock.pdb',
-            'bin/x64/Release/mock.dll',
-            'bin/ARM64/Release/mock.dll',
-            'bin/mock.json',
-        ];
-
-        for (const packageId of packageDefinitions) {
-            const baseName = `${packageId}.${defaultVersion}`;
-            const packageMetadata = {
-                packageId,
-                version: defaultVersion,
-                files: includedFiles,
-                generatedBy: 'azure-pipeline-studio-simulator',
-            };
-            fs.writeFileSync(
-                path.join(targetDir, `${baseName}.nupkg`),
-                `${JSON.stringify(packageMetadata, null, 2)}\n`,
-                'utf8'
-            );
-            fs.writeFileSync(
-                path.join(targetDir, `${baseName}.snupkg`),
-                `${JSON.stringify({ ...packageMetadata, symbolPackage: true }, null, 2)}\n`,
-                'utf8'
-            );
-        }
-
-        fs.writeFileSync(
-            path.join(targetDir, 'package-contents.json'),
-            `${JSON.stringify({ files: includedFiles }, null, 2)}\n`,
-            'utf8'
-        );
+        const note = [
+            'No .nupkg files were generated by this simulation run.',
+            'The simulator intentionally avoids creating synthetic package files',
+            'because downstream unzip/validation steps expect valid zip content.',
+            `Resolved build version: ${defaultVersion}`,
+        ].join('\n');
+        fs.writeFileSync(path.join(targetDir, 'NO_PACKAGES_FOUND.txt'), `${note}\n`, 'utf8');
     }
 
     _ensureFallbackPackageArtifacts(variables, workDir) {
