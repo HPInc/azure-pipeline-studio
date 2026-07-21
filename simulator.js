@@ -30,6 +30,8 @@ const RE_SUBSTITUTE_VARS = /\$\(([A-Za-z_][A-Za-z0-9_.-]*)\)/g;
 const RE_WSL_PROXY_WARNING =
     /\s*(?:wsl:\s*A localhost proxy configuration was detected[^\n]*|WSL in NAT mode does not support localhost proxies[^\n]*)\n?/gi;
 
+const WINDOWS_WSL_EXE = 'C:\\Windows\\System32\\wsl.exe';
+
 function stripWslProxyWarning(text) {
     // wsl.exe sometimes writes this banner to its stderr as UTF-16LE while the
     // rest of the stream is UTF-8; when captured with encoding:'utf8' each
@@ -175,6 +177,7 @@ class PipelineSimulator {
         this.outputRoot = options.outputRoot || '';
         this.mockCatalog = options.mockCatalog || {};
         this.executablePaths = options.executablePaths || {};
+        this.toolsDirectory = options.toolsDirectory || '';
         this.wslMountRoot = options.wslMountRoot || null;
         this.debugScript = options.debugScript || false;
         // e.g. "\\\\wsl.localhost\\Ubuntu-22.04" — Windows UNC prefix used to
@@ -210,6 +213,83 @@ class PipelineSimulator {
         this._resolvedToolsPaths = null;
         this._createdBuildFiles = new Set();
         this._currentRepositoryRoot = '';
+        this._windowsGitBashCandidates = [];
+        this._windowsShellDiscoveryDone = false;
+        this._wslAvailable = false;
+    }
+
+    _buildWindowsGitBashCandidateList() {
+        if (process.platform !== 'win32') return [];
+        const configuredBashPath = this.executablePaths && this.executablePaths.bash;
+        const candidates = [
+            configuredBashPath && /[/\\]usr[/\\]bin[/\\]bash\.exe$/i.test(configuredBashPath)
+                ? path.normalize(configuredBashPath)
+                : null,
+            process.env.ProgramFiles ? path.join(process.env.ProgramFiles, 'Git', 'usr', 'bin', 'bash.exe') : null,
+            process.env['ProgramFiles(x86)']
+                ? path.join(process.env['ProgramFiles(x86)'], 'Git', 'usr', 'bin', 'bash.exe')
+                : null,
+            process.env.LOCALAPPDATA
+                ? path.join(process.env.LOCALAPPDATA, 'Programs', 'Git', 'usr', 'bin', 'bash.exe')
+                : null,
+        ].filter(Boolean);
+        return [...new Set(candidates)];
+    }
+
+    _initializeWindowsShellDiscovery() {
+        if (this._windowsShellDiscoveryDone) return;
+        this._windowsShellDiscoveryDone = true;
+
+        if (process.platform !== 'win32') {
+            this._windowsGitBashCandidates = [];
+            this._wslAvailable = false;
+            return;
+        }
+
+        const discovered = [];
+        for (const candidate of this._buildWindowsGitBashCandidateList()) {
+            try {
+                if (!fs.existsSync(candidate)) continue;
+                const probe = spawnSync(candidate, ['--version'], {
+                    encoding: 'utf8',
+                    timeout: 5000,
+                });
+                if (probe.error) continue;
+                discovered.push(candidate);
+            } catch (_) {
+                // Ignore probe failures; we'll continue with remaining candidates.
+            }
+        }
+
+        this._windowsGitBashCandidates = discovered;
+        try {
+            this._wslAvailable = fs.existsSync(WINDOWS_WSL_EXE);
+        } catch (_) {
+            this._wslAvailable = false;
+        }
+    }
+
+    _getWindowsGitBashPathEntries(bashExePath = '') {
+        if (process.platform !== 'win32') return [];
+        const candidatePaths = [];
+        if (bashExePath && /[/\\]usr[/\\]bin[/\\]bash\.exe$/i.test(String(bashExePath))) {
+            candidatePaths.push(path.normalize(String(bashExePath)));
+        }
+        for (const candidate of this._windowsGitBashCandidates || []) {
+            candidatePaths.push(path.normalize(String(candidate)));
+        }
+
+        const uniqueCandidates = [...new Set(candidatePaths.filter(Boolean))];
+        const dirs = [];
+        for (const bashPath of uniqueCandidates) {
+            // Git for Windows layout: <git-root>/usr/bin/bash.exe
+            const usrBinDir = path.dirname(bashPath);
+            const gitRoot = path.resolve(usrBinDir, '..', '..');
+            const gitBinDir = path.join(gitRoot, 'bin');
+            dirs.push(this._toBashPath(usrBinDir));
+            dirs.push(this._toBashPath(gitBinDir));
+        }
+        return [...new Set(dirs.filter(Boolean))];
     }
 
     /**
@@ -236,6 +316,8 @@ class PipelineSimulator {
         this._jobRunCounter = 0;
         this._createdBuildFiles = new Set();
         this._currentRepositoryRoot = '';
+        this._windowsShellDiscoveryDone = false;
+        this._initializeWindowsShellDiscovery();
 
         // Build the initial variable map:
         // 1. Azure built-in defaults (lowest priority)
@@ -405,6 +487,28 @@ class PipelineSimulator {
             return path.normalize(String(configuredPath));
         }
 
+        const toolsDir = String(this.toolsDirectory || '').trim();
+        if (toolsDir) {
+            const candidates =
+                process.platform === 'win32'
+                    ? [
+                          path.join(toolsDir, commandName),
+                          path.join(toolsDir, `${commandName}.exe`),
+                          path.join(toolsDir, `${commandName}.cmd`),
+                          path.join(toolsDir, `${commandName}.bat`),
+                      ]
+                    : [path.join(toolsDir, commandName)];
+            for (const candidate of candidates) {
+                try {
+                    if (fs.existsSync(candidate)) {
+                        return path.normalize(candidate);
+                    }
+                } catch (_) {
+                    // Ignore tools-directory probing errors and keep resolving.
+                }
+            }
+        }
+
         const lookupCommand = process.platform === 'win32' ? 'where' : 'which';
         const lookup = spawnSync(lookupCommand, [commandName], { encoding: 'utf8' });
         if (lookup.status === 0) {
@@ -422,7 +526,7 @@ class PipelineSimulator {
             return { ...this._resolvedToolsPaths };
         }
 
-        const toolNames = ['bash', 'pwsh', 'git', 'dotnet', 'node', 'nuget', 'msbuild'];
+        const toolNames = ['bash', 'pwsh', 'git', 'dotnet', 'node', 'nuget', 'msbuild', 'jq'];
         const resolved = {};
         for (const name of toolNames) {
             resolved[name] = this._resolveCommandPath(name);
@@ -940,26 +1044,16 @@ class PipelineSimulator {
             const stepEnv = this._resolveStepEnv(stepDoc.env, variables);
             const executionStart = Date.now();
             console.log(`[sim-exec] START shell=${shell} step="${displayName}" cwd=${workDir}`);
-            const run = this._executeScript(shell, substituted, variables, workDir, stepEnv, displayName);
+            const run = this.executePreparedStep(shell, substituted, variables, workDir, stepEnv, displayName);
             const elapsedMs = Date.now() - executionStart;
             console.log(
                 `[sim-exec] END shell=${shell} step="${displayName}" exit=${run.exitCode} durationMs=${elapsedMs}`
             );
-            const outputText = `${run.stdout || ''}\n${run.stderr || ''}`;
-            const ignoreCoverageConversionFailure =
-                run.exitCode !== 0 &&
-                /Microsoft\.CodeCoverage\.Console not found - skipping coverage conversion/i.test(outputText);
-            const ignoreSignCommandFailure = run.exitCode !== 0 && /Error in sign command:/i.test(outputText);
-            const ignoreFailure = ignoreCoverageConversionFailure || ignoreSignCommandFailure;
-
             stepResult.stdout = run.stdout;
             stepResult.stderr = run.stderr;
-            stepResult.exitCode = ignoreFailure ? 0 : run.exitCode;
-            stepResult.result = run.exitCode === 0 ? 'Succeeded' : 'Failed';
-            if (ignoreFailure) {
-                stepResult.result = 'Succeeded';
-            }
-            if (run.exitCode !== 0 && !ignoreFailure) {
+            stepResult.exitCode = run.exitCode;
+            stepResult.result = run.result;
+            if (run.result === 'Failed') {
                 // Build a diagnostic block visible in the simulation panel
                 const _scriptLines = run._scriptContent ? run._scriptContent.split('\n') : [];
                 const _lineMatch = /line (\d+):/i.exec(run.stderr || '');
@@ -976,7 +1070,7 @@ class PipelineSimulator {
                             .join('\n');
                 }
                 const _debugBlock =
-                    `\n--- aps-debug: "${displayName}" exit=${run.exitCode} shell=${shell} ---` +
+                    `\n--- aps-debug: "${displayName}" exit=${run.rawExitCode} shell=${shell} ---` +
                     `\nworkDir: ${workDir}` +
                     `\nscript (substituted):\n${substituted}` +
                     _scriptContext;
@@ -984,19 +1078,12 @@ class PipelineSimulator {
                 const debugEnabled = this.debugScript || !!process.env.APS_DEBUG_SCRIPT;
                 if (debugEnabled) {
                     process.stderr.write(
-                        '[aps-debug][_runStep] "' + displayName + '" FAILED exit=' + run.exitCode + '\n'
+                        '[aps-debug][_runStep] "' + displayName + '" FAILED exit=' + run.rawExitCode + '\n'
                     );
                 }
             }
-            applyDirectives(
-                this._parseVsoDirectives(
-                    (run.stdout || '') +
-                        (run.stderr || '')
-                            .split('\n')
-                            .filter((l) => !/^\+/.test(l))
-                            .join('\n')
-                )
-            );
+            stepResult.variables = { ...run.variables };
+            stepResult.outputVariables = { ...run.outputVariables };
         } else if (stepDoc.task) {
             // After template expansion, bash:/script:/pwsh: become task: Bash@3/CmdLine@2/PowerShell@2.
             // Detect these and run them natively; all other tasks go to the mock catalog.
@@ -1021,34 +1108,24 @@ class PipelineSimulator {
                 const stepEnv = this._resolveStepEnv(stepDoc.env, variables);
                 const executionStart = Date.now();
                 console.log(`[sim-exec] START shell=${nativeShell} step="${displayName}" cwd=${workDir}`);
-                const run = this._executeScript(nativeShell, substituted, variables, workDir, stepEnv, displayName);
+                const run = this.executePreparedStep(
+                    nativeShell,
+                    substituted,
+                    variables,
+                    workDir,
+                    stepEnv,
+                    displayName
+                );
                 const elapsedMs = Date.now() - executionStart;
                 console.log(
                     `[sim-exec] END shell=${nativeShell} step="${displayName}" exit=${run.exitCode} durationMs=${elapsedMs}`
                 );
-                const outputText = `${run.stdout || ''}\n${run.stderr || ''}`;
-                const ignoreCoverageConversionFailure =
-                    run.exitCode !== 0 &&
-                    /Microsoft\.CodeCoverage\.Console not found - skipping coverage conversion/i.test(outputText);
-                const ignoreSignCommandFailure = run.exitCode !== 0 && /Error in sign command:/i.test(outputText);
-                const ignoreFailure = ignoreCoverageConversionFailure || ignoreSignCommandFailure;
-
                 stepResult.stdout = run.stdout;
                 stepResult.stderr = run.stderr;
-                stepResult.exitCode = ignoreFailure ? 0 : run.exitCode;
-                stepResult.result = run.exitCode === 0 ? 'Succeeded' : 'Failed';
-                if (ignoreFailure) {
-                    stepResult.result = 'Succeeded';
-                }
-                applyDirectives(
-                    this._parseVsoDirectives(
-                        (run.stdout || '') +
-                            (run.stderr || '')
-                                .split('\n')
-                                .filter((l) => !/^\+/.test(l))
-                                .join('\n')
-                    )
-                );
+                stepResult.exitCode = run.exitCode;
+                stepResult.result = run.result;
+                stepResult.variables = { ...run.variables };
+                stepResult.outputVariables = { ...run.outputVariables };
             } else if (nativeShell && inputs.filePath) {
                 const scriptPath = path.resolve(workDir, inputs.filePath);
                 const env = { ...process.env };
@@ -1648,6 +1725,111 @@ class PipelineSimulator {
         return resolved;
     }
 
+    /**
+     * Public wrapper for script execution used by CLI and UI paths.
+     * Keeps call sites decoupled from internal/private method names.
+     */
+    executeScript(shell, script, variables, workingDirectory, extraEnv = {}, displayName = '') {
+        this._ensureSimulationDirectories(variables || {});
+        this._initializeWindowsShellDiscovery();
+        return this._executeScript(shell, script, variables, workingDirectory, extraEnv, displayName);
+    }
+
+    executePreparedStep(shell, script, variables, workingDirectory, extraEnv = {}, displayName = '') {
+        const run = this.executeScript(shell, script, variables, workingDirectory, extraEnv, displayName);
+        const outputText = `${run.stdout || ''}\n${run.stderr || ''}`;
+        const ignoreCoverageConversionFailure =
+            run.exitCode !== 0 &&
+            /Microsoft\.CodeCoverage\.Console not found - skipping coverage conversion/i.test(outputText);
+        const ignoreSignCommandFailure = run.exitCode !== 0 && /Error in sign command:/i.test(outputText);
+        const ignoreFailure = ignoreCoverageConversionFailure || ignoreSignCommandFailure;
+
+        const parsed = this._parseVsoDirectives(
+            (run.stdout || '') +
+                (run.stderr || '')
+                    .split('\n')
+                    .filter((line) => !/^\+/.test(line))
+                    .join('\n')
+        );
+
+        return {
+            ...run,
+            rawExitCode: run.exitCode,
+            exitCode: ignoreFailure ? 0 : run.exitCode,
+            result: run.exitCode === 0 || ignoreFailure ? 'Succeeded' : 'Failed',
+            variables: { ...parsed.local, ...parsed.output },
+            outputVariables: { ...parsed.output },
+            ignoreFailure,
+        };
+    }
+
+    _toWslPath(rawPath) {
+        const normalized = String(rawPath || '').replace(/\\/g, '/');
+        // \\wsl.localhost\Distro\path -> /path (strip mount root prefix)
+        if (this.wslMountRoot) {
+            const mountNorm = String(this.wslMountRoot).replace(/\\/g, '/');
+            if (normalized.toLowerCase().startsWith(mountNorm.toLowerCase() + '/')) {
+                return normalized.slice(mountNorm.length) || '/';
+            }
+        }
+        // //wsl.localhost/Distro/path -> /path
+        const uncWslMatch = /^\/\/wsl\.localhost\/[^/]+(.*)/.exec(normalized);
+        if (uncWslMatch) return uncWslMatch[1] || '/';
+        // C:\path -> /mnt/c/path
+        return normalized.replace(/^([A-Za-z]):[/\\]/, (_, drive) => `/mnt/${drive.toLowerCase()}/`);
+    }
+
+    _runScriptViaWsl(scriptPath, effectiveCwd, env, extraEnv) {
+        const wslScript = this._toWslPath(scriptPath);
+        const wslCwd = this._toWslPath(String(effectiveCwd || ''));
+
+        // WSL does not inherit custom Windows env vars (only those in WSLENV).
+        // Export step-level env vars explicitly and only convert real Windows paths.
+        const extraExports = Object.entries(extraEnv)
+            .map(([k, v]) => `export ${k}=${JSON.stringify(this._normalizeWslExtraEnvValue(v))}`)
+            .join('; ');
+
+        // Read stdout/stderr through explicit temp files and markers because
+        // direct stderr capture from wsl.exe can be unreliable.
+        const token = `aps${Date.now()}${Math.random().toString(36).slice(2)}`;
+        const outFile = `/tmp/${token}.out`;
+        const errFile = `/tmp/${token}.err`;
+        const marker = `__APS_MARKER_${token}__`;
+        const runScript = `cd ${JSON.stringify(wslCwd)} && bash ${JSON.stringify(wslScript)} >${JSON.stringify(outFile)} 2>${JSON.stringify(errFile)}`;
+        const cmd =
+            `${extraExports ? extraExports + '; ' : ''}` +
+            `${runScript}; _aps_exit=$?; ` +
+            `printf '%s\\n' "${marker}EXIT:$_aps_exit"; ` +
+            `printf '%s\\n' "${marker}OUT_START"; cat ${JSON.stringify(outFile)} 2>/dev/null; printf '%s\\n' "${marker}OUT_END"; ` +
+            `printf '%s\\n' "${marker}ERR_START"; cat ${JSON.stringify(errFile)} 2>/dev/null; printf '%s\\n' "${marker}ERR_END"; ` +
+            `rm -f ${JSON.stringify(outFile)} ${JSON.stringify(errFile)}`;
+
+        const raw = spawnSync(WINDOWS_WSL_EXE, ['--', 'bash', '-c', cmd], {
+            env,
+            encoding: 'utf8',
+            timeout: 60000,
+        });
+        const rawOut = raw.stdout || '';
+        const extractBetween = (text, startMarker, endMarker) => {
+            const startIdx = text.indexOf(startMarker);
+            if (startIdx === -1) return '';
+            const contentStart = text.indexOf('\n', startIdx) + 1;
+            const endIdx = contentStart > 0 ? text.indexOf(endMarker, contentStart) : -1;
+            if (contentStart === 0 || endIdx === -1) return '';
+            return text.slice(contentStart, endIdx);
+        };
+        const exitMatch = new RegExp(`${marker}EXIT:(-?\\d+)`).exec(rawOut);
+        const stdout = extractBetween(rawOut, `${marker}OUT_START`, `${marker}OUT_END`);
+        const stderr = extractBetween(rawOut, `${marker}ERR_START`, `${marker}ERR_END`);
+
+        return {
+            ...raw,
+            status: exitMatch ? parseInt(exitMatch[1], 10) : raw.status,
+            stdout: stripWslProxyWarning(stdout),
+            stderr: stripWslProxyWarning(stderr),
+        };
+    }
+
     _executeScript(shell, script, variables, workingDirectory, extraEnv = {}, displayName = '') {
         const shimDir = this._getShimDir();
         const ext = shell === 'bash' ? '.sh' : '.ps1';
@@ -1730,20 +1912,6 @@ class PipelineSimulator {
                     '    [ "${_APS_TRACE_WAS_ON:-0}" = "1" ] && set -x || true',
                     '}',
                     '',
-                    'echo() {',
-                    '    _aps_trace_pause',
-                    '    command echo "$@"',
-                    '    local _aps_line="$*" _aps_var _aps_val',
-                    '    case "$_aps_line" in',
-                    "        '##vso[task.setvariable'*)",
-                    "            _aps_var=$(printf '%s' \"$_aps_line\" | sed -n 's/.*variable=\\([A-Za-z_][A-Za-z0-9_]*\\)[^]]*\\].*/\\1/p') || true",
-                    "            _aps_val=$(printf '%s' \"$_aps_line\" | sed -n 's/^[^]]*\\]//p') || true",
-                    '            [ -n "$_aps_var" ] && export "$_aps_var=$_aps_val" 2>/dev/null || true',
-                    '            ;;',
-                    '    esac',
-                    '    _aps_trace_resume',
-                    '}',
-                    '',
                     '# Prefer resolved git path over PATH lookup on Windows bash variants.',
                     'APS_GIT_BIN="${APS_TOOL_PATH_GIT_WIN:-${APS_TOOL_PATH_GIT:-}}"',
                     'git() {',
@@ -1786,6 +1954,27 @@ class PipelineSimulator {
                     'if ! find --version >/dev/null 2>&1 && command -v /usr/bin/find >/dev/null 2>&1; then',
                     '    find() { /usr/bin/find "$@"; }',
                     'fi',
+                    '',
+                    '# Simulate build-wrapper archive extraction in offline mode where curl is mocked.',
+                    '# Some hosts resolve unzip to a real binary, which would fail on mocked empty zip output.',
+                    'unzip() {',
+                    '    local _src="" _dest="." _prev=""',
+                    '    for _arg in "$@"; do',
+                    '        if [ -z "$_src" ] && [ "${_arg#-}" = "$_arg" ]; then _src="$_arg"; fi',
+                    '        if [ "$_prev" = "-d" ]; then _dest="$_arg"; fi',
+                    '        _prev="$_arg"',
+                    '    done',
+                    '    case "${_src##*/}" in',
+                    '        *build-wrapper*win*.zip|*build-wrapper*linux*.zip|*build-wrapper*macosx*.zip)',
+                    '            mkdir -p "$_dest/build-wrapper-win-x86" "$_dest/build-wrapper-linux-x86" "$_dest/build-wrapper-macosx-x86"',
+                    '            : > "$_dest/build-wrapper-win-x86/build-wrapper-win-x86-64.exe"',
+                    '            : > "$_dest/build-wrapper-linux-x86/build-wrapper-linux-x86-64"',
+                    '            : > "$_dest/build-wrapper-macosx-x86/build-wrapper-macosx-x86"',
+                    '            return 0',
+                    '            ;;',
+                    '    esac',
+                    '    command unzip "$@"',
+                    '}',
                     '',
                     '# Mock jq if not available (e.g. Git Bash on Windows)',
                     'if ! command -v jq >/dev/null 2>&1; then',
@@ -1871,41 +2060,59 @@ class PipelineSimulator {
             // Expose pipeline variables as env vars using Azure DevOps convention:
             // dot/special chars → underscore, all uppercase (e.g. Build.Reason → BUILD_REASON)
             const env = { ...process.env };
+            const resolvedToolsPaths = this._getResolvedToolsPaths();
             for (const [key, value] of Object.entries(variables)) {
                 const safeKey = key.toUpperCase().replace(/[^A-Z0-9_]/g, '_');
                 env[safeKey] = String(value);
             }
+            const preferredHome = extraEnv.HOME || this._lookupVariable(variables, 'Agent.HomeDirectory');
+            env.HOME = String(preferredHome);
             // Step-level env: (from YAML `env:` block) — applied with their original key names
             for (const [key, value] of Object.entries(extraEnv)) {
                 env[key] = String(value);
             }
-            // Prepend shim dir so mock tools shadow any missing real tools
-            env.PATH = shimDir + path.delimiter + (env.PATH || '');
+            // Prefer configured real tools before the shim directory, which should only
+            // satisfy missing commands rather than shadow valid local installations.
+            const preferredToolDirs = [String(this.toolsDirectory || '').trim()]
+                .concat(
+                    Object.values(resolvedToolsPaths)
+                        .filter(Boolean)
+                        .map((toolPath) => path.dirname(toolPath))
+                )
+                .filter(Boolean);
+            const uniquePreferredToolDirs = [...new Set(preferredToolDirs)];
+            env.PATH =
+                uniquePreferredToolDirs.join(path.delimiter) +
+                (uniquePreferredToolDirs.length ? path.delimiter : '') +
+                shimDir +
+                path.delimiter +
+                (env.PATH || '');
             if (shell === 'bash' && process.platform === 'win32') {
                 // BusyBox/Git Bash command lookup is more reliable with a POSIX-style
                 // shim path in front of PATH. Also add directories of all resolved tools
                 // so that e.g. git from PortableGit is visible inside the bash script.
                 const bashShimDir = this._toBashPath(shimDir);
-                const resolvedForPath = this._getResolvedToolsPaths();
                 const toolDirs = [
                     ...new Set(
-                        Object.values(resolvedForPath)
+                        [String(this.toolsDirectory || '').trim()]
+                            .concat(Object.values(resolvedToolsPaths))
                             .filter(Boolean)
                             .map((p) => this._toBashPath(path.dirname(p)))
                             .filter(Boolean)
                     ),
                 ];
-                const extraDirs = toolDirs.length ? toolDirs.join(':') + ':' : '';
+                const gitBashDirs = this._getWindowsGitBashPathEntries();
+                const preferredDirs = [...new Set([...gitBashDirs, ...toolDirs])];
+                const extraDirs = preferredDirs.length ? preferredDirs.join(':') + ':' : '';
                 // /usr/bin and /bin must be explicitly included: Git Bash does not source
                 // its profile when invoked as `bash.exe script.sh`, so it never auto-adds
                 // its bundled Unix tools (grep, sed, tr, tee, rm, etc.) to PATH.
-                env.PATH = `${bashShimDir}:${extraDirs}/usr/bin:/bin:${env.PATH || ''}`;
+                env.PATH = `${extraDirs}${bashShimDir}:/usr/bin:/bin:${env.PATH || ''}`;
             }
             if (pythonApiShimDir) {
                 env.PYTHONPATH = pythonApiShimDir + path.delimiter + (env.PYTHONPATH || '');
             }
             if (shell === 'bash') {
-                const resolvedToolsPaths = this._getResolvedToolsPaths();
                 env.APS_RESOLVED_TOOLS_PATHS = JSON.stringify(resolvedToolsPaths);
                 for (const [toolName, toolPath] of Object.entries(resolvedToolsPaths)) {
                     const safeToolName = String(toolName)
@@ -2017,140 +2224,43 @@ class PipelineSimulator {
                 _rawConfiguredShell && this._failedConfiguredShells.has(_rawConfiguredShell)
                     ? null
                     : _rawConfiguredShell;
-            // Derive Git Bash candidates. Modern Git for Windows puts bash
-            // in usr\bin\bash.exe (not bin\bash.exe). Also derive path from
-            // the configured git executable if available.
-            const _gitExePath = this.executablePaths && (this.executablePaths['git'] || this.executablePaths['Git']);
-            const _gitRootFromExe = _gitExePath
-                ? (() => {
-                      // e.g. C:\Program Files\Git\cmd\git.exe -> C:\Program Files\Git
-                      const d = path.dirname(_gitExePath); // cmd/ or bin/
-                      const root = path.dirname(d);
-                      return fs.existsSync(path.join(root, 'usr', 'bin', 'bash.exe')) ||
-                          fs.existsSync(path.join(root, 'bin', 'bash.exe'))
-                          ? root
-                          : null;
-                  })()
-                : null;
             const windowsGitBashCandidates =
-                shell === 'bash' && process.platform === 'win32'
-                    ? [
-                          // Derived from configured git path (most reliable)
-                          _gitRootFromExe ? path.join(_gitRootFromExe, 'usr', 'bin', 'bash.exe') : null,
-                          _gitRootFromExe ? path.join(_gitRootFromExe, 'bin', 'bash.exe') : null,
-                          // Standard installation paths — usr\bin first (modern Git for Windows)
-                          'C:\\Program Files\\Git\\usr\\bin\\bash.exe',
-                          'C:\\Program Files\\Git\\bin\\bash.exe',
-                          'C:\\Program Files (x86)\\Git\\usr\\bin\\bash.exe',
-                          'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
-                          process.env.ProgramFiles
-                              ? path.join(process.env.ProgramFiles, 'Git', 'usr', 'bin', 'bash.exe')
-                              : null,
-                          process.env.ProgramFiles
-                              ? path.join(process.env.ProgramFiles, 'Git', 'bin', 'bash.exe')
-                              : null,
-                          process.env['ProgramFiles(x86)']
-                              ? path.join(process.env['ProgramFiles(x86)'], 'Git', 'usr', 'bin', 'bash.exe')
-                              : null,
-                          process.env['ProgramFiles(x86)']
-                              ? path.join(process.env['ProgramFiles(x86)'], 'Git', 'bin', 'bash.exe')
-                              : null,
-                          process.env.LOCALAPPDATA
-                              ? path.join(process.env.LOCALAPPDATA, 'Programs', 'Git', 'usr', 'bin', 'bash.exe')
-                              : null,
-                          process.env.LOCALAPPDATA
-                              ? path.join(process.env.LOCALAPPDATA, 'Programs', 'Git', 'bin', 'bash.exe')
-                              : null,
-                      ].filter(Boolean)
-                    : [];
+                shell === 'bash' && process.platform === 'win32' ? this._windowsGitBashCandidates : [];
             lastShellInvocation = configuredShell || shell;
 
             // tryRun uses the native Windows path by default; pass scriptArgMsys for Git Bash.
             const tryRun = (shellName, scriptPath = scriptArg) => {
                 lastShellInvocation = shellName;
+                let runEnv = env;
+                if (shell === 'bash' && process.platform === 'win32') {
+                    // Always prefer binaries from the selected Git Bash install over
+                    // similarly named Windows system tools (e.g. FIND.EXE in system32).
+                    const perShellGitBashDirs = this._getWindowsGitBashPathEntries(shellName);
+                    if (perShellGitBashDirs.length) {
+                        runEnv = {
+                            ...env,
+                            PATH: `${perShellGitBashDirs.join(':')}:${env.PATH || ''}`,
+                        };
+                    }
+                }
                 return spawnSync(shellName, [scriptPath], {
-                    env,
+                    env: runEnv,
                     cwd: effectiveCwd,
                     encoding: 'utf8',
                     timeout: 60000,
                 });
             };
 
-            // Convert a Windows path to a WSL /mnt/... path.
-            const _toWslPath = (p) =>
-                String(p || '')
-                    .replace(/^([A-Za-z]):[/\\]/, (_, d) => `/mnt/${d.toLowerCase()}/`)
-                    .replace(/\\/g, '/');
-
             // tryRunWsl: run the script via wsl.exe -- bash <wslPath>.
             // WSL bash fully supports arrays and process substitution.
-            const _wslExe = 'C:\\Windows\\System32\\wsl.exe';
             const tryRunWsl = (scriptPath = scriptArg) => {
-                lastShellInvocation = _wslExe;
-                const wslScript = _toWslPath(scriptPath);
-                const wslCwd = _toWslPath(String(effectiveCwd || ''));
-                // WSL does not inherit custom Windows env vars (only those in
-                // WSLENV). Export step-level env vars (extraEnv) explicitly
-                // inside the bash command, converting Windows paths to WSL paths.
-                const _extraExports = Object.entries(extraEnv)
-                    .map(([k, v]) => `export ${k}=${JSON.stringify(_toWslPath(String(v)))}`)
-                    .join('; ');
-                // Reading WSL's stderr pipe directly from Node.js spawnSync is
-                // unreliable, so the script's stdout/stderr are each redirected
-                // to a temp file inside WSL, then streamed back through the
-                // single (reliable) stdout channel of this wrapper command,
-                // delimited by unique markers. This preserves which lines were
-                // really stdout vs stderr instead of merging everything into
-                // one stream.
-                const _token = `aps${Date.now()}${Math.random().toString(36).slice(2)}`;
-                const _outFile = `/tmp/${_token}.out`;
-                const _errFile = `/tmp/${_token}.err`;
-                const _marker = `__APS_MARKER_${_token}__`;
-                const _runScript = `cd ${JSON.stringify(wslCwd)} && bash ${JSON.stringify(wslScript)} >${JSON.stringify(_outFile)} 2>${JSON.stringify(_errFile)}`;
-                const _cmd =
-                    `${_extraExports ? _extraExports + '; ' : ''}` +
-                    `${_runScript}; _aps_exit=$?; ` +
-                    `printf '%s\\n' "${_marker}EXIT:$_aps_exit"; ` +
-                    `printf '%s\\n' "${_marker}OUT_START"; cat ${JSON.stringify(_outFile)} 2>/dev/null; printf '%s\\n' "${_marker}OUT_END"; ` +
-                    `printf '%s\\n' "${_marker}ERR_START"; cat ${JSON.stringify(_errFile)} 2>/dev/null; printf '%s\\n' "${_marker}ERR_END"; ` +
-                    `rm -f ${JSON.stringify(_outFile)} ${JSON.stringify(_errFile)}`;
-                const raw = spawnSync(_wslExe, ['--', 'bash', '-c', _cmd], {
-                    env,
-                    encoding: 'utf8',
-                    timeout: 60000,
-                });
-                const _rawOut = raw.stdout || '';
-                const _extractBetween = (text, startMarker, endMarker) => {
-                    const startIdx = text.indexOf(startMarker);
-                    if (startIdx === -1) return '';
-                    const contentStart = text.indexOf('\n', startIdx) + 1;
-                    const endIdx = contentStart > 0 ? text.indexOf(endMarker, contentStart) : -1;
-                    if (contentStart === 0 || endIdx === -1) return '';
-                    return text.slice(contentStart, endIdx);
-                };
-                const _exitMatch = new RegExp(`${_marker}EXIT:(-?\\d+)`).exec(_rawOut);
-                const _stdout = _extractBetween(_rawOut, `${_marker}OUT_START`, `${_marker}OUT_END`);
-                const _stderr = _extractBetween(_rawOut, `${_marker}ERR_START`, `${_marker}ERR_END`);
-                return {
-                    ...raw,
-                    status: _exitMatch ? parseInt(_exitMatch[1], 10) : raw.status,
-                    stdout: stripWslProxyWarning(_stdout),
-                    stderr: stripWslProxyWarning(_stderr),
-                };
+                lastShellInvocation = WINDOWS_WSL_EXE;
+                return this._runScriptViaWsl(scriptPath, effectiveCwd, env, extraEnv);
             };
-            const _wslAvailable =
-                process.platform === 'win32' &&
-                (() => {
-                    try {
-                        return fs.existsSync(_wslExe);
-                    } catch (_) {
-                        return false;
-                    }
-                })();
+            const _wslAvailable = process.platform === 'win32' && this._wslAvailable;
 
             // If the user configured wsl.exe as the bash, handle it specially.
             const _configuredIsWsl = configuredShell && /[/\\]wsl\.exe$/i.test(configuredShell);
-
             let run;
             if (shell === 'bash' && process.platform === 'win32' && !configuredShell) {
                 // Prefer full Git Bash first on Windows because some lightweight bash
@@ -2176,12 +2286,18 @@ class PipelineSimulator {
             // When using a lightweight configured shell (e.g. BusyBox) that may not support
             // full bash syntax, fall back to Git Bash on Windows when the script fails.
             // Try POSIX arithmetic rewrite first, then full Git Bash.
+            // Only enter this path when the failure looks like a shell-incompatibility issue
+            // (bash syntax error) — not for ordinary non-zero exit codes from the script itself.
+            const _looksLikeShellIncompatibility =
+                run &&
+                run.status !== 0 &&
+                (_bashParseErrorPattern.test(String(run.stderr || '')) ||
+                    _bashParseErrorPattern.test(String(run.stdout || '')));
             if (
                 shell === 'bash' &&
                 process.platform === 'win32' &&
                 configuredShell &&
-                run &&
-                run.status !== 0 &&
+                _looksLikeShellIncompatibility &&
                 windowsGitBashCandidates.length > 0
             ) {
                 // First: rewrite ((...)) to POSIX and retry with the configured shell.
@@ -2839,8 +2955,12 @@ exit 0
             );
             const testPatterns = rawPatterns
                 .split('\n')
-                // Normalize Windows path separators and any \t-as-tab from YAML double-quoted strings
-                .map((p) => p.replace(/[\\\t]/g, '/').trim())
+                // Normalize Windows path separators. YAML double-quoted strings interpret \t as a
+                // tab character (consuming the backslash and the 't'), so !**\testhost.dll becomes
+                // "!**" + TAB + "esthost.dll". Restore the intended path by replacing TAB → "/t"
+                // (which reconstructs the separator + the letter 't'), then replace any remaining
+                // backslashes with forward slashes.
+                .map((p) => p.replace(/\t/g, '/t').replace(/\\/g, '/').trim())
                 .filter(Boolean);
             const includePatterns = testPatterns.filter((p) => !p.startsWith('!'));
             const excludePatterns = testPatterns.filter((p) => p.startsWith('!')).map((p) => p.slice(1));
@@ -2885,6 +3005,20 @@ exit 0
             try {
                 const discoveredFiles = this._materializeMockBuildOutputs(workDir, buildContext);
                 if (discoveredFiles.length > 0) {
+                    // Pre-populate bin-files.txt in Agent.TempDirectory so that publish steps
+                    // that call create-filelist-v0.yaml don't fail when the bash redirect is
+                    // unreliable on Windows (mixed backslash/forward-slash paths).
+                    const tempDir = variables['Agent.TempDirectory'] || variables['agent.tempdirectory'];
+                    if (tempDir) {
+                        const binFilesPath = path.join(String(tempDir), 'bin-files.txt');
+                        try {
+                            const fileList = discoveredFiles.map((f) => `./${f.replace(/\\/g, '/')}`).join('\n') + '\n';
+                            fs.mkdirSync(path.dirname(binFilesPath), { recursive: true });
+                            if (!fs.existsSync(binFilesPath)) {
+                                fs.writeFileSync(binFilesPath, fileList, 'utf8');
+                            }
+                        } catch (_) {}
+                    }
                     return (
                         `[sim] build outputs (${taskRef}):\n` + discoveredFiles.map((f) => `[sim]   ${f}`).join('\n')
                     );
@@ -3034,6 +3168,25 @@ exit 0
         return this._resolveHostPath(path.posix.join((workDir || process.cwd()).replace(/\\/g, '/'), substituted));
     }
 
+    _normalizeWslExtraEnvValue(rawValue) {
+        const value = String(rawValue || '');
+        // YAML double-quoted globs like !**\testhost.dll can degrade into
+        // !**<TAB>esthost.dll before reaching WSL export. Repair that specific
+        // consumed separator, but only path-convert values that are actually paths.
+        const repaired = value.replace(/\t/g, '/t');
+        const trimmed = repaired.trim();
+        if (!trimmed) return repaired;
+
+        const looksLikeWindowsPath =
+            /^[A-Za-z]:[\\/]/.test(trimmed) ||
+            /^\\\\wsl\.localhost\\[^\\]+\\/i.test(trimmed) ||
+            /^\/\/wsl\.localhost\/[^/]+\//i.test(trimmed);
+
+        return looksLikeWindowsPath
+            ? repaired.replace(/\\/g, '/').replace(/^([A-Za-z]):\//, (_, d) => `/mnt/${d.toLowerCase()}/`)
+            : repaired;
+    }
+
     _recordDownloadTarget(targetPath) {
         const resolvedTargetPath = path.resolve(targetPath);
         const parentPath = path.dirname(resolvedTargetPath);
@@ -3127,11 +3280,7 @@ exit 0
                     return;
                 }
                 if (entries.length === 0) {
-                    fs.writeFileSync(
-                        path.join(publishPath, 'artifact-placeholder.txt'),
-                        `Simulated artifact placeholder for ${artifactName}\n`,
-                        'utf8'
-                    );
+                    this._materializeFallbackBuildArtifacts(publishPath);
                 }
             }
             return;
@@ -3149,11 +3298,7 @@ exit 0
             this._materializeDummyNugetPackages(publishPath, variables);
             return;
         }
-        fs.writeFileSync(
-            path.join(publishPath, 'artifact-placeholder.txt'),
-            `Simulated artifact placeholder for ${artifactName}\n`,
-            'utf8'
-        );
+        this._materializeFallbackBuildArtifacts(publishPath);
     }
 
     _scanWorkDirFiles(workDir) {

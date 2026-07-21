@@ -17,6 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 const minimist = require('minimist');
+const { PipelineSimulator } = require('../simulator.js');
 
 const {
     handleListStages,
@@ -267,6 +268,85 @@ runTest('runscript: returns step location metadata', () => {
     assertEqual(result.stage, 1, 'stage');
     assertEqual(result.job, 1, 'job');
     assertEqual(result.step, 2, 'step');
+});
+
+runTest('runscript: sandboxes HOME inside the simulation agent home', () => {
+    const tmpDir = fs.mkdtempSync('/tmp/aps-runscript-home-');
+    const pipelinePath = path.join(tmpDir, 'azure-pipelines.yaml');
+    fs.writeFileSync(
+        pipelinePath,
+        [
+            'stages:',
+            '- stage: Test',
+            '  jobs:',
+            '  - job: Test',
+            '    steps:',
+            '    - bash: |',
+            '        printf "%s" "$HOME"',
+            '      displayName: Print HOME',
+        ].join('\n')
+    );
+
+    const previousCwd = process.cwd();
+    try {
+        process.chdir(tmpDir);
+        const result = handleRunScript(['-stage', '1', '-job', '1', '-step', '1', pipelinePath]);
+        assert(result.success, result.error || 'expected success');
+        const expectedHome = path.join(tmpDir, 'simulation', 'agent', 'home');
+        assertEqual(result.output, expectedHome, 'sandbox HOME');
+        assert(fs.existsSync(expectedHome), 'expected sandbox home directory to exist');
+    } finally {
+        process.chdir(previousCwd);
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+runTest('runscript: prefers explicit HOME env for Bash@3 steps', () => {
+    const tmpDir = fs.mkdtempSync('/tmp/aps-runscript-home-override-');
+    const pipelinePath = path.join(tmpDir, 'azure-pipelines.yaml');
+    const customHome = path.join(tmpDir, 'custom-home');
+    fs.writeFileSync(
+        pipelinePath,
+        [
+            'stages:',
+            '- stage: Test',
+            '  jobs:',
+            '  - job: Test',
+            '    steps:',
+            '    - task: Bash@3',
+            '      env:',
+            `        HOME: ${JSON.stringify(customHome)}`,
+            '      inputs:',
+            '        targetType: inline',
+            '        script: |',
+            '          printf "%s" "$HOME"',
+            '      displayName: Print HOME',
+        ].join('\n')
+    );
+
+    const previousCwd = process.cwd();
+    try {
+        process.chdir(tmpDir);
+        const result = handleRunScript(['-stage', '1', '-job', '1', '-step', '1', pipelinePath]);
+        assert(result.success, result.error || 'expected success');
+        assertEqual(result.output, customHome, 'explicit HOME override');
+    } finally {
+        process.chdir(previousCwd);
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+runTest('simulator: WSL env normalization preserves globs and repairs tab-corrupted testhost patterns', () => {
+    const simulator = new PipelineSimulator();
+    const corruptedPattern = '!**\testhost.dll';
+    const windowsPath = 'C:\\temp\\artifact\\file.txt';
+
+    assertEqual(simulator._normalizeWslExtraEnvValue(corruptedPattern), '!**/testhost.dll', 'repaired glob pattern');
+    assertEqual(
+        simulator._normalizeWslExtraEnvValue(windowsPath),
+        '/mnt/c/temp/artifact/file.txt',
+        'converted Windows path'
+    );
 });
 
 runTest('runscript: error on non-executable step (task)', () => {

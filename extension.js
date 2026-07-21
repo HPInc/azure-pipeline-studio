@@ -159,6 +159,7 @@ function runPipelineSimulation(
         libraryVariables = {},
         stages,
         executablePaths = {},
+        toolsDirectory = '',
         wslMountRoot = null,
         checkoutSource,
         checkoutRepository,
@@ -204,7 +205,7 @@ function runPipelineSimulation(
             .toLowerCase() === 'true';
 
     const outRoot = outputRoot.replace(/[/\\]$/, '');
-    const simulatorConfig = { outputRoot: outRoot, executablePaths, wslMountRoot, debugScript };
+    const simulatorConfig = { outputRoot: outRoot, executablePaths, toolsDirectory, wslMountRoot, debugScript };
     if (mockCatalog) simulatorConfig.mockCatalog = mockCatalog;
     const simulator = new PipelineSimulator(simulatorConfig);
     return simulator.simulate(parsedDoc, simOptions);
@@ -1720,8 +1721,15 @@ function activate(context) {
         lastSimParserOptions = parserOptions;
 
         if (simulationPanel) {
-            simulationPanel.reveal(vscode.ViewColumn.Two, true);
-        } else {
+            try {
+                simulationPanel.reveal(vscode.ViewColumn.Two, true);
+            } catch (_revealErr) {
+                // Panel may have been disposed asynchronously; reset and fall through to create a new one
+                simulationPanel = null;
+                activeSimulationPanel = null;
+            }
+        }
+        if (!simulationPanel) {
             simulationPanel = vscode.window.createWebviewPanel(
                 'pipelineSimulation',
                 'Simulate Pipeline Run',
@@ -1977,6 +1985,9 @@ function activate(context) {
                     const legacy = context.workspaceState.get('aps.vars', null) || {};
                     const savedAzure = context.workspaceState.get('aps.azureVars', null);
                     const savedLib = context.workspaceState.get('aps.libVars', null);
+                    const toolsDirectoryForLoad = vscode.workspace
+                        .getConfiguration('azurePipelineStudio', document.uri)
+                        .get('simulation.toolsDirectory', null);
                     const execPathsRawForLoad = vscode.workspace
                         .getConfiguration('azurePipelineStudio', document.uri)
                         .get('simulation.toolPaths', {});
@@ -1995,6 +2006,7 @@ function activate(context) {
                               ? legacy.libData
                               : [],
                         toolPaths: mergedToolPathsForLoad,
+                        toolsDirectory: toolsDirectoryForLoad,
                     };
                     if (simulationPanel && simulationPanel.webview) {
                         simulationPanel.webview.postMessage({ command: 'varsLoaded', data: merged });
@@ -2029,6 +2041,10 @@ function activate(context) {
                 if (message.command === 'saveToolPaths') {
                     const nextToolPaths =
                         message.data && typeof message.data.toolPaths === 'object' ? message.data.toolPaths : {};
+                    const nextToolsDirectory =
+                        message.data && typeof message.data.toolsDirectory === 'string'
+                            ? message.data.toolsDirectory.trim() || null
+                            : null;
                     const platformKey = isLinuxSimulationContext(document.fileName) ? 'linux' : 'windows';
                     const otherKey = platformKey === 'linux' ? 'windows' : 'linux';
                     try {
@@ -2039,6 +2055,11 @@ function activate(context) {
                             updated[otherKey] = existing[otherKey];
                         if (Object.keys(nextToolPaths).length) updated[platformKey] = nextToolPaths;
                         await cfg.update('simulation.toolPaths', updated, vscode.ConfigurationTarget.Global);
+                        await cfg.update(
+                            'simulation.toolsDirectory',
+                            nextToolsDirectory,
+                            vscode.ConfigurationTarget.Global
+                        );
                     } catch (_) {}
                     return;
                 }
@@ -2050,6 +2071,7 @@ function activate(context) {
                         const existing = cfg.get('simulation.toolPaths', {}) || {};
                         const kept = existing[otherKey] ? { [otherKey]: existing[otherKey] } : {};
                         await cfg.update('simulation.toolPaths', kept, vscode.ConfigurationTarget.Global);
+                        await cfg.update('simulation.toolsDirectory', null, vscode.ConfigurationTarget.Global);
                     } catch (_) {}
                     return;
                 }
@@ -2064,6 +2086,22 @@ function activate(context) {
                     if (picked && picked[0] && simulationPanel && simulationPanel.webview) {
                         simulationPanel.webview.postMessage({
                             command: 'toolPathBrowseResult',
+                            path: picked[0].fsPath,
+                        });
+                    }
+                    return;
+                }
+                if (message.command === 'browseToolsFolder') {
+                    const picked = await vscode.window.showOpenDialog({
+                        canSelectFiles: false,
+                        canSelectFolders: true,
+                        canSelectMany: false,
+                        openLabel: 'Select folder',
+                        title: 'Select tools folder',
+                    });
+                    if (picked && picked[0] && simulationPanel && simulationPanel.webview) {
+                        simulationPanel.webview.postMessage({
+                            command: 'toolsFolderBrowseResult',
                             path: picked[0].fsPath,
                         });
                     }
@@ -2180,6 +2218,9 @@ function activate(context) {
                         const simOutRoot = simWorkDir.replace(/[\/\\]$/, '') + '/simulation';
                         const bcNum = parseInt(msgCounter, 10);
                         const bcStr = isNaN(bcNum) ? '1' : String(bcNum);
+                        const toolsDirectorySetting = vscode.workspace
+                            .getConfiguration('azurePipelineStudio', document.uri)
+                            .get('simulation.toolsDirectory', null);
                         const execPathsRaw = vscode.workspace
                             .getConfiguration('azurePipelineStudio', document.uri)
                             .get('simulation.toolPaths', {});
@@ -2202,13 +2243,24 @@ function activate(context) {
                             buildCounter: bcStr,
                             userVariables: stepVarOverrides,
                             executablePaths: execPaths,
+                            toolsDirectory:
+                                typeof message.toolsDirectory === 'string' && message.toolsDirectory.trim()
+                                    ? message.toolsDirectory.trim()
+                                    : toolsDirectorySetting || '',
                             wslMountRoot,
                         });
                         simOutputChannel.appendLine(
                             `[aps] runSingleStep complete — passed=${results.totalPassed} failed=${results.totalFailed}`
                         );
                         if (simulationPanel && simulationPanel.webview)
-                            simulationPanel.webview.postMessage({ command: 'simulationResults', results });
+                            simulationPanel.webview.postMessage({
+                                command: 'simulationResults',
+                                results,
+                                singleStep: true,
+                                si: stageIndex,
+                                ji: jobIndex,
+                                ti: stepIndex,
+                            });
                     } catch (err) {
                         simOutputChannel.appendLine(`[aps] runSingleStep ERROR: ${(err && err.stack) || err}`);
                         if (err && err.code === 'EPERM') {
@@ -2277,6 +2329,9 @@ function activate(context) {
                     const simWorkDir = _resolveSimulationWorkingDirectory(document, parserOptions);
                     const simOutRoot = simWorkDir.replace(/[/\\]$/, '') + '/simulation';
                     simOutputChannel.appendLine(`[aps] workDir=${simWorkDir}`);
+                    const toolsDirectorySetting = vscode.workspace
+                        .getConfiguration('azurePipelineStudio', document.uri)
+                        .get('simulation.toolsDirectory', null);
                     const execPathsRaw = vscode.workspace
                         .getConfiguration('azurePipelineStudio', document.uri)
                         .get('simulation.toolPaths', {});
@@ -2309,6 +2364,10 @@ function activate(context) {
                         libraryVariables: libVarsFromMessage,
                         stages,
                         executablePaths: execPaths,
+                        toolsDirectory:
+                            typeof message.toolsDirectory === 'string' && message.toolsDirectory.trim()
+                                ? message.toolsDirectory.trim()
+                                : toolsDirectorySetting || '',
                         wslMountRoot,
                     });
                     simOutputChannel.appendLine(
@@ -2346,6 +2405,9 @@ function activate(context) {
         const _settingsExecPathsRaw = vscode.workspace
             .getConfiguration('azurePipelineStudio', document.uri)
             .get('simulation.toolPaths', {});
+        const _settingsToolsDirectory = vscode.workspace
+            .getConfiguration('azurePipelineStudio', document.uri)
+            .get('simulation.toolsDirectory', null);
         const _settingsExecPaths = resolveExecPaths(_settingsExecPathsRaw, isLinuxSimulationContext(document.fileName));
         const _mergedToolPaths = Object.assign(
             {},
@@ -2364,6 +2426,7 @@ function activate(context) {
                       ? _legacyVars.libData
                       : [],
                 toolPaths: _mergedToolPaths,
+                toolsDirectory: _settingsToolsDirectory,
             })
         );
         const expandedStepsJsonStr = JSON.stringify(
@@ -2413,12 +2476,20 @@ function activate(context) {
     const showSimulationViewDisposable = vscode.commands.registerCommand(
         'azurePipelineStudio.showSimulationView',
         async () => {
-            const editor = vscode.window.activeTextEditor;
-            if (!editor || !shouldRenderDocument(editor.document)) {
-                vscode.window.showInformationMessage('Open an Azure Pipeline YAML file to launch the simulation view.');
-                return;
+            try {
+                const editor = vscode.window.activeTextEditor;
+                if (!editor || !shouldRenderDocument(editor.document)) {
+                    vscode.window.showInformationMessage(
+                        'Open an Azure Pipeline YAML file to launch the simulation view.'
+                    );
+                    return;
+                }
+                await openSimulationView(editor.document);
+            } catch (cmdErr) {
+                vscode.window.showErrorMessage(
+                    `Pipeline Simulation failed to open: ${(cmdErr && cmdErr.message) || cmdErr}`
+                );
             }
-            await openSimulationView(editor.document);
         }
     );
     context.subscriptions.push(showSimulationViewDisposable);
@@ -2880,6 +2951,17 @@ function deactivate() {
         }
         activeDependenciesPanel = null;
     }
+
+    // Dispose of simulation panel if still open
+    if (activeSimulationPanel) {
+        try {
+            activeSimulationPanel.dispose();
+        } catch (e) {
+            // Panel may already be disposed, ignore
+        }
+        activeSimulationPanel = null;
+        simulationPanel = null;
+    }
 }
 
 function formatTemplateExpansionError(displayPath, expandError) {
@@ -3298,9 +3380,8 @@ function handleRunScript(args) {
             };
         }
 
-        // Prepare environment
-        const env = { ...process.env };
-
+        // Reuse the simulator's shell execution engine so CLI runscript and UI simulation
+        // execute scripts with the same shell fallback, shims, and output behavior.
         const resolveEnvMacros = (value, lookup) => {
             const raw = String(value === undefined || value === null ? '' : value);
             return raw.replace(/\$\(([^)]+)\)/g, (full, name) => {
@@ -3333,32 +3414,22 @@ function handleRunScript(args) {
         };
 
         const executableScript = resolveScriptMacros(resolvedScript, macroLookup);
+        let executionVariables = {
+            ...(stepInputs && stepInputs.compileTimeVariableValues ? stepInputs.compileTimeVariableValues : {}),
+            ...(stepInputs && stepInputs.runtimeVariableValues ? stepInputs.runtimeVariableValues : {}),
+        };
+        const stepExtraEnv = {};
 
         // Add step environment variables
         if (stepInputs && stepInputs.stepEnvironment) {
             Object.entries(stepInputs.stepEnvironment).forEach(([key, value]) => {
-                env[key] = resolveEnvMacros(value, macroLookup);
+                stepExtraEnv[key] = resolveEnvMacros(value, macroLookup);
             });
         }
 
-        // Add compile-time and runtime variables; also set the normalized
-        // env var form (Build.SourceBranch -> BUILD_SOURCEBRANCH) so bash
-        // scripts can access them via ${BUILD_SOURCEBRANCH} etc.
+        // Map variable names to Azure-style environment keys.
         const toEnvKey = (k) => k.toUpperCase().replace(/[^A-Z0-9_]/g, '_');
-        if (stepInputs && stepInputs.compileTimeVariableValues) {
-            Object.entries(stepInputs.compileTimeVariableValues).forEach(([key, value]) => {
-                env[key] = String(value);
-                env[toEnvKey(key)] = String(value);
-            });
-        }
 
-        // Add runtime variables
-        if (stepInputs && stepInputs.runtimeVariableValues) {
-            Object.entries(stepInputs.runtimeVariableValues).forEach(([key, value]) => {
-                env[key] = String(value);
-                env[toEnvKey(key)] = String(value);
-            });
-        }
         // Execute the script
         try {
             let script = executableScript;
@@ -3375,6 +3446,9 @@ function handleRunScript(args) {
                     const hasSetX = /(^|\n)\s*set\s+-[^\n]*x\b/.test(script);
                     if (!hasSetX) script = `set -x\n${script}`;
                 }
+                if (debugMode || xtrace) {
+                    script = `echo "[APS] scriptCwd=$PWD" >&2\necho "[APS] OUTPUT_FILE=${stepExtraEnv['OUTPUT_FILE'] || process.env.OUTPUT_FILE || '(unset)'}" >&2\n${script}`;
+                }
             }
 
             const mergeOutput = (stdoutText, stderrText, includeStderr) => {
@@ -3389,83 +3463,85 @@ function handleRunScript(args) {
                 return (stderrValue || stdoutValue).trim();
             };
 
-            // Execute script in an isolated HOME so writes don't affect
-            // the real user's ~/.gitconfig, ~/.bashrc, etc.
-            // ~/.gitconfig is copied (git reads work), ~/.ssh is symlinked (SSH
-            // auth works), but any writes go to the temp dir and are discarded.
-            const scriptCwd = path.dirname(path.resolve(filePath));
-            const isolatedHome = fs.mkdtempSync(path.join(process.env.HOME || os.homedir(), 'aps-run-'));
-            try {
-                const realHome = process.env.HOME || os.homedir();
-                const gitConfig = path.join(realHome, '.gitconfig');
-                if (fs.existsSync(gitConfig)) {
-                    fs.copyFileSync(gitConfig, path.join(isolatedHome, '.gitconfig'));
+            // Pick a working directory and always publish it as Build.SourcesDirectory.
+            const scriptCwd = (() => {
+                const pipelineDir = path.dirname(path.resolve(filePath));
+                const setBuildSourcesDirectory = (dirPath) => {
+                    executionVariables['Build.SourcesDirectory'] = dirPath;
+                    executionVariables['BUILD_SOURCESDIRECTORY'] = dirPath;
+                    return dirPath;
+                };
+                // Only honour Build.SourcesDirectory when the user explicitly supplied it in
+                // --input, not when it was auto-populated from compile-time defaults.
+                const userSourcesDir =
+                    normalizedOverrides.compileTimeVariables &&
+                    (normalizedOverrides.compileTimeVariables['Build.SourcesDirectory'] ||
+                        normalizedOverrides.compileTimeVariables['BUILD_SOURCESDIRECTORY']);
+                if (userSourcesDir) {
+                    const resolved = path.resolve(String(userSourcesDir));
+                    if (fs.existsSync(resolved)) return setBuildSourcesDirectory(resolved);
                 }
-                const sshDir = path.join(realHome, '.ssh');
-                if (fs.existsSync(sshDir)) {
-                    fs.symlinkSync(sshDir, path.join(isolatedHome, '.ssh'));
+                // If the user is running from a directory other than the pipeline dir, they
+                // intentionally navigated there (e.g. an artifact staging directory with DLLs).
+                const processCwd = process.cwd();
+                if (path.resolve(processCwd) !== path.resolve(pipelineDir)) {
+                    return setBuildSourcesDirectory(processCwd);
                 }
-            } catch (_) {
-                /* non-fatal — git may still work without these */
-            }
-            env.HOME = isolatedHome;
+                // Auto-detect a prior --simulate run: use artifacts/bins if it exists so that
+                // steps like CreateBinaryFileList can find the build outputs without manual flags.
+                const simBinsDir = path.join(pipelineDir, 'simulation', 'artifacts', 'bins');
+                if (fs.existsSync(simBinsDir)) {
+                    return setBuildSourcesDirectory(simBinsDir);
+                }
+                return setBuildSourcesDirectory(pipelineDir);
+            })();
 
-            const execResult =
-                shell === 'pwsh'
-                    ? spawnSync('pwsh', ['-NoProfile', '-Command', script], {
-                          env,
-                          encoding: 'utf8',
-                          cwd: scriptCwd,
-                      })
-                    : spawnSync('/bin/bash', ['-lc', script], {
-                          env,
-                          encoding: 'utf8',
-                          cwd: scriptCwd,
-                      });
+            // Seed baseline Azure variables for CLI runscript, then preserve explicit
+            // step/user overrides gathered above.
+            const defaultExecutionVariables = buildSimulationDefaultVariables(
+                scriptCwd,
+                path.join(scriptCwd, 'simulation'),
+                '1',
+                {}
+            );
+            executionVariables = {
+                ...defaultExecutionVariables,
+                ...executionVariables,
+            };
 
-            try {
-                fs.rmSync(isolatedHome, { recursive: true, force: true });
-            } catch (_) {}
+            const simulatorExecutor = new PipelineSimulator({
+                debugScript: debugMode || xtrace,
+                executablePaths: {},
+            });
+            const execResult = simulatorExecutor.executePreparedStep(
+                shell,
+                script,
+                executionVariables,
+                scriptCwd,
+                stepExtraEnv,
+                step.label || `Stage ${stageNum} Job ${jobNum} Step ${stepNum}`
+            );
 
             const stdout = String(execResult.stdout || '');
             const stderr = String(execResult.stderr || '');
             const outputText = mergeOutput(stdout, stderr, debugMode || xtrace);
+            const exitCode = Number.isInteger(execResult.exitCode) ? execResult.exitCode : 1;
 
-            if (execResult.error) {
+            if (exitCode !== 0) {
                 return {
                     success: false,
                     stage: stageNum,
                     job: jobNum,
                     step: stepNum,
                     stepLabel: step.label,
-                    error: `Script execution failed: ${execResult.error.message}`,
-                    exitCode: execResult.status,
+                    error: `Script execution failed (exit code ${exitCode})`,
+                    exitCode,
                     output: outputText,
                     inputsUsed: {
                         parameters: (stepInputs && stepInputs.parameterValues) || {},
                         compileTimeVariables: (stepInputs && stepInputs.compileTimeVariableValues) || {},
                         runtimeVariables: (stepInputs && stepInputs.runtimeVariableValues) || {},
-                        environment: env,
-                    },
-                };
-            }
-
-            if (execResult.status !== 0) {
-                // Script failed, return error details
-                return {
-                    success: false,
-                    stage: stageNum,
-                    job: jobNum,
-                    step: stepNum,
-                    stepLabel: step.label,
-                    error: `Script execution failed (exit code ${execResult.status})`,
-                    exitCode: execResult.status,
-                    output: outputText,
-                    inputsUsed: {
-                        parameters: (stepInputs && stepInputs.parameterValues) || {},
-                        compileTimeVariables: (stepInputs && stepInputs.compileTimeVariableValues) || {},
-                        runtimeVariables: (stepInputs && stepInputs.runtimeVariableValues) || {},
-                        environment: env,
+                        environment: { ...executionVariables, ...stepExtraEnv },
                     },
                 };
             }
@@ -3483,7 +3559,7 @@ function handleRunScript(args) {
                     parameters: (stepInputs && stepInputs.parameterValues) || {},
                     compileTimeVariables: (stepInputs && stepInputs.compileTimeVariableValues) || {},
                     runtimeVariables: (stepInputs && stepInputs.runtimeVariableValues) || {},
-                    environment: env,
+                    environment: { ...executionVariables, ...stepExtraEnv },
                 },
             };
         } catch (error) {
