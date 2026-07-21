@@ -2237,8 +2237,8 @@ class PipelineSimulator {
             for (const [key, value] of Object.entries(extraEnv)) {
                 env[key] = this._normalizeShellEnvValue(shell, key, value);
             }
-            // Prefer configured real tools before the shim directory, which should only
-            // satisfy missing commands rather than shadow valid local installations.
+            // Mocked tools should be first by default. Explicit overrides are
+            // respected by not creating shims for overridden tool names.
             const preferredToolDirs = [String(this.toolsDirectory || '').trim()]
                 .concat(
                     Object.values(resolvedToolsPaths)
@@ -2248,15 +2248,15 @@ class PipelineSimulator {
                 .filter(Boolean);
             const uniquePreferredToolDirs = [...new Set(preferredToolDirs)];
             env.PATH =
-                uniquePreferredToolDirs.join(path.delimiter) +
-                (uniquePreferredToolDirs.length ? path.delimiter : '') +
                 shimDir +
                 path.delimiter +
+                uniquePreferredToolDirs.join(path.delimiter) +
+                (uniquePreferredToolDirs.length ? path.delimiter : '') +
                 (env.PATH || '');
             if (shell === 'bash' && process.platform === 'win32') {
                 // BusyBox/Git Bash command lookup is more reliable with a POSIX-style
                 // shim path in front of PATH. Also add directories of all resolved tools
-                // so that e.g. git from PortableGit is visible inside the bash script.
+                // so that overridden binaries remain discoverable.
                 const bashShimDir = this._toBashPath(shimDir);
                 const toolDirs = [
                     ...new Set(
@@ -2273,7 +2273,7 @@ class PipelineSimulator {
                 // /usr/bin and /bin must be explicitly included: Git Bash does not source
                 // its profile when invoked as `bash.exe script.sh`, so it never auto-adds
                 // its bundled Unix tools (grep, sed, tr, tee, rm, etc.) to PATH.
-                env.PATH = `${extraDirs}${bashShimDir}:/usr/bin:/bin:${env.PATH || ''}`;
+                env.PATH = `${bashShimDir}:${extraDirs}/usr/bin:/bin:${env.PATH || ''}`;
             }
             if (pythonApiShimDir) {
                 env.PYTHONPATH = pythonApiShimDir + path.delimiter + (env.PYTHONPATH || '');
@@ -2769,6 +2769,51 @@ class PipelineSimulator {
         return result.status === 0;
     }
 
+    _getExplicitMockToolPath(name) {
+        const toolName = String(name || '').trim();
+        if (!toolName) return '';
+        const target = toolName.toLowerCase();
+        for (const [configuredName, configuredPath] of Object.entries(this.executablePaths || {})) {
+            if (
+                String(configuredName || '')
+                    .trim()
+                    .toLowerCase() !== target
+            )
+                continue;
+            const value = String(configuredPath || '').trim();
+            if (value) return path.normalize(value);
+        }
+        return '';
+    }
+
+    _isMockToolOverridden(name) {
+        const toolName = String(name || '').trim();
+        if (!toolName) return false;
+
+        if (this._getExplicitMockToolPath(toolName)) return true;
+
+        const toolsDir = String(this.toolsDirectory || '').trim();
+        if (!toolsDir) return false;
+
+        const candidates =
+            process.platform === 'win32'
+                ? [
+                      path.join(toolsDir, toolName),
+                      path.join(toolsDir, `${toolName}.exe`),
+                      path.join(toolsDir, `${toolName}.cmd`),
+                      path.join(toolsDir, `${toolName}.bat`),
+                  ]
+                : [path.join(toolsDir, toolName)];
+
+        return candidates.some((candidate) => {
+            try {
+                return fs.existsSync(candidate);
+            } catch (_) {
+                return false;
+            }
+        });
+    }
+
     _getShimDir() {
         if (this._shimDir) return this._shimDir;
 
@@ -2776,6 +2821,21 @@ class PipelineSimulator {
         this._shimDir = dir;
 
         for (const tool of this.mockTools) {
+            const explicitOverridePath = this._getExplicitMockToolPath(tool.name);
+            if (explicitOverridePath) {
+                const toolPath = path.join(dir, tool.name);
+                const executablePath =
+                    process.platform === 'win32' ? this._toBashPath(explicitOverridePath) : explicitOverridePath;
+                const shimContent = `#!/usr/bin/env bash
+# Forwarding shim for explicit tool override ${tool.name}
+"${String(executablePath).replace(/"/g, '\\"')}" "$@"
+exit $?
+`;
+                fs.writeFileSync(toolPath, shimContent, { mode: 0o755 });
+                continue;
+            }
+            // Explicit tool mappings/folder entries must override mocks.
+            if (this._isMockToolOverridden(tool.name)) continue;
             if (tool.onlyIfMissing && this._isToolOnPath(tool.name)) continue;
             const toolPath = path.join(dir, tool.name);
             const exitCode = tool.exitCode !== undefined ? tool.exitCode : 0;
