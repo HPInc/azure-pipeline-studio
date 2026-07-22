@@ -1749,6 +1749,39 @@ function activate(context) {
                 const document = lastSimDocument;
                 const sourceText = lastSimSourceText;
                 const parserOptions = lastSimParserOptions;
+                const postSimulationMessage = (payload) => {
+                    if (simulationPanel && simulationPanel.webview) {
+                        simulationPanel.webview.postMessage(payload);
+                    }
+                };
+                const parseBuildCounter = (rawCounter) => {
+                    const parsed = parseInt(rawCounter, 10);
+                    return isNaN(parsed) ? '1' : String(parsed);
+                };
+                const getSimulationExecutionConfig = (toolPathsOverride, toolsDirectoryOverride) => {
+                    const simulationConfig = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
+                    const toolsDirectorySetting = simulationConfig.get('simulation.toolsDirectory', null);
+                    const execPathsRaw = simulationConfig.get('simulation.toolPaths', {});
+                    const execPathsBase = resolveExecPaths(execPathsRaw, isLinuxSimulationContext(document.fileName));
+                    const mergedExecPaths = {
+                        ...execPathsBase,
+                        ...(toolPathsOverride && typeof toolPathsOverride === 'object' ? toolPathsOverride : {}),
+                    };
+                    const simDistroMatch = document.fileName.match(/^\\\\wsl\.localhost\\([^\\]+)/i);
+                    const wslMountRoot =
+                        process.platform === 'win32' && simDistroMatch
+                            ? `\\\\wsl.localhost\\${simDistroMatch[1]}`
+                            : null;
+                    const toolsDirectory =
+                        typeof toolsDirectoryOverride === 'string' && toolsDirectoryOverride.trim()
+                            ? toolsDirectoryOverride.trim()
+                            : toolsDirectorySetting || '';
+                    return {
+                        execPaths: mergedExecPaths,
+                        toolsDirectory,
+                        wslMountRoot,
+                    };
+                };
                 if (message.command === 'runInTerminal') {
                     const isWindows = process.platform === 'win32';
 
@@ -1807,13 +1840,7 @@ function activate(context) {
                             }
                         }
                     }
-                    const termExecPathsRaw = vscode.workspace
-                        .getConfiguration('azurePipelineStudio', document.uri)
-                        .get('simulation.toolPaths', {});
-                    const termExecPaths = resolveExecPaths(
-                        termExecPathsRaw,
-                        isLinuxSimulationContext(document.fileName)
-                    );
+                    const termExecPaths = getSimulationExecutionConfig({}, null).execPaths;
                     for (const [exeName, exePath] of Object.entries(termExecPaths)) {
                         const rawExePath = String(exePath || '').trim();
                         if (!rawExePath) continue;
@@ -1863,12 +1890,10 @@ function activate(context) {
                     child.stderr.on('data', appendProcessOutput);
                     child.on('error', (err) => {
                         simOutputChannel.appendLine(`[aps] Failed to start simulation process: ${err.message}`);
-                        if (simulationPanel && simulationPanel.webview) {
-                            simulationPanel.webview.postMessage({
-                                command: 'simulationError',
-                                error: `Failed to start simulation process: ${err.message}`,
-                            });
-                        }
+                        postSimulationMessage({
+                            command: 'simulationError',
+                            error: `Failed to start simulation process: ${err.message}`,
+                        });
                     });
                     child.on('close', (code, signal) => {
                         simOutputChannel.appendLine(
@@ -1880,21 +1905,15 @@ function activate(context) {
                                 try {
                                     fs.unlinkSync(jsonReadPath);
                                 } catch (_) {}
-                                if (simulationPanel && simulationPanel.webview) {
-                                    simulationPanel.webview.postMessage({ command: 'simulationResults', results });
-                                }
+                                postSimulationMessage({ command: 'simulationResults', results });
                             } else {
-                                if (simulationPanel && simulationPanel.webview) {
-                                    simulationPanel.webview.postMessage({
-                                        command: 'simulationError',
-                                        error: 'Simulation failed — see Output \u203a Pipeline Simulation for details.',
-                                    });
-                                }
+                                postSimulationMessage({
+                                    command: 'simulationError',
+                                    error: 'Simulation failed — see Output \u203a Pipeline Simulation for details.',
+                                });
                             }
                         } catch (err) {
-                            if (simulationPanel && simulationPanel.webview) {
-                                simulationPanel.webview.postMessage({ command: 'simulationError', error: err.message });
-                            }
+                            postSimulationMessage({ command: 'simulationError', error: err.message });
                         }
                     });
                     return;
@@ -2110,12 +2129,10 @@ function activate(context) {
                 if (message.command === 'runSingleStep') {
                     const doc = lastExpandedDoc;
                     if (!doc) {
-                        if (simulationPanel && simulationPanel.webview) {
-                            simulationPanel.webview.postMessage({
-                                command: 'simulationError',
-                                error: 'No expanded document — run a full simulation first.',
-                            });
-                        }
+                        postSimulationMessage({
+                            command: 'simulationError',
+                            error: 'No expanded document — run a full simulation first.',
+                        });
                         return;
                     }
                     const {
@@ -2142,17 +2159,13 @@ function activate(context) {
                         }
                     }
                     if (!targetStep) {
-                        if (simulationPanel && simulationPanel.webview) {
-                            simulationPanel.webview.postMessage({
-                                command: 'simulationError',
-                                error: `Step not found (stage=${stageIndex} job=${jobIndex} step=${stepIndex})`,
-                            });
-                        }
+                        postSimulationMessage({
+                            command: 'simulationError',
+                            error: `Step not found (stage=${stageIndex} job=${jobIndex} step=${stepIndex})`,
+                        });
                         return;
                     }
-                    if (simulationPanel && simulationPanel.webview) {
-                        simulationPanel.webview.postMessage({ command: 'simulationStarted' });
-                    }
+                    postSimulationMessage({ command: 'simulationStarted' });
                     if (!simOutputChannel) simOutputChannel = vscode.window.createOutputChannel('Pipeline Simulation');
                     simOutputChannel.show(true);
                     try {
@@ -2216,25 +2229,11 @@ function activate(context) {
                         );
                         const simWorkDir = _resolveSimulationWorkingDirectory(document, parserOptions);
                         const simOutRoot = simWorkDir.replace(/[\/\\]$/, '') + '/simulation';
-                        const bcNum = parseInt(msgCounter, 10);
-                        const bcStr = isNaN(bcNum) ? '1' : String(bcNum);
-                        const toolsDirectorySetting = vscode.workspace
-                            .getConfiguration('azurePipelineStudio', document.uri)
-                            .get('simulation.toolsDirectory', null);
-                        const execPathsRaw = vscode.workspace
-                            .getConfiguration('azurePipelineStudio', document.uri)
-                            .get('simulation.toolPaths', {});
-                        const execPathsBase = resolveExecPaths(
-                            execPathsRaw,
-                            isLinuxSimulationContext(document.fileName)
+                        const bcStr = parseBuildCounter(msgCounter);
+                        const simulationConfig = getSimulationExecutionConfig(
+                            message.toolPaths,
+                            message.toolsDirectory
                         );
-                        const execPaths = {
-                            ...execPathsBase,
-                            ...(message.toolPaths && typeof message.toolPaths === 'object' ? message.toolPaths : {}),
-                        };
-                        const distroMatch = document.fileName.match(/^\\\\wsl\.localhost\\([^\\]+)/i);
-                        const wslMountRoot =
-                            process.platform === 'win32' && distroMatch ? `\\\\wsl.localhost\\${distroMatch[1]}` : null;
                         const stepVarOverrides =
                             variableOverrides && typeof variableOverrides === 'object' ? variableOverrides : {};
                         const results = runPipelineSimulation(singleStepDoc, {
@@ -2242,25 +2241,21 @@ function activate(context) {
                             outputRoot: simOutRoot,
                             buildCounter: bcStr,
                             userVariables: stepVarOverrides,
-                            executablePaths: execPaths,
-                            toolsDirectory:
-                                typeof message.toolsDirectory === 'string' && message.toolsDirectory.trim()
-                                    ? message.toolsDirectory.trim()
-                                    : toolsDirectorySetting || '',
-                            wslMountRoot,
+                            executablePaths: simulationConfig.execPaths,
+                            toolsDirectory: simulationConfig.toolsDirectory,
+                            wslMountRoot: simulationConfig.wslMountRoot,
                         });
                         simOutputChannel.appendLine(
                             `[aps] runSingleStep complete — passed=${results.totalPassed} failed=${results.totalFailed}`
                         );
-                        if (simulationPanel && simulationPanel.webview)
-                            simulationPanel.webview.postMessage({
-                                command: 'simulationResults',
-                                results,
-                                singleStep: true,
-                                si: stageIndex,
-                                ji: jobIndex,
-                                ti: stepIndex,
-                            });
+                        postSimulationMessage({
+                            command: 'simulationResults',
+                            results,
+                            singleStep: true,
+                            si: stageIndex,
+                            ji: jobIndex,
+                            ti: stepIndex,
+                        });
                     } catch (err) {
                         simOutputChannel.appendLine(`[aps] runSingleStep ERROR: ${(err && err.stack) || err}`);
                         if (err && err.code === 'EPERM') {
@@ -2270,11 +2265,10 @@ function activate(context) {
                                 : 'Simulation failed: permission denied. Please remove the simulation workspace directory manually and try again.';
                             vscode.window.showErrorMessage(epermMsg);
                         }
-                        if (simulationPanel && simulationPanel.webview)
-                            simulationPanel.webview.postMessage({
-                                command: 'simulationError',
-                                error: String((err && err.message) || err),
-                            });
+                        postSimulationMessage({
+                            command: 'simulationError',
+                            error: String((err && err.message) || err),
+                        });
                     }
                     return;
                 }
@@ -2282,8 +2276,7 @@ function activate(context) {
                 if (isSimulationRunning) return;
 
                 const stages = Array.isArray(message.stages) && message.stages.length ? message.stages : undefined;
-                const counter = parseInt(message.buildCounter, 10);
-                const counterStr = isNaN(counter) ? '1' : String(counter);
+                const counterStr = parseBuildCounter(message.buildCounter);
 
                 const userVariables = {};
                 if (message.variables && typeof message.variables === 'object') {
@@ -2306,9 +2299,7 @@ function activate(context) {
                     }
                 }
 
-                if (simulationPanel && simulationPanel.webview) {
-                    simulationPanel.webview.postMessage({ command: 'simulationStarted' });
-                }
+                postSimulationMessage({ command: 'simulationStarted' });
 
                 isSimulationRunning = true;
 
@@ -2329,21 +2320,7 @@ function activate(context) {
                     const simWorkDir = _resolveSimulationWorkingDirectory(document, parserOptions);
                     const simOutRoot = simWorkDir.replace(/[/\\]$/, '') + '/simulation';
                     simOutputChannel.appendLine(`[aps] workDir=${simWorkDir}`);
-                    const toolsDirectorySetting = vscode.workspace
-                        .getConfiguration('azurePipelineStudio', document.uri)
-                        .get('simulation.toolsDirectory', null);
-                    const execPathsRaw = vscode.workspace
-                        .getConfiguration('azurePipelineStudio', document.uri)
-                        .get('simulation.toolPaths', {});
-                    const execPathsBase = resolveExecPaths(execPathsRaw, isLinuxSimulationContext(document.fileName));
-                    const panelToolPaths =
-                        message.toolPaths && typeof message.toolPaths === 'object' ? message.toolPaths : {};
-                    const execPaths = { ...execPathsBase, ...panelToolPaths };
-                    const simDistroMatch = document.fileName.match(/^\\\\wsl\.localhost\\([^\\]+)/i);
-                    const wslMountRoot =
-                        process.platform === 'win32' && simDistroMatch
-                            ? `\\\\wsl.localhost\\${simDistroMatch[1]}`
-                            : null;
+                    const simulationConfig = getSimulationExecutionConfig(message.toolPaths, message.toolsDirectory);
 
                     const simParser = new AzurePipelineParser({ skipSyntax: skipSyntaxCheck });
                     const simParserOptions = {
@@ -2363,19 +2340,14 @@ function activate(context) {
                         userVariables,
                         libraryVariables: libVarsFromMessage,
                         stages,
-                        executablePaths: execPaths,
-                        toolsDirectory:
-                            typeof message.toolsDirectory === 'string' && message.toolsDirectory.trim()
-                                ? message.toolsDirectory.trim()
-                                : toolsDirectorySetting || '',
-                        wslMountRoot,
+                        executablePaths: simulationConfig.execPaths,
+                        toolsDirectory: simulationConfig.toolsDirectory,
+                        wslMountRoot: simulationConfig.wslMountRoot,
                     });
                     simOutputChannel.appendLine(
                         `[aps] simulation complete — passed=${results.totalPassed} failed=${results.totalFailed} skipped=${results.totalSkipped}`
                     );
-                    if (simulationPanel && simulationPanel.webview) {
-                        simulationPanel.webview.postMessage({ command: 'simulationResults', results });
-                    }
+                    postSimulationMessage({ command: 'simulationResults', results });
                     simOutputChannel.appendLine(`[aps] simulationResults posted`);
                 } catch (err) {
                     simOutputChannel.appendLine(`[aps] ERROR: ${(err && err.stack) || err}`);
@@ -2386,12 +2358,10 @@ function activate(context) {
                             : 'Simulation failed: permission denied. Please remove the simulation workspace directory manually and try again.';
                         vscode.window.showErrorMessage(epermMsg);
                     }
-                    if (simulationPanel && simulationPanel.webview) {
-                        simulationPanel.webview.postMessage({
-                            command: 'simulationError',
-                            error: String((err && err.message) || err),
-                        });
-                    }
+                    postSimulationMessage({
+                        command: 'simulationError',
+                        error: String((err && err.message) || err),
+                    });
                 } finally {
                     isSimulationRunning = false;
                 }

@@ -1304,10 +1304,132 @@ function openResultsInBrowser(){
     var btn=resultsClone.querySelector('.res-browser-btn');
     if(btn)btn.remove();
     sidebarClone.querySelectorAll('[onclick]').forEach(function(el){el.removeAttribute('onclick');});
+    var exportSearchValue=escHtml(((document.getElementById('resultsSearchInput')||{}).value||''));
+    var exportToolbarHtml=''
+        +'<div class="export-toolbar">'
+        +'<div class="results-search" id="exportResultsSearchBar">'
+        +'<input id="exportResultsSearchInput" type="text" placeholder="Search output messages..." value="'+exportSearchValue+'">'
+        +'<button class="results-search-clear" id="exportResultsSearchClearBtn">Clear</button>'
+        +'<button class="results-search-clear results-search-nav" id="exportResultsSearchPrevBtn">Find Prev</button>'
+        +'<button class="results-search-clear results-search-nav" id="exportResultsSearchNextBtn">Find Next</button>'
+        +'<span class="results-search-status" id="exportResultsSearchStatus"></span>'
+        +'</div>'
+        +'</div>';
 
-    var extraCss='body{height:auto;min-height:100vh;overflow:auto}.main-container{height:auto;min-height:100vh;overflow:visible}.sidebar,.body{overflow:visible}.export-content{flex:1;padding:16px 20px}.export-title{padding:14px 20px;border-bottom:2px solid #555;background:#2d2d30;color:#e8e8e8;font-size:1.05em;font-weight:600}';
+    var extraCss='body{height:auto;min-height:100vh;overflow:auto}.main-container{height:auto;min-height:100vh;overflow:visible}.sidebar,.body{overflow:visible}.export-content{flex:1;padding:16px 20px}.export-title{padding:14px 20px;border-bottom:2px solid #555;background:#2d2d30;color:#e8e8e8;font-size:1.05em;font-weight:600}.export-toolbar{display:flex;align-items:center;justify-content:flex-start;margin:0 0 10px}.export-content .results-search{width:100%;max-width:980px}.res-step-search-active{outline:1px solid #d4a100;box-shadow:0 0 0 1px rgba(212,161,0,.25);border-radius:2px}';
 
     var exportScript='(' + function () {
+        var currentTaskFilter = null;
+        var searchMatchIndex = -1;
+        var searchMatchTerm = '';
+
+        function getSearchTerm() {
+            var input = document.getElementById('exportResultsSearchInput');
+            return input ? String(input.value || '').trim().toLowerCase() : '';
+        }
+
+        function clearActiveSearchHit() {
+            document.querySelectorAll('.res-step-search-active').forEach(function (el) {
+                el.classList.remove('res-step-search-active');
+            });
+        }
+
+        function collectVisibleSearchHits() {
+            return Array.from(document.querySelectorAll('.export-content .res-step[data-export-search-match="1"]')).filter(
+                function (el) {
+                    return el.style.display !== 'none';
+                }
+            );
+        }
+
+        function updateSearchStatus() {
+            var status = document.getElementById('exportResultsSearchStatus');
+            if (!status) return;
+            var term = getSearchTerm();
+            if (!term) {
+                status.textContent = '';
+                clearActiveSearchHit();
+                searchMatchIndex = -1;
+                searchMatchTerm = '';
+                return;
+            }
+            var hits = collectVisibleSearchHits();
+            if (!hits.length) {
+                status.textContent = '0 matches';
+                clearActiveSearchHit();
+                searchMatchIndex = -1;
+                searchMatchTerm = term;
+                return;
+            }
+            if (searchMatchTerm !== term || searchMatchIndex < 0 || searchMatchIndex >= hits.length) {
+                searchMatchIndex = 0;
+            }
+            searchMatchTerm = term;
+            clearActiveSearchHit();
+            var active = hits[searchMatchIndex];
+            if (active) active.classList.add('res-step-search-active');
+            status.textContent = String(searchMatchIndex + 1) + ' / ' + String(hits.length) + ' matches';
+        }
+
+        function findNextSearchHit() {
+            var term = getSearchTerm();
+            if (!term) {
+                updateSearchStatus();
+                return;
+            }
+            var hits = collectVisibleSearchHits();
+            if (!hits.length) {
+                updateSearchStatus();
+                return;
+            }
+            if (searchMatchTerm !== term || searchMatchIndex < 0 || searchMatchIndex >= hits.length) {
+                searchMatchIndex = 0;
+            } else {
+                searchMatchIndex = (searchMatchIndex + 1) % hits.length;
+            }
+            searchMatchTerm = term;
+            updateSearchStatus();
+            var refreshed = collectVisibleSearchHits();
+            var active = refreshed[searchMatchIndex];
+            if (active && typeof active.scrollIntoView === 'function') {
+                active.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'smooth' });
+            }
+        }
+
+        function findPrevSearchHit() {
+            var term = getSearchTerm();
+            if (!term) {
+                updateSearchStatus();
+                return;
+            }
+            var hits = collectVisibleSearchHits();
+            if (!hits.length) {
+                updateSearchStatus();
+                return;
+            }
+            if (searchMatchTerm !== term || searchMatchIndex < 0 || searchMatchIndex >= hits.length) {
+                searchMatchIndex = hits.length - 1;
+            } else {
+                searchMatchIndex = (searchMatchIndex - 1 + hits.length) % hits.length;
+            }
+            searchMatchTerm = term;
+            updateSearchStatus();
+            var refreshed = collectVisibleSearchHits();
+            var active = refreshed[searchMatchIndex];
+            if (active && typeof active.scrollIntoView === 'function') {
+                active.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'smooth' });
+            }
+        }
+
+        function clearSearch() {
+            var input = document.getElementById('exportResultsSearchInput');
+            if (input) {
+                input.value = '';
+                input.focus();
+            }
+            applyTaskFilter();
+        }
+
         function expandResultsForTask(stageIndex, jobIndex) {
             var panel = document.querySelector('.export-content');
             if (!panel) return;
@@ -1337,25 +1459,25 @@ function openResultsInBrowser(){
         }
 
         function applyTaskFilter(filter) {
+            if (typeof filter !== 'undefined') currentTaskFilter = filter;
+            var activeFilter = currentTaskFilter;
             var panel = document.querySelector('.export-content');
             if (!panel) return;
             var summary = panel.querySelector('.res-summary');
             var steps = panel.querySelectorAll('.res-step');
             if (!steps.length) return;
-
-            if (!filter) {
-                panel.querySelectorAll('.res-stage,.res-job,.res-step').forEach(function (el) {
-                    el.style.display = '';
-                });
-                if (summary) summary.style.display = '';
-                return;
-            }
+            var term = getSearchTerm();
 
             steps.forEach(function (el) {
-                var show =
-                    el.getAttribute('data-stage-index') === filter.stageIndex &&
-                    el.getAttribute('data-job-index') === filter.jobIndex &&
-                    el.getAttribute('data-step-index') === filter.stepIndex;
+                var matchesTask =
+                    !activeFilter ||
+                    (el.getAttribute('data-stage-index') === activeFilter.stageIndex &&
+                        el.getAttribute('data-job-index') === activeFilter.jobIndex &&
+                        el.getAttribute('data-step-index') === activeFilter.stepIndex);
+                var searchText = String(el.getAttribute('data-search-text') || '').toLowerCase();
+                var matchesSearch = !term || searchText.indexOf(term) !== -1;
+                el.setAttribute('data-export-search-match', matchesSearch ? '1' : '0');
+                var show = matchesTask && matchesSearch;
                 el.style.display = show ? '' : 'none';
             });
 
@@ -1373,7 +1495,8 @@ function openResultsInBrowser(){
                 stageEl.style.display = visible ? '' : 'none';
             });
 
-            if (summary) summary.style.display = 'none';
+            if (summary) summary.style.display = activeFilter || term ? 'none' : '';
+            updateSearchStatus();
         }
 
         function toggleResultHeader(headerEl) {
@@ -1435,11 +1558,32 @@ function openResultsInBrowser(){
                 if (jobToggle) jobToggle.classList.toggle('open', !collapsed);
             });
         });
+
+        var searchInput = document.getElementById('exportResultsSearchInput');
+        var searchClear = document.getElementById('exportResultsSearchClearBtn');
+        var searchPrev = document.getElementById('exportResultsSearchPrevBtn');
+        var searchNext = document.getElementById('exportResultsSearchNextBtn');
+        if (searchInput) {
+            searchInput.addEventListener('input', function () {
+                applyTaskFilter();
+            });
+            searchInput.addEventListener('keydown', function (event) {
+                if (event.key !== 'Enter') return;
+                event.preventDefault();
+                if (event.shiftKey) findPrevSearchHit();
+                else findNextSearchHit();
+            });
+        }
+        if (searchClear) searchClear.addEventListener('click', clearSearch);
+        if (searchPrev) searchPrev.addEventListener('click', findPrevSearchHit);
+        if (searchNext) searchNext.addEventListener('click', findNextSearchHit);
+
+        applyTaskFilter(null);
     }.toString() + ')();';
 
     vscode.postMessage({
         command:'openResultsInBrowser',
-        html:'<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Simulation Results</title><style>'+css+extraCss+'</style></head><body><div class="export-title">Pipeline Simulation Results</div><div class="main-container">'+sidebarClone.outerHTML+'<div class="export-content">'+resultsClone.innerHTML+'</div></div><scr'+'ipt>'+exportScript+'<\/scr'+'ipt></body></html>'
+        html:'<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Simulation Results</title><style>'+css+extraCss+'</style></head><body><div class="export-title">Pipeline Simulation Results</div><div class="main-container">'+sidebarClone.outerHTML+'<div class="export-content">'+exportToolbarHtml+resultsClone.innerHTML+'</div></div><scr'+'ipt>'+exportScript+'<\/scr'+'ipt></body></html>'
     });
 }
 function _populateSdpResult(sdpEl,si,ji,ti){

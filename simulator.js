@@ -42,71 +42,6 @@ function stripWslProxyWarning(text) {
     return str.replace(RE_WSL_PROXY_WARNING, '');
 }
 
-/**
- * Rewrite bash-specific constructs to POSIX sh / BusyBox ash equivalents:
- *
- * Arithmetic:
- *   if (( EXPR )); then  →  if [ "$(( EXPR ))" -ne 0 ]; then
- *   standalone (( EXPR ))  →  : $(( EXPR ))
- *
- * Arrays (bash arrays are not supported in BusyBox ash; replace with no-ops
- * so the script does not crash; array contents will be empty during simulation):
- *   arr=()               →  arr=''
- *   arr+=("$x")          →  : # aps: array append
- *   arr+=( ... )         →  : # aps: array append
- *   "${arr[@]}"          →  $arr  (best-effort approximation)
- *   "${!arr[@]}"         →  ''    (index expansion — dropped)
- *   "${#arr[@]}"         →  0
- *
- * Process substitution (not supported in BusyBox ash):
- *   done < <(cmd)        →  done < /dev/null  # cmd not executed; loop gets empty input
- */
-function _rewriteArithmeticForPosixAsh(s) {
-    // ── Arithmetic ──────────────────────────────────────────────────────────
-    s = s.replace(
-        /\b(if|elif|while|until)([ \t]+)\(\([ \t]*(.*?)[ \t]*\)\)([ \t]*;?[ \t]*)(then|do)\b/g,
-        (m, kw, sp1, expr, sp2, td) => {
-            const cmp = kw === 'until' ? '-eq' : '-ne';
-            return `${kw}${sp1}[ "$(( ${expr.trim()} ))" ${cmp} 0 ]${sp2}${td}`;
-        }
-    );
-    s = s.replace(
-        /^([ \t]*)\(\([ \t]*(.*?)[ \t]*\)\)[ \t]*$/gm,
-        (m, indent, expr) => `${indent}: $(( ${expr.trim()} ))`
-    );
-
-    // ── Arrays ───────────────────────────────────────────────────────────────
-    // varname=()  →  varname=''
-    s = s.replace(
-        /^([ \t]*)([A-Za-z_][A-Za-z0-9_]*)=(\(\))[ \t]*$/gm,
-        (m, indent, name) => `${indent}${name}='' # aps: array init`
-    );
-
-    // varname+=( ... )  →  : # aps: array append
-    s = s.replace(
-        /^([ \t]*)[A-Za-z_][A-Za-z0-9_]*\+=(\([^)]*\))[ \t]*$/gm,
-        (m, indent) => `${indent}: # aps: array append`
-    );
-
-    // "${arr[@]}"  →  $arr  (approximation)
-    s = s.replace(/"\$\{([A-Za-z_][A-Za-z0-9_]*)\[@\]}"/g, '"$$$1"');
-
-    // "${!arr[@]}"  →  ''
-    s = s.replace(/"\$\{![A-Za-z_][A-Za-z0-9_]*\[@\]}"/g, "''");
-
-    // "${#arr[@]}"  →  0
-    s = s.replace(/"\$\{#[A-Za-z_][A-Za-z0-9_]*\[@\]}"/g, '0');
-
-    // ── Process substitution ─────────────────────────────────────────────────
-    // done < <(cmd)  →  done < /dev/null  (loop body runs 0 times)
-    s = s.replace(
-        /\bdone([ \t]*)<([ \t]*)<\([^)]+\)/g,
-        (m, sp1, sp2) => `done${sp1}< /dev/null # aps: process subst. skipped`
-    );
-
-    return s;
-}
-
 // Default values for Azure DevOps built-in variables when running locally.
 // Users can override any of these via -v flags on the CLI.
 const AZURE_DEFAULTS = Object.freeze({
@@ -462,24 +397,6 @@ class PipelineSimulator {
         };
 
         console.log('[sim-context]', JSON.stringify(context, null, 2));
-    }
-
-    _isBusyBoxShell(shellPath) {
-        const cacheKey = String(shellPath || 'default');
-        if (!this._busyboxCache) this._busyboxCache = new Map();
-        if (this._busyboxCache.has(cacheKey)) return this._busyboxCache.get(cacheKey);
-        // WSL is a full Linux environment, never BusyBox — skip the check to avoid WSL startup
-        if (shellPath && /[/\\]wsl\.exe$/i.test(shellPath)) {
-            this._busyboxCache.set(cacheKey, false);
-            return false;
-        }
-        let result = false;
-        try {
-            const r = spawnSync(shellPath || 'bash', ['--version'], { encoding: 'utf8', timeout: 2000 });
-            result = /busybox/i.test((r.stdout || '') + (r.stderr || ''));
-        } catch (_) {}
-        this._busyboxCache.set(cacheKey, result);
-        return result;
     }
 
     _getNativeTaskShell(taskRef, inputs = {}, platform = process.platform) {
@@ -2472,9 +2389,8 @@ class PipelineSimulator {
             const _bashParseErrorPattern =
                 /syntax error:\s*unexpected\s+"?\(|unexpected token\s+`?"?\(|expecting\s+"fi"/i;
 
-            // When using a lightweight configured shell (e.g. BusyBox) that may not support
-            // full bash syntax, fall back to Git Bash on Windows when the script fails.
-            // Try POSIX arithmetic rewrite first, then full Git Bash.
+            // When a configured shell cannot parse full bash syntax, fall back to
+            // Git Bash (or WSL) on Windows.
             // Only enter this path when the failure looks like a shell-incompatibility issue
             // (bash syntax error) — not for ordinary non-zero exit codes from the script itself.
             const _looksLikeShellIncompatibility =
@@ -2487,40 +2403,27 @@ class PipelineSimulator {
                 process.platform === 'win32' &&
                 configuredShell &&
                 _looksLikeShellIncompatibility &&
-                windowsGitBashCandidates.length > 0
+                (windowsGitBashCandidates.length > 0 || _wslAvailable)
             ) {
-                // First: rewrite ((...)) to POSIX and retry with the configured shell.
-                // When configured shell is wsl.exe, use tryRunWsl so the path
-                // is correctly converted to a WSL /mnt/... path.
-                const _posixScript = _rewriteArithmeticForPosixAsh(scriptContent);
-                fs.writeFileSync(tmpFile, _posixScript, { mode: 0o755 });
-                const _posixRun = _configuredIsWsl ? tryRunWsl(scriptArg) : tryRun(configuredShell);
-                if (!_posixRun.error || _posixRun.error.code !== 'ENOENT') {
-                    run = _posixRun;
-                }
-
-                // If still failing, try Git Bash / WSL which support full bash syntax.
-                if (run.status !== 0) {
-                    this._failedConfiguredShells.add(configuredShell);
-                    fs.writeFileSync(tmpFile, scriptContent, { mode: 0o755 });
+                this._failedConfiguredShells.add(configuredShell);
+                fs.writeFileSync(tmpFile, scriptContent, { mode: 0o755 });
+                process.stderr.write(
+                    `[aps-gitbash] configured shell parse failed (status=${run.status}), trying Git Bash / WSL\n`
+                );
+                for (const gitBash of windowsGitBashCandidates) {
+                    const retried = tryRun(gitBash, scriptArgMsys);
                     process.stderr.write(
-                        `[aps-gitbash] BusyBox failed (status=${run.status}), trying Git Bash / WSL\n`
+                        `[aps-gitbash] ${gitBash}: status=${retried.status} error=${retried.error ? retried.error.code : 'none'}\n`
                     );
-                    for (const gitBash of windowsGitBashCandidates) {
-                        const retried = tryRun(gitBash, scriptArgMsys);
-                        process.stderr.write(
-                            `[aps-gitbash] ${gitBash}: status=${retried.status} error=${retried.error ? retried.error.code : 'none'}\n`
-                        );
-                        if (retried.error && retried.error.code === 'ENOENT') continue;
-                        run = retried;
-                        break;
-                    }
-                    // If no Git Bash found, try WSL bash as last resort.
-                    if (run.status !== 0 && _wslAvailable) {
-                        process.stderr.write('[aps-gitbash] no Git Bash found, trying WSL bash\n');
-                        const wslRun = tryRunWsl(scriptArg);
-                        if (!wslRun.error) run = wslRun;
-                    }
+                    if (retried.error && retried.error.code === 'ENOENT') continue;
+                    run = retried;
+                    break;
+                }
+                // If no Git Bash found, try WSL bash as last resort.
+                if (run.status !== 0 && _wslAvailable) {
+                    process.stderr.write('[aps-gitbash] no Git Bash found, trying WSL bash\n');
+                    const wslRun = tryRunWsl(scriptArg);
+                    if (!wslRun.error) run = wslRun;
                 }
             }
 
@@ -2566,14 +2469,11 @@ class PipelineSimulator {
                                 };
                             }
                         } else {
-                            // Non-Windows: bash already tried; fall back to sh.
+                            // Non-Windows: bash already tried.
                             run = tryRun('/bin/bash');
                             if (run.error && run.error.code === 'ENOENT') {
-                                run = tryRun('sh');
-                            }
-                            if (run.error && run.error.code === 'ENOENT') {
                                 return {
-                                    stdout: '[mock] bash/sh not available locally; step simulated.',
+                                    stdout: '[mock] bash not available locally; step simulated.',
                                     stderr: '',
                                     exitCode: 0,
                                 };
