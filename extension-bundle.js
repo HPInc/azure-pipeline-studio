@@ -1754,6 +1754,13 @@ function activate(context) {
                         simulationPanel.webview.postMessage(payload);
                     }
                 };
+                if (!document || !parserOptions || typeof sourceText !== 'string') {
+                    postSimulationMessage({
+                        command: 'simulationError',
+                        error: 'Simulation context is unavailable. Please reopen the simulation view and try again.',
+                    });
+                    return;
+                }
                 const parseBuildCounter = (rawCounter) => {
                     const parsed = parseInt(rawCounter, 10);
                     return isNaN(parsed) ? '1' : String(parsed);
@@ -2930,7 +2937,6 @@ function deactivate() {
             // Panel may already be disposed, ignore
         }
         activeSimulationPanel = null;
-        simulationPanel = null;
     }
 }
 

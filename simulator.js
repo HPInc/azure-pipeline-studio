@@ -2363,8 +2363,6 @@ class PipelineSimulator {
                 lastShellInvocation = WINDOWS_WSL_EXE;
                 return this._runScriptViaWsl(scriptPath, effectiveCwd, env, extraEnv);
             };
-            const _wslAvailable = process.platform === 'win32' && this._wslAvailable;
-
             // If the user configured wsl.exe as the bash, handle it specially.
             const _configuredIsWsl = configuredShell && /[/\\]wsl\.exe$/i.test(configuredShell);
             let run;
@@ -2403,12 +2401,12 @@ class PipelineSimulator {
                 process.platform === 'win32' &&
                 configuredShell &&
                 _looksLikeShellIncompatibility &&
-                (windowsGitBashCandidates.length > 0 || _wslAvailable)
+                windowsGitBashCandidates.length > 0
             ) {
                 this._failedConfiguredShells.add(configuredShell);
                 fs.writeFileSync(tmpFile, scriptContent, { mode: 0o755 });
                 process.stderr.write(
-                    `[aps-gitbash] configured shell parse failed (status=${run.status}), trying Git Bash / WSL\n`
+                    `[aps-gitbash] configured shell parse failed (status=${run.status}), trying Git Bash\n`
                 );
                 for (const gitBash of windowsGitBashCandidates) {
                     const retried = tryRun(gitBash, scriptArgMsys);
@@ -2419,12 +2417,7 @@ class PipelineSimulator {
                     run = retried;
                     break;
                 }
-                // If no Git Bash found, try WSL bash as last resort.
-                if (run.status !== 0 && _wslAvailable) {
-                    process.stderr.write('[aps-gitbash] no Git Bash found, trying WSL bash\n');
-                    const wslRun = tryRunWsl(scriptArg);
-                    if (!wslRun.error) run = wslRun;
-                }
+                // No implicit WSL fallback: use WSL only when explicitly configured as bash.
             }
 
             // If no configured shell: retry with Git Bash when parse error detected.
