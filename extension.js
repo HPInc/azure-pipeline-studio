@@ -54,7 +54,15 @@ let lastSimSourceText = null;
 let lastSimParserOptions = null;
 let extensionRuntimeGeneration = 0;
 
-const isLinux = process.platform === 'linux';
+const isWsl =
+    process.platform === 'linux' &&
+    (() => {
+        try {
+            return fs.readFileSync('/proc/version', 'utf8').toLowerCase().includes('microsoft');
+        } catch (_) {
+            return false;
+        }
+    })();
 
 function _resolveSimulationWorkingDirectory(document, parserOptions) {
     const candidates = [
@@ -1291,7 +1299,7 @@ function activate(context) {
                 try {
                     const tempFile = path.join(os.tmpdir(), `pipeline-dependencies-${Date.now()}.html`);
                     fs.writeFileSync(tempFile, dependenciesPanelHtml);
-                    if (isLinux) {
+                    if (isWsl) {
                         try {
                             const winPath = execSync(`wslpath -w "${tempFile}"`).toString().trim();
                             spawn('cmd.exe', ['/c', 'start', '', winPath], {
@@ -1926,7 +1934,7 @@ function activate(context) {
                         );
                         fs.writeFileSync(tempFile, html, 'utf8');
 
-                        if (isLinux) {
+                        if (isWsl) {
                             try {
                                 const winPath = execSync(`wslpath -w "${tempFile}"`).toString().trim();
                                 spawn('cmd.exe', ['/c', 'start', '', winPath], {
