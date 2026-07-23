@@ -54,21 +54,13 @@ let lastSimSourceText = null;
 let lastSimParserOptions = null;
 let extensionRuntimeGeneration = 0;
 
-const isWsl =
-    process.platform === 'linux' &&
-    (() => {
-        try {
-            return fs.readFileSync('/proc/version', 'utf8').toLowerCase().includes('microsoft');
-        } catch (_) {
-            return false;
-        }
-    })();
+const isLinux = process.platform === 'linux';
 
 function _resolveSimulationWorkingDirectory(document, parserOptions) {
     const candidates = [
-        document && document.uri && typeof document.uri.fsPath === 'string' ? document.uri.fsPath : '',
-        document && typeof document.fileName === 'string' ? document.fileName : '',
-        parserOptions && typeof parserOptions.fileName === 'string' ? parserOptions.fileName : '',
+        parserOptions && parserOptions.fileName,
+        document && document.uri && document.uri.fsPath,
+        document && document.fileName,
     ]
         .map((value) => String(value || '').trim())
         .filter((value) => value.length > 0);
@@ -1299,7 +1291,7 @@ function activate(context) {
                 try {
                     const tempFile = path.join(os.tmpdir(), `pipeline-dependencies-${Date.now()}.html`);
                     fs.writeFileSync(tempFile, dependenciesPanelHtml);
-                    if (isWsl) {
+                    if (isLinux) {
                         try {
                             const winPath = execSync(`wslpath -w "${tempFile}"`).toString().trim();
                             spawn('cmd.exe', ['/c', 'start', '', winPath], {
@@ -1934,14 +1926,16 @@ function activate(context) {
                         );
                         fs.writeFileSync(tempFile, html, 'utf8');
 
-                        if (isWsl) {
-                            // WSL: skip vscode.env.openExternal (produces unusable vscode-remote:// URI);
-                            // convert to Windows path and open with Windows default browser.
-                            const winPath = execSync(`wslpath -w "${tempFile}"`).toString().trim();
-                            spawn('cmd.exe', ['/c', 'start', '', winPath], {
-                                detached: true,
-                                stdio: 'ignore',
-                            }).unref();
+                        if (isLinux) {
+                            try {
+                                const winPath = execSync(`wslpath -w "${tempFile}"`).toString().trim();
+                                spawn('cmd.exe', ['/c', 'start', '', winPath], {
+                                    detached: true,
+                                    stdio: 'ignore',
+                                }).unref();
+                            } catch (_) {
+                                spawn('xdg-open', [tempFile], { detached: true, stdio: 'ignore' }).unref();
+                            }
                         } else {
                             let openedExternally = false;
                             try {

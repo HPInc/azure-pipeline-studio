@@ -142,24 +142,31 @@ class PipelineSimulator {
         this._failedConfiguredShells = new Set();
         this._publishedArtifacts = [];
         this._feedPublishes = [];
-        this._releaseStageNugetFeed = null;
         this._downloadedArtifactTargets = new Map();
         this._jobRunCounter = 0;
         this._resolvedToolsPaths = null;
         this._createdBuildFiles = new Set();
         this._currentRepositoryRoot = '';
-        this._windowsGitBashCandidates = [];
+        this._resolvedBashPath = '';
         this._windowsShellDiscoveryDone = false;
         this._wslAvailable = false;
     }
 
-    _buildWindowsGitBashCandidateList() {
-        if (process.platform !== 'win32') return [];
+    _discoverShell() {
+        if (this._windowsShellDiscoveryDone) return;
+        this._windowsShellDiscoveryDone = true;
+
+        if (process.platform !== 'win32') {
+            // On Linux/Mac, resolve the working bash path once.
+            this._resolvedBashPath = this._resolveCommandPath('bash') || 'bash';
+            this._wslAvailable = false;
+            return;
+        }
+
+        // Windows: find the first working Git Bash installation.
         const configuredBashPath = this.executablePaths && this.executablePaths.bash;
         const candidates = [
-            configuredBashPath && /[/\\]usr[/\\]bin[/\\]bash\.exe$/i.test(configuredBashPath)
-                ? path.normalize(configuredBashPath)
-                : null,
+            configuredBashPath || null,
             process.env.ProgramFiles ? path.join(process.env.ProgramFiles, 'Git', 'usr', 'bin', 'bash.exe') : null,
             process.env['ProgramFiles(x86)']
                 ? path.join(process.env['ProgramFiles(x86)'], 'Git', 'usr', 'bin', 'bash.exe')
@@ -168,35 +175,18 @@ class PipelineSimulator {
                 ? path.join(process.env.LOCALAPPDATA, 'Programs', 'Git', 'usr', 'bin', 'bash.exe')
                 : null,
         ].filter(Boolean);
-        return [...new Set(candidates)];
-    }
 
-    _initializeWindowsShellDiscovery() {
-        if (this._windowsShellDiscoveryDone) return;
-        this._windowsShellDiscoveryDone = true;
-
-        if (process.platform !== 'win32') {
-            this._windowsGitBashCandidates = [];
-            this._wslAvailable = false;
-            return;
-        }
-
-        const discovered = [];
-        for (const candidate of this._buildWindowsGitBashCandidateList()) {
+        this._resolvedBashPath = '';
+        for (const candidate of candidates) {
             try {
                 if (!fs.existsSync(candidate)) continue;
-                const probe = spawnSync(candidate, ['--version'], {
-                    encoding: 'utf8',
-                    timeout: 5000,
-                });
+                const probe = spawnSync(candidate, ['--version'], { encoding: 'utf8', timeout: 5000 });
                 if (probe.error) continue;
-                discovered.push(candidate);
-            } catch (_) {
-                // Ignore probe failures; we'll continue with remaining candidates.
-            }
+                this._resolvedBashPath = path.normalize(candidate);
+                break;
+            } catch (_) {}
         }
 
-        this._windowsGitBashCandidates = discovered;
         try {
             this._wslAvailable = fs.existsSync(WINDOWS_WSL_EXE);
         } catch (_) {
@@ -204,27 +194,12 @@ class PipelineSimulator {
         }
     }
 
-    _getWindowsGitBashPathEntries(bashExePath = '') {
-        if (process.platform !== 'win32') return [];
-        const candidatePaths = [];
-        if (bashExePath && /[/\\]usr[/\\]bin[/\\]bash\.exe$/i.test(String(bashExePath))) {
-            candidatePaths.push(path.normalize(String(bashExePath)));
-        }
-        for (const candidate of this._windowsGitBashCandidates || []) {
-            candidatePaths.push(path.normalize(String(candidate)));
-        }
-
-        const uniqueCandidates = [...new Set(candidatePaths.filter(Boolean))];
-        const dirs = [];
-        for (const bashPath of uniqueCandidates) {
-            // Git for Windows layout: <git-root>/usr/bin/bash.exe
-            const usrBinDir = path.dirname(bashPath);
-            const gitRoot = path.resolve(usrBinDir, '..', '..');
-            const gitBinDir = path.join(gitRoot, 'bin');
-            dirs.push(this._toBashPath(usrBinDir));
-            dirs.push(this._toBashPath(gitBinDir));
-        }
-        return [...new Set(dirs.filter(Boolean))];
+    _getWindowsGitBashPathEntries() {
+        if (process.platform !== 'win32' || !this._resolvedBashPath) return [];
+        const usrBinDir = path.dirname(this._resolvedBashPath);
+        const gitRoot = path.resolve(usrBinDir, '..', '..');
+        const gitBinDir = path.join(gitRoot, 'bin');
+        return [this._toBashPath(usrBinDir), this._toBashPath(gitBinDir)].filter(Boolean);
     }
 
     /**
@@ -253,7 +228,7 @@ class PipelineSimulator {
         this._currentRepositoryRoot = '';
         this._resolvedToolsPaths = null;
         this._windowsShellDiscoveryDone = false;
-        this._initializeWindowsShellDiscovery();
+        this._discoverShell();
 
         // Build the initial variable map:
         // 1. Azure built-in defaults (lowest priority)
@@ -265,18 +240,14 @@ class PipelineSimulator {
         }
         const initialVariables = {
             ...AZURE_DEFAULTS,
-            ...(options.defaultVariables || {}),
             ...pipelineVars,
             ...(options.variables || {}),
         };
 
         this._printSimulationContext(initialVariables, pipelineVars, options, resolvedWorkDir);
 
-        this._ensureSimulationDirectories(initialVariables);
         this._resetSimulationWorkspace(initialVariables, resolvedWorkDir);
-
-        // Extract Release stage NuGet feed identifier for use in fallback publishing
-        this._releaseStageNugetFeed = this._extractReleaseStageNugetFeed(stages);
+        this._ensureSimulationDirectories(initialVariables);
 
         // Build a case-insensitive set of stage names to run, if the caller restricted them.
         const stageFilter =
@@ -324,19 +295,9 @@ class PipelineSimulator {
             // Merge stageDeps into the base variables so each stage sees prior outputs.
             // User-supplied -v overrides (already in initialVariables) take precedence.
             const stageVars = { ...initialVariables, ...stageDeps };
-            const stageResult = this._runStage(stageDoc, stageVars, options);
+            const stageResult = this._runStage(stageDoc, stageVars, options, stageDeps);
             results.stages.push(stageResult);
             stageResultsByName[stageResult.stage] = stageResult.result;
-
-            // Publish this stage's outputs for subsequent stages.
-            const stageResultName = stageResult.stage;
-            for (const jobResult of stageResult.jobs) {
-                const jobName = jobResult.job;
-                stageDeps[`stageDependencies.${stageResultName}.${jobName}.result`] = jobResult.result || 'Succeeded';
-                for (const [key, value] of Object.entries(jobResult.outputVariables)) {
-                    stageDeps[`stageDependencies.${stageResultName}.${jobName}.outputs['${key}']`] = value;
-                }
-            }
 
             for (const jobResult of stageResult.jobs) {
                 for (const stepResult of jobResult.steps) {
@@ -345,6 +306,10 @@ class PipelineSimulator {
                     else results.totalSkipped++;
                 }
             }
+
+            // Materialize fallback artifacts after each stage so they are available
+            // to subsequent stages and final inspection.
+            this._ensureFallbackPackageArtifacts(initialVariables, resolvedWorkDir);
         }
 
         if (stageOrdering.skipped.length > 0) {
@@ -354,9 +319,7 @@ class PipelineSimulator {
             );
         }
 
-        // Always materialize publish roots so callers can inspect expected paths
-        // even when no publish step ran due to conditions or earlier failures.
-        this._ensureFallbackPackageArtifacts(initialVariables, resolvedWorkDir);
+        // Write final artifact and feed indexes.
         this._writePipelineArtifactsIndex(this._getPipelineArtifactsRoot(initialVariables, resolvedWorkDir));
         this._writeBuildArtifactsIndex(this._getBuildArtifactsRoot(initialVariables, resolvedWorkDir));
         this._writeFeedPublishesIndex(this._getFeedPublishRoot(initialVariables, resolvedWorkDir));
@@ -656,38 +619,33 @@ class PipelineSimulator {
         const simulationRoot = this._getSimulationRoot(variables, workDir);
         const jobsRoot = path.join(simulationRoot, 'workspace', 'jobs');
         this._removeDirectoryWithFallback(jobsRoot);
-        fs.mkdirSync(jobsRoot, { recursive: true });
+        try {
+            fs.mkdirSync(jobsRoot, { recursive: true });
+        } catch (err) {
+            if (err.code === 'EPERM' || err.code === 'EBUSY') {
+                throw new Error(
+                    `Simulation workspace is locked by another process.\n` +
+                        `Please delete the simulation folder and try again:\n  ${simulationRoot}`
+                );
+            }
+            throw err;
+        }
     }
 
     _removeDirectoryWithFallback(targetDirectory) {
         try {
             fs.rmSync(targetDirectory, { recursive: true, force: true });
-            return;
         } catch (error) {
             const code = error && error.code;
             if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'ENOTEMPTY') {
                 throw error;
             }
+            // Files are locked — ask the user to delete the folder manually.
+            throw new Error(
+                `Simulation workspace is locked by another process.\n` +
+                    `Please delete the simulation folder and try again:\n  ${targetDirectory}`
+            );
         }
-
-        // Single fallback: clear child entries individually.
-        if (fs.existsSync(targetDirectory)) {
-            try {
-                for (const childName of fs.readdirSync(targetDirectory)) {
-                    const childPath = path.join(targetDirectory, childName);
-                    try {
-                        fs.rmSync(childPath, { recursive: true, force: true });
-                    } catch (_) {}
-                }
-                return;
-            } catch (_) {}
-        }
-
-        // Files are locked — ask the user to delete the folder manually.
-        throw new Error(
-            `Simulation workspace is locked by another process.\n` +
-                `Please delete the simulation folder and try again:\n  ${targetDirectory}`
-        );
     }
 
     _ensureSimulationDirectories(variables) {
@@ -715,7 +673,7 @@ class PipelineSimulator {
         }
     }
 
-    _runStage(stageDoc, variables, options) {
+    _runStage(stageDoc, variables, options, stageDeps = {}) {
         const stageName = stageDoc.stage || 'Stage';
         const stageResult = {
             stage: stageName,
@@ -796,6 +754,15 @@ class PipelineSimulator {
             stageResult.result = 'Succeeded';
         }
 
+        // Publish this stage's outputs so subsequent stages can resolve
+        // stageDependencies.StageName.JobName.outputs['...'].
+        for (const jobResult of stageResult.jobs) {
+            stageDeps[`stageDependencies.${stageName}.${jobResult.job}.result`] = jobResult.result || 'Succeeded';
+            for (const [key, value] of Object.entries(jobResult.outputVariables)) {
+                stageDeps[`stageDependencies.${stageName}.${jobResult.job}.outputs['${key}']`] = value;
+            }
+        }
+
         return stageResult;
     }
 
@@ -847,26 +814,17 @@ class PipelineSimulator {
         const completed = new Set();
         const inScopeNames = new Set(pending.map((item) => String(getName(item) || '')));
 
-        let madeProgress = true;
-        while (pending.length > 0 && madeProgress) {
-            madeProgress = false;
-
+        while (pending.length > 0) {
+            const pendingCount = pending.length;
             for (let idx = 0; idx < pending.length; idx++) {
                 const item = pending[idx];
-                const dependencies = this._normalizeDependsOn(getDependsOn(item));
-                const inScopeDependencies = dependencies.filter((dependencyName) => inScopeNames.has(dependencyName));
-                const ready = inScopeDependencies.every((dependencyName) => completed.has(dependencyName));
-                if (!ready) {
-                    continue;
-                }
-
-                const itemName = String(getName(item) || '');
+                const inScopeDeps = this._normalizeDependsOn(getDependsOn(item)).filter((dep) => inScopeNames.has(dep));
+                if (!inScopeDeps.every((dep) => completed.has(dep))) continue;
                 ordered.push(item);
-                completed.add(itemName);
-                pending.splice(idx, 1);
-                idx -= 1;
-                madeProgress = true;
+                completed.add(String(getName(item) || ''));
+                pending.splice(idx--, 1);
             }
+            if (pending.length === pendingCount) break; // No progress — circular or unresolvable deps
         }
 
         const skipped = pending.map((item) => String(getName(item) || kindLabel || 'item'));
@@ -875,7 +833,7 @@ class PipelineSimulator {
 
     _normalizeDependsOn(dependsOn) {
         if (Array.isArray(dependsOn)) {
-            return dependsOn.map((dependencyName) => String(dependencyName).trim()).filter(Boolean);
+            return dependsOn.map((x) => (x != null ? x.toString().trim() : '')).filter(Boolean);
         }
         if (typeof dependsOn === 'string' && dependsOn.trim()) {
             return [dependsOn.trim()];
@@ -1570,12 +1528,14 @@ class PipelineSimulator {
         const raw = document.variables;
         if (!raw) return vars;
 
+        const isObjectEntry = (val) => val !== null && val !== undefined && typeof val === 'object';
+
         if (Array.isArray(raw)) {
             for (const entry of raw) {
-                if (entry && typeof entry === 'object' && typeof entry.group === 'string' && entry.group.trim()) {
-                    const groupVariables =
-                        libraryVariables && typeof libraryVariables === 'object' ? libraryVariables[entry.group] : null;
-                    if (groupVariables && typeof groupVariables === 'object' && !Array.isArray(groupVariables)) {
+                if (!isObjectEntry(entry)) continue;
+                if (typeof entry.group === 'string' && entry.group.trim()) {
+                    const groupVariables = isObjectEntry(libraryVariables) ? libraryVariables[entry.group] : null;
+                    if (isObjectEntry(groupVariables) && !Array.isArray(groupVariables)) {
                         for (const [name, value] of Object.entries(groupVariables)) {
                             const ctx = { ...parentVariables, ...vars };
                             vars[name] = this._substituteVariables(
@@ -1586,7 +1546,7 @@ class PipelineSimulator {
                     }
                     continue;
                 }
-                if (entry && typeof entry === 'object' && entry.name !== undefined) {
+                if (entry.name !== undefined) {
                     const strValue = entry.value !== undefined ? String(entry.value) : '';
                     const ctx = { ...parentVariables, ...vars };
                     vars[entry.name] = this._substituteVariables(this._normalizeValue(strValue, ctx), ctx);
@@ -1682,14 +1642,12 @@ class PipelineSimulator {
         const args = [];
         let depth = 0;
         let current = '';
-        let inQuote = false;
         let quoteChar = '';
         for (const ch of str) {
-            if (inQuote) {
+            if (quoteChar) {
                 current += ch;
-                if (ch === quoteChar) inQuote = false;
+                if (ch === quoteChar) quoteChar = '';
             } else if (ch === "'" || ch === '"') {
-                inQuote = true;
                 quoteChar = ch;
                 current += ch;
             } else if (ch === '(' || ch === '[') {
@@ -1752,12 +1710,8 @@ class PipelineSimulator {
     _substituteVariables(text, variables) {
         return text.replace(RE_SUBSTITUTE_VARS, (match, name) => {
             const found = this._lookupVariable(variables, name);
-            if (found !== undefined) return found;
-            // All-lowercase single word not in variables is likely a shell
-            // built-in (e.g. pwd, date, whoami) → leave intact.
-            if (/^[a-z][a-z0-9_]*$/.test(name)) return match;
-            // Unresolved Azure macro → keep literal $(var) per ADO spec.
-            return match;
+            // Return the resolved value if found; otherwise keep the original $(varName) literal.
+            return found !== undefined ? found : match;
         });
     }
 
@@ -1812,7 +1766,7 @@ class PipelineSimulator {
      */
     executeScript(shell, script, variables, workingDirectory, extraEnv = {}, displayName = '') {
         this._ensureSimulationDirectories(variables || {});
-        this._initializeWindowsShellDiscovery();
+        this._discoverShell();
         return this._executeScript(shell, script, variables, workingDirectory, extraEnv, displayName);
     }
 
@@ -2330,8 +2284,7 @@ class PipelineSimulator {
                 _rawConfiguredShell && this._failedConfiguredShells.has(_rawConfiguredShell)
                     ? null
                     : _rawConfiguredShell;
-            const windowsGitBashCandidates =
-                shell === 'bash' && process.platform === 'win32' ? this._windowsGitBashCandidates : [];
+            const resolvedBashPath = shell === 'bash' && process.platform === 'win32' ? this._resolvedBashPath : '';
             lastShellInvocation = configuredShell || shell;
 
             // tryRun uses the native Windows path by default; pass scriptArgMsys for Git Bash.
@@ -2339,13 +2292,11 @@ class PipelineSimulator {
                 lastShellInvocation = shellName;
                 let runEnv = env;
                 if (shell === 'bash' && process.platform === 'win32') {
-                    // Always prefer binaries from the selected Git Bash install over
-                    // similarly named Windows system tools (e.g. FIND.EXE in system32).
-                    const perShellGitBashDirs = this._getWindowsGitBashPathEntries(shellName);
-                    if (perShellGitBashDirs.length) {
+                    const gitBashDirs = this._getWindowsGitBashPathEntries();
+                    if (gitBashDirs.length) {
                         runEnv = {
                             ...env,
-                            PATH: `${perShellGitBashDirs.join(':')}:${env.PATH || ''}`,
+                            PATH: `${gitBashDirs.join(':')}:${env.PATH || ''}`,
                         };
                     }
                 }
@@ -2367,14 +2318,12 @@ class PipelineSimulator {
             const _configuredIsWsl = configuredShell && /[/\\]wsl\.exe$/i.test(configuredShell);
             let run;
             if (shell === 'bash' && process.platform === 'win32' && !configuredShell) {
-                // Prefer full Git Bash first on Windows because some lightweight bash
-                // variants do not support process substitution (< <(...)) used by templates.
-                run = null;
-                for (const gitBash of windowsGitBashCandidates) {
-                    run = tryRun(gitBash, scriptArgMsys);
-                    if (!run.error || run.error.code !== 'ENOENT') break;
-                }
-                if (!run || (run.error && run.error.code === 'ENOENT')) {
+                if (resolvedBashPath) {
+                    run = tryRun(resolvedBashPath, scriptArgMsys);
+                    if (run.error && run.error.code === 'ENOENT') {
+                        run = tryRun(shell);
+                    }
+                } else {
                     run = tryRun(shell);
                 }
             } else if (_configuredIsWsl) {
@@ -2401,23 +2350,20 @@ class PipelineSimulator {
                 process.platform === 'win32' &&
                 configuredShell &&
                 _looksLikeShellIncompatibility &&
-                windowsGitBashCandidates.length > 0
+                resolvedBashPath
             ) {
                 this._failedConfiguredShells.add(configuredShell);
                 fs.writeFileSync(tmpFile, scriptContent, { mode: 0o755 });
                 process.stderr.write(
                     `[aps-gitbash] configured shell parse failed (status=${run.status}), trying Git Bash\n`
                 );
-                for (const gitBash of windowsGitBashCandidates) {
-                    const retried = tryRun(gitBash, scriptArgMsys);
-                    process.stderr.write(
-                        `[aps-gitbash] ${gitBash}: status=${retried.status} error=${retried.error ? retried.error.code : 'none'}\n`
-                    );
-                    if (retried.error && retried.error.code === 'ENOENT') continue;
+                const retried = tryRun(resolvedBashPath, scriptArgMsys);
+                process.stderr.write(
+                    `[aps-gitbash] ${resolvedBashPath}: status=${retried.status} error=${retried.error ? retried.error.code : 'none'}\n`
+                );
+                if (!retried.error || retried.error.code !== 'ENOENT') {
                     run = retried;
-                    break;
                 }
-                // No implicit WSL fallback: use WSL only when explicitly configured as bash.
             }
 
             // If no configured shell: retry with Git Bash when parse error detected.
@@ -2427,13 +2373,12 @@ class PipelineSimulator {
                 !configuredShell &&
                 run &&
                 run.status !== 0 &&
+                resolvedBashPath &&
                 _bashParseErrorPattern.test(String(run.stderr || ''))
             ) {
-                for (const gitBash of windowsGitBashCandidates) {
-                    const retried = tryRun(gitBash, scriptArgMsys);
-                    if (retried.error && retried.error.code === 'ENOENT') continue;
+                const retried = tryRun(resolvedBashPath, scriptArgMsys);
+                if (!retried.error || retried.error.code !== 'ENOENT') {
                     run = retried;
-                    break;
                 }
             }
 
@@ -2448,13 +2393,10 @@ class PipelineSimulator {
                 if (run.error && run.error.code === 'ENOENT') {
                     if (shell === 'bash') {
                         if (process.platform === 'win32') {
-                            // bash (BusyBox symlink) was already tried above. Fall back to Git Bash
-                            // for machines that don't have BusyBox installed.
-                            for (const gitBash of windowsGitBashCandidates) {
-                                run = tryRun(gitBash, scriptArgMsys);
-                                if (!run.error || run.error.code !== 'ENOENT') break;
+                            if (resolvedBashPath) {
+                                run = tryRun(resolvedBashPath, scriptArgMsys);
                             }
-                            if (run.error && run.error.code === 'ENOENT') {
+                            if (!resolvedBashPath || (run.error && run.error.code === 'ENOENT')) {
                                 return {
                                     stdout: '[mock] bash not available locally; step simulated.',
                                     stderr: '',
@@ -2519,10 +2461,8 @@ class PipelineSimulator {
                 process.stderr.write(
                     `[aps-parse-error] shell=${lastShellInvocation} tmp=${tmpFile} cwd=${effectiveCwd} configuredShell=${configuredShell || ''}\n`
                 );
-                if (windowsGitBashCandidates.length) {
-                    process.stderr.write(
-                        `[aps-parse-error] gitBashCandidates=${windowsGitBashCandidates.join(' | ')}\n`
-                    );
+                if (resolvedBashPath) {
+                    process.stderr.write(`[aps-parse-error] resolvedBashPath=${resolvedBashPath}\n`);
                 }
                 if (_lineMatch) {
                     const _errLine = parseInt(_lineMatch[1], 10);
@@ -3376,41 +3316,6 @@ exit 0
         return normalized || 'artifact';
     }
 
-    /**
-     * Extract the NuGet feed identifier from the Release stage's NuGet push task.
-     * This is used as the fallback feed identifier if the Release stage doesn't run.
-     */
-    _extractReleaseStageNugetFeed(stages) {
-        if (!Array.isArray(stages)) return null;
-
-        for (const stageDoc of stages) {
-            const stageName = String(stageDoc.stage || stageDoc.displayName || '');
-            if (stageName.toLowerCase() !== 'release') continue;
-
-            const jobs = Array.isArray(stageDoc.jobs) ? stageDoc.jobs : [];
-            for (const jobDoc of jobs) {
-                const steps = Array.isArray(jobDoc.steps) ? jobDoc.steps : [];
-                for (const stepDoc of steps) {
-                    // Look for NuGetCommand@2 with command: push
-                    if (stepDoc.task === 'NuGetCommand@2' && stepDoc.inputs) {
-                        const command = String(stepDoc.inputs.command || '').toLowerCase();
-                        if (command === 'push') {
-                            // Extract feed identifier from inputs
-                            const feedId = String(
-                                stepDoc.inputs.publishVstsFeed ||
-                                    stepDoc.inputs.publishFeedCredentials ||
-                                    stepDoc.inputs.externalEndpoints ||
-                                    ''
-                            ).trim();
-                            if (feedId) return feedId;
-                        }
-                    }
-                }
-            }
-        }
-        return null;
-    }
-
     _ensurePublishSourceExists(publishPath, artifactName, variables = {}) {
         const shouldMaterializeDummyPackages = /packages?/i.test(String(artifactName || ''));
 
@@ -4119,7 +4024,9 @@ exit 0
                 .map((name) => path.join(packagesDir, name));
 
             if (packageFiles.length > 0) {
-                const feedIdentifier = this._releaseStageNugetFeed || 'default-feed';
+                // Use feed identifier from any NuGet publish already captured this run.
+                const existingFeed = this._feedPublishes.find((p) => p.type === 'nuget');
+                const feedIdentifier = existingFeed ? existingFeed.feedIdentifier : 'default-feed';
                 const feedRoot = path.join(this._getFeedPublishRoot(variables, workDir), 'nuget', feedIdentifier);
                 fs.mkdirSync(feedRoot, { recursive: true });
 
