@@ -5,7 +5,7 @@ All notable changes to Azure Pipeline Studio will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.7.0] - 2026-07-24
+## [1.7.1] - 2026-07-24
 
 ### Added
 - **Simulation: `toolsDirectory` setting**: New `azurePipelineStudio.simulation.toolsDirectory` VS Code setting (and matching **Tools Folder Path** picker in the simulation panel) specifies a folder of executables that is checked before `PATH` when resolving tools not listed in `toolPaths`. Persisted alongside individual tool paths and forwarded to `runSingleStep` and full simulation runs.
