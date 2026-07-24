@@ -5,6 +5,38 @@ All notable changes to Azure Pipeline Studio will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-07-24
+
+### Added
+- **Simulation: `toolsDirectory` setting**: New `azurePipelineStudio.simulation.toolsDirectory` VS Code setting (and matching **Tools Folder Path** picker in the simulation panel) specifies a folder of executables that is checked before `PATH` when resolving tools not listed in `toolPaths`. Persisted alongside individual tool paths and forwarded to `runSingleStep` and full simulation runs.
+- **Simulation: results search bar**: A search bar now appears in the simulation results toolbar. Type to filter visible steps by output text, and use **Find Next** / **Find Prev** (or `Enter` / `Shift+Enter`) to navigate matches, which are highlighted in gold and scrolled into view. The same search is also exported to the browser view.
+- **Simulation: `browseToolsFolder` command**: A folder picker button next to the Tools Folder Path input lets you browse for the tools directory from the UI.
+- **`build-bundle.sh`**: New standalone build script extracted from `package.json`. Includes a hard-link guard that prevents accidentally overwriting `extension.js` with a webpack bundle when both files share the same inode.
+- **CLI `runscript`: debug banner**: When `--debug` or `--xtrace` is active, `[APS] scriptCwd` and `OUTPUT_FILE` are printed to stderr before the script runs to aid debugging.
+
+### Changed
+- **Simulation: `runSingleStep` results now identify the target step**: The `simulationResults` message for a single-step run now includes `singleStep: true`, `si`, `ji`, and `ti` fields so the webview can update only the correct step row and step-detail panel.
+- **Simulation: centralized execution config**: Tool paths, `toolsDirectory`, and WSL mount-root resolution are now handled by a shared `getSimulationExecutionConfig()` helper, removing duplicated logic across full-run, single-step, and terminal-run paths.
+- **Simulation: centralized message posting**: All `simulationPanel.webview.postMessage(...)` calls are now routed through a `postSimulationMessage()` helper that guards against a disposed panel.
+- **Simulation: `parseBuildCounter` helper**: Build counter parsing extracted into a reusable helper used by both full-run and single-step paths.
+- **CLI `runscript`: uses simulator execution engine**: `runscript` now delegates script execution to `PipelineSimulator.executePreparedStep()` instead of a custom `spawnSync` call, giving CLI runs the same shell fallback, shims, and output behavior as UI simulation.
+- **CLI `runscript`: smarter working directory**: `Build.SourcesDirectory` is now auto-detected — it honours an explicit user override first, then the process CWD if different from the pipeline directory, then a prior simulation artifacts directory, and finally the pipeline directory itself.
+- **CLI `runscript`: baseline Azure variables seeded**: `buildSimulationDefaultVariables()` is called before user overrides so scripts have a full set of Azure system variables available by default.
+- **`npm run build:dev` / `build:prod`**: Both scripts now delegate to `bash ./build-bundle.sh` instead of calling `webpack` directly.
+- **Simulation panel settings layout**: The settings panel header is now sticky (fixed above the scrollable settings content) so the Collapse button is always visible.
+- **Simulation panel UI polish**: Button, table header, and variable-section styles updated for improved contrast and consistency.
+- **`_resolveSimulationWorkingDirectory` priority order**: `parserOptions.fileName` is now checked first (before `document.uri.fsPath` and `document.fileName`).
+- **Sidebar results mapping**: Stage results are now matched by stage name instead of array index, so sidebar indicators remain correct when a subset of stages is run.
+- **Simulation panel context guard**: The message handler now returns an early error if `document`, `parserOptions`, or `sourceText` is unavailable instead of proceeding with undefined values.
+
+### Fixed
+- **Simulation panel crash on re-open**: Revealing an already-disposed simulation panel no longer throws an unhandled exception. The error is caught, the stale reference is cleared, and a new panel is created.
+- **`showSimulationView` command error handling**: The command handler is now wrapped in a try/catch that surfaces failures as a VS Code error message instead of silently crashing.
+- **Simulation panel cleanup on deactivate**: `deactivate()` now properly disposes `activeSimulationPanel` if it is still open.
+- **WSL browser fallback**: Opening simulation results in a browser on WSL now falls back to `xdg-open` if `wslpath` or `cmd.exe` fails, instead of silently doing nothing.
+- **Parser: unresolved template parameters no longer become runtime macros**: A `${{ parameters.xxx }}` expression that cannot be resolved now collapses to an empty string rather than being rewritten as a `$(xxx)` runtime variable reference.
+- **Simulation: single-step re-run clears stale output**: Clicking **Run Step** now clears the previous output for that step before posting the new result, so stale content is not shown during execution.
+
 ## [1.6.1] - 2026-07-16
 
 ### Fixed
@@ -30,6 +62,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Simulation: EPERM workspace errors surfaced**: Permission errors during simulation workspace cleanup are now shown as actionable VS Code error messages that include the locked directory path.
 - **Simulation: Windows multi-line env var corruption**: Fixed multi-line variable values being incorrectly injected with real newlines into the Windows process environment block passed to Git Bash/WSL.
 
+[1.7.0]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.7.0
+[1.6.2]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.6.2
+[1.6.1]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.6.1
 [1.6.0]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.6.0
 
 ## [1.5.0] - 2026-06-26
