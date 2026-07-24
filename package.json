@@ -199,6 +199,14 @@
           "default": {},
           "description": "Override paths to executables used during pipeline simulation, keyed by OS. Use a 'windows' or 'linux' sub-object containing tool name \u2192 path entries. Only the block matching the simulation's execution platform is applied. Example: { \"windows\": { \"git\": \"C:\\\\PortableGit\\\\bin\\\\git.exe\" }, \"linux\": { \"pwsh\": \"/usr/bin/pwsh\" } }",
           "type": "object"
+        },
+        "azurePipelineStudio.simulation.toolsDirectory": {
+          "default": null,
+          "description": "Path to a folder containing tool executables used during pipeline simulation. Checked before PATH when resolving tools not listed in toolPaths.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "title": "Azure Pipeline Studio"
@@ -281,13 +289,13 @@
     "url": "https://github.com/HPInc/azure-pipeline-studio.git"
   },
   "scripts": {
-    "build:dev": "webpack --mode none",
-    "build:prod": "webpack --mode production",
+    "build:dev": "bash ./build-bundle.sh dev",
+    "build:prod": "bash ./build-bundle.sh prod",
     "test": "node tests/run-tests.js",
     "test:all": "./tests/run-all-tests.sh",
     "test:integration": "node tests/test-integration-expressions.js",
     "test:module": "node tests/test-azure-expressions-module.js"
   },
   "type": "commonjs",
-  "version": "1.6.1"
+  "version": "1.7.0"
 }

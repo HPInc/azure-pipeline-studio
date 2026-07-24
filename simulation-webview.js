@@ -189,11 +189,26 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 .sidebar-stage-header:hover .sidebar-stage-run-btn,.sidebar-stage.active .sidebar-stage-run-btn{opacity:1}
 .sidebar-stage-run-btn:hover{background:#0078d4;color:#fff}
 .main-content{flex:1;display:flex;flex-direction:column;overflow:hidden}
-.settings-panel{background:#2a2a2c;border-bottom:1px solid #444;padding:12px 20px;overflow-y:auto;max-height:none;flex:1}
-.settings-panel.collapsed{max-height:36px;flex:0 0 auto;overflow:hidden}
-.body{flex:1;overflow-y:auto;padding:16px 20px}
+.settings-panel{background:#2a2a2c;border-bottom:1px solid #444;padding:0;display:flex;flex-direction:column;max-height:none;flex:1}
+.settings-panel.collapsed{flex:0 0 auto}
+.settings-panel.collapsed #settingsContent{display:none!important}
+.settings-panel-title{padding:10px 20px 8px;flex-shrink:0;border-bottom:1px solid #333}
+#settingsContent{padding:8px 20px 12px;overflow-y:auto;flex:1}
+.body{flex:1;display:flex;flex-direction:column;overflow:hidden;padding:16px 20px}
 .body.hidden{display:none}
-.body-toolbar{display:flex;justify-content:flex-end;align-items:center;margin-bottom:4px}
+.body-toolbar{display:flex;justify-content:flex-end;align-items:center;margin-bottom:4px;background:#1e1e1e;padding:4px 0;flex:0 0 auto}
+#resultsViewport{flex:1;min-height:0;overflow-y:auto;padding-top:4px}
+#stageContents{flex:0 0 auto}
+#resultsPanel{overflow:visible}
+.results-search{display:flex;align-items:center;gap:8px;margin-right:auto;min-width:300px;flex-wrap:nowrap}
+.results-search-hidden{display:none}
+.results-search input{background:#2d2d30;border:1px solid #3e3e42;color:#e0e0e0;padding:5px 8px;border-radius:3px;font-size:.82em;width:100%;min-width:220px}
+.results-search input:focus{outline:none;border-color:#0078d4}
+.results-search-status{font-size:.76em;color:#888;white-space:nowrap}
+.results-search-clear{background:#2d2d30;border:1px solid #3e3e42;color:#aaa;padding:4px 8px;border-radius:3px;cursor:pointer;font-size:.75em;flex-shrink:0;white-space:nowrap}
+.results-search-nav{min-width:86px;text-align:center}
+.results-search-clear:hover{border-color:#555;color:#ddd}
+.results-search-clear:disabled{opacity:1;cursor:not-allowed;color:#777;border-color:#444;background:#2a2a2c}
 .stage-content{display:none}
 .stage-content.active{display:block}
 .stage-content-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:12px;border-bottom:2px solid #0078d4}
@@ -212,12 +227,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 .field-label{font-size:.82em;color:#ccc}
 .field-input{background:#2d2d30;border:1px solid #3e3e42;color:#e0e0e0;padding:4px 8px;border-radius:3px;font-size:.82em;width:90px}
 .field-input:focus{outline:none;border-color:#0078d4}
+.field-input[type=number]::-webkit-inner-spin-button,.field-input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
 .field-select{background:#2d2d30;border:1px solid #3e3e42;color:#e0e0e0;padding:4px 8px;border-radius:3px;font-size:.82em;cursor:pointer}
 .field-select:focus{outline:none;border-color:#0078d4}
 .vars-table{width:100%;border-collapse:collapse;margin-top:4px;font-size:.85em}
-.vars-table td{padding:3px 5px}
+.vars-table:not(.vars-ref-table):not(.vars-lib-table) th:last-child,.vars-table:not(.vars-ref-table):not(.vars-lib-table) td:last-child{width:34px;min-width:34px;max-width:34px;text-align:center;padding:2px}
+.vars-table td{padding:3px 5px;border-bottom:1px solid #252525}
 .vars-ref-table td{vertical-align:middle}
-.varth{color:#ccc;font-weight:700;font-size:.8em;padding:4px 5px;text-align:left}
+.varth{background:#252528;color:#aaa;font-weight:700;font-size:.78em;padding:5px 5px;text-align:left;border-bottom:1px solid #3a3a3e;text-transform:uppercase;letter-spacing:.04em}
 .var-group-label{font-size:.82em;color:#c8c8c8;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-top:10px;margin-bottom:4px;padding:3px 2px;display:flex;align-items:center;gap:6px}
 .var-group-label.var-toggle{cursor:pointer}
 .var-group-label.var-toggle:hover{color:#ccc}
@@ -232,19 +249,21 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 .varref-toggle{font-size:.8em;color:#777;cursor:pointer;user-select:none;padding:3px 0;display:inline-block}
 .varref-toggle:hover{color:#ccc}
 #variablesContent.collapsed{display:none}
+#pipelineVarsBody,#azureVarsBody,#libVarsBody{padding-left:12px;border-left:2px solid #2e2e2e}
 #pipelineVarsBody .vars-table,#azureVarsBody .vars-table{font-size:.98em}
 #libVarsBody .vars-table{font-size:.98em}
 #libVarsBody .var-key,#libVarsBody .var-val{font-size:.98em}
 #libVarsBody .lib-name{color:#9cdcfe;font-family:monospace}
+#toolPathsPanelBody{padding-left:12px;border-left:2px solid #2e2e2e}
 #toolPathsPanelBody .vars-table{font-size:.98em}
 #toolPathsPanelBody .tool-name{color:#9cdcfe;font-family:monospace}#toolPathsPanelBody .tool-name,#toolPathsPanelBody .tool-path{font-size:.98em}
 .var-key,.var-val{background:#2d2d30;border:1px solid #3e3e42;color:#e0e0e0;padding:4px 8px;border-radius:3px;width:100%}.var-key{font-weight:600}
 .var-key:focus,.var-val:focus{outline:none;border-color:#0078d4}
-.add-var-btn{background:none;border:1px dashed #555;color:#777;padding:2px 8px;border-radius:3px;cursor:pointer;font-size:.8em;font-weight:600;line-height:1.4}
-.add-var-btn:hover{border-color:#0078d4;color:#ccc}
+.add-var-btn{background:#3c3c3f;border:1px solid #999;color:#eee;padding:3px 11px;border-radius:3px;cursor:pointer;font-size:.78em;font-weight:600;letter-spacing:.02em;vertical-align:middle;line-height:1.4}
+.add-var-btn:hover{background:#4a4a4e;border-color:#bbb;color:#fff}
 .save-lib-btn{background:#3a3a3d;border:1px solid #666;color:#ddd;padding:3px 9px;border-radius:3px;cursor:pointer;font-size:.8em;line-height:1.4}
 .save-lib-btn:hover{border-color:#0078d4;color:#fff}
-.remove-var-btn{background:none;border:none;color:#b8b8b8;cursor:pointer;font-size:1.05em;padding:0 4px;line-height:1}
+.remove-var-btn{background:none;border:none;color:#b8b8b8;cursor:pointer;font-size:1.3em;padding:0 6px;line-height:1}
 .remove-var-btn:hover{color:#fc8181}
 .toolbar{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}
 .toolbar-btn{background:#2d2d30;border:1px solid #3e3e42;color:#aaa;padding:4px 8px;border-radius:3px;cursor:pointer;font-size:.74em}
@@ -295,19 +314,22 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 .res-step{margin:4px 0 4px 20px;font-size:1.02em}
 .res-icon{margin-right:6px;font-size:1.04em}
 .res-step-name{color:#ccc}
-.res-out{margin:3px 0 3px 20px;font-family:monospace;font-size:.96em;color:#9fa8b0;white-space:pre-wrap;word-break:break-all;max-height:min(65vh,calc(100vh - 260px));overflow-y:auto;background:#1a1a1a;padding:5px 8px;border-radius:2px}
+.res-out{margin:3px 0 3px 20px;font-family:monospace;font-size:.96em;color:#9fa8b0;white-space:pre-wrap;word-break:break-all;max-height:min(65vh,calc(100vh - 260px));overflow-y:auto;background:#1a1a1a;padding:5px 8px;border-radius:2px;scroll-padding-top:10px}
+.res-step,.res-out{scroll-margin-top:var(--aps-sticky-offset,8px)}
 .res-vars{margin:2px 0 2px 20px}
 .res-var{font-size:.94em;color:#8f98a1;font-family:monospace}
 .res-out-var{color:#7eb8d4}
 .res-vk{color:#444;margin-right:3px}
+.res-search-hit{background:#f3d56b;color:#111;padding:0 1px;border-radius:2px}
+.res-search-hit-active{outline:1px solid #d4a100;box-shadow:0 0 0 1px rgba(212,161,0,.25)}
 .res-summary{margin-top:12px;padding:8px 10px;background:#252526;border:1px solid #3e3e42;border-radius:3px;font-size:.84em;font-weight:600}
 @keyframes aps-spin{to{transform:rotate(360deg)}}
 .sim-loading{display:flex;align-items:center;gap:10px;padding:24px 0;color:#888;font-size:.9em}
 .sim-spinner{width:20px;height:20px;border:2px solid #3e3e42;border-top-color:#569cd6;border-radius:50%;animation:aps-spin .8s linear infinite;flex-shrink:0}
 .sec-title-row{display:flex;align-items:center;gap:8px}
-.sec-collapse-btn{margin-left:auto;background:#3a3a3d;border:1px solid #666;color:#ddd;padding:3px 11px;border-radius:3px;cursor:pointer;font-size:.8em;font-weight:600}
-.sec-save-btn{background:#2e2e31;border:1px solid #555;color:#ccc;padding:2px 7px;border-radius:3px;cursor:pointer;font-size:.75em}.var-group-actions{display:flex;align-items:center;gap:4px;flex-shrink:0;margin-left:6px}
-.sec-save-btn:hover{border-color:#888;color:#fff}
+.sec-collapse-btn{margin-left:auto;background:#3a3a3d;border:1px solid #777;color:#ddd;padding:3px 11px;border-radius:3px;cursor:pointer;font-size:.8em;font-weight:600}
+.sec-save-btn{background:#3c3c3f;border:1px solid #999;color:#eee;padding:3px 11px;border-radius:3px;cursor:pointer;font-size:.78em;font-weight:600;letter-spacing:.02em;vertical-align:middle;line-height:1.4}.var-group-actions{display:flex;align-items:center;gap:4px;flex-shrink:0;margin-left:6px}
+.sec-save-btn:hover{background:#4a4a4e;border-color:#bbb;color:#fff}
 .sec-collapse-btn:hover{border-color:#888;color:#fff;background:#3d3d3f}
 .res-stage-hd{cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between}
 .res-stage-hd:hover{color:#fff}
@@ -356,7 +378,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
   </div>
   <div class="main-content">
     <div class="settings-panel" id="settingsPanel">
-      <div class="section-title sec-title-row" style="margin-top:0">Settings<button class="sec-collapse-btn" id="settingsToggle" onclick="toggleSettingsPanel()">&#9650; Collapse</button></div>
+      <div class="settings-panel-title">
+        <div class="section-title sec-title-row" style="margin-top:0">Settings<button class="sec-collapse-btn" id="settingsToggle" onclick="toggleSettingsPanel()">&#9650; Collapse</button></div>
+      </div>
       <div id="settingsContent">
         <div class="section-title sec-title-row" onclick="toggleToolPaths()" style="margin-top:0;cursor:pointer"><span class="sidebar-toggle" id="toolPathsToggle"></span>Tool Paths</div>
         <div id="toolPathsContent" style="display:none">
@@ -387,9 +411,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
       </div>
     </div>
         <div class="body" id="renderBody">
-            <div class="body-toolbar"><button class="res-browser-btn" id="browserBtn" onclick="openResultsInBrowser()" style="display:none">&#127760; Open in Browser</button></div>
-      <div id="stageContents">${stageContentsHtml || '<div class="empty-msg">No stages found</div>'}</div>
-      <div id="resultsPanel"></div>
+            <div class="body-toolbar"><div class="results-search results-search-hidden" id="resultsSearchBar"><input id="resultsSearchInput" type="text" placeholder="Search output messages..." oninput="onResultsSearchInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();if(event.shiftKey){findPrevSearchHit();}else{findNextSearchHit();}}" disabled><button class="results-search-clear" id="resultsSearchClearBtn" onclick="clearResultsSearch()" disabled>Clear</button><button class="results-search-clear results-search-nav" id="resultsSearchPrevBtn" onclick="findPrevSearchHit()" disabled>Find Prev</button><button class="results-search-clear results-search-nav" id="resultsSearchNextBtn" onclick="findNextSearchHit()" disabled>Find Next</button><span class="results-search-status" id="resultsSearchStatus"></span></div><button class="res-browser-btn" id="browserBtn" onclick="openResultsInBrowser()" style="display:none">&#127760; Open in Browser</button></div>
+            <div id="resultsViewport"><div id="stageContents">${stageContentsHtml || '<div class="empty-msg">No stages found</div>'}</div><div id="resultsPanel"></div></div>
     </div>
   </div>
 </div>
@@ -429,8 +452,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 <script>
 window.onerror=function(msg,src,line,col,err){var l=document.getElementById('pageLoader');if(l){l.innerHTML='<div style="color:#f47174;padding:20px;font-family:monospace;font-size:13px"><b>JS Error (line '+line+'):</b><br>'+msg+'<br><br>'+(err&&err.stack?err.stack.replace(/\\n/g,'<br>'):'')+'</div>';}return false;};
 window.addEventListener('unhandledrejection',function(e){var l=document.getElementById('pageLoader');if(l){l.innerHTML='<div style="color:#f47174;padding:20px;font-family:monospace;font-size:13px"><b>Unhandled Promise Rejection:</b><br>'+String(e.reason)+'</div>';}});
-const vscode=acquireVsCodeApi();let varCount=0;let libVarCount=0;let taskFilter=null;let lastResults=null;
-const _b64Decode=(str)=>{try{return new TextDecoder().decode(Uint8Array.from(atob(str),c=>c.charCodeAt(0)));}catch(e){console.error('b64Decode error:',e,str&&str.slice(0,40));return str;}};const dataEl=document.getElementById('__aps_data');function _safeJsonParse(b64,fallback){try{var dec=_b64Decode(b64||'');console.log('[aps] decoded (first 80):', dec&&dec.slice(0,80));return JSON.parse(dec);}catch(e){console.error('[aps] _safeJsonParse failed, b64=',b64&&b64.slice(0,40),e);return fallback;}}const _rawKnownVars=_safeJsonParse(dataEl.getAttribute('data-known-vars'),{});const knownVars={azure:Array.isArray(_rawKnownVars.azure)?_rawKnownVars.azure:[],pipeline:Array.isArray(_rawKnownVars.pipeline)?_rawKnownVars.pipeline:[],groups:Array.isArray(_rawKnownVars.groups)?_rawKnownVars.groups:[]};const _rawSavedVars=_safeJsonParse(dataEl.getAttribute('data-saved-vars'),{});const savedVars={overrides:(_rawSavedVars.overrides&&typeof _rawSavedVars.overrides==='object')?_rawSavedVars.overrides:{},libData:Array.isArray(_rawSavedVars.libData)?_rawSavedVars.libData:[],toolPaths:(_rawSavedVars.toolPaths&&typeof _rawSavedVars.toolPaths==='object')?_rawSavedVars.toolPaths:{}};const topLevelParameterDefinitions=_safeJsonParse(dataEl.getAttribute('data-top-params'),[]);window._expandedSteps=_safeJsonParse(dataEl.getAttribute('data-expanded-steps'),[]);window._originalSourceText=_safeJsonParse(dataEl.getAttribute('data-source-text'),'');window._pipelineDir=dataEl.getAttribute('data-pipeline-dir')||'';console.log('[aps] init: stages=',document.querySelectorAll('.sidebar-stage').length,'knownVars.azure=',knownVars.azure.length,'topLevelParams=',topLevelParameterDefinitions.length);console.log('[aps-diag] webview script loaded — WSL_PROXY_FILTER_MARKER=2026-07-15-v4');function _normParamType(t){return String(t||'string').trim().toLowerCase();}
+const vscode=acquireVsCodeApi();let varCount=0;let libVarCount=0;let taskFilter=null;let lastResults=null;let searchMatchIndex=-1;let searchMatchTerm='';
+const _b64Decode=(str)=>{try{return new TextDecoder().decode(Uint8Array.from(atob(str),c=>c.charCodeAt(0)));}catch(e){console.error('b64Decode error:',e,str&&str.slice(0,40));return str;}};const dataEl=document.getElementById('__aps_data');function _safeJsonParse(b64,fallback){try{var dec=_b64Decode(b64||'');console.log('[aps] decoded (first 80):', dec&&dec.slice(0,80));return JSON.parse(dec);}catch(e){console.error('[aps] _safeJsonParse failed, b64=',b64&&b64.slice(0,40),e);return fallback;}}const _rawKnownVars=_safeJsonParse(dataEl.getAttribute('data-known-vars'),{});const knownVars={azure:Array.isArray(_rawKnownVars.azure)?_rawKnownVars.azure:[],pipeline:Array.isArray(_rawKnownVars.pipeline)?_rawKnownVars.pipeline:[],groups:Array.isArray(_rawKnownVars.groups)?_rawKnownVars.groups:[]};const _rawSavedVars=_safeJsonParse(dataEl.getAttribute('data-saved-vars'),{});const savedVars={overrides:(_rawSavedVars.overrides&&typeof _rawSavedVars.overrides==='object')?_rawSavedVars.overrides:{},libData:Array.isArray(_rawSavedVars.libData)?_rawSavedVars.libData:[],toolPaths:(_rawSavedVars.toolPaths&&typeof _rawSavedVars.toolPaths==='object')?_rawSavedVars.toolPaths:{},toolsDirectory:_rawSavedVars.toolsDirectory||null};const topLevelParameterDefinitions=_safeJsonParse(dataEl.getAttribute('data-top-params'),[]);window._expandedSteps=_safeJsonParse(dataEl.getAttribute('data-expanded-steps'),[]);window._originalSourceText=_safeJsonParse(dataEl.getAttribute('data-source-text'),'');window._pipelineDir=dataEl.getAttribute('data-pipeline-dir')||'';console.log('[aps] init: stages=',document.querySelectorAll('.sidebar-stage').length,'knownVars.azure=',knownVars.azure.length,'topLevelParams=',topLevelParameterDefinitions.length);console.log('[aps-diag] webview script loaded — WSL_PROXY_FILTER_MARKER=2026-07-15-v4');function _normParamType(t){return String(t||'string').trim().toLowerCase();}
 function _asBool(v){if(typeof v==='boolean')return v;var s=String(v||'').trim().toLowerCase();return s==='true'||s==='1'||s==='yes';}
 function _stringifyParamValue(v){if(v===undefined||v===null)return '';if(typeof v==='object'){try{return JSON.stringify(v);}catch(_){return String(v);}}return String(v);}
 function _createParamControl(def){
@@ -575,7 +598,7 @@ function _selectOnlyStage(stageName){
     if(!target)return false;
     let found=false;
     document.querySelectorAll('.stage-cb').forEach(function(cb){
-        const name=String((cb && cb.dataset && cb.dataset.name) || '').trim();
+        const name=String(cb.getAttribute('data-name')||'').trim();
         const matches=name===target;
         cb.checked=matches;
         if(matches)found=true;
@@ -604,7 +627,7 @@ function _scrollToInBody(el){
 function selectStage(index){
     taskFilter=null;
     document.querySelectorAll('.sidebar-task-row').forEach(el=>el.classList.remove('active'));
-    document.querySelectorAll('.sidebar-stage').forEach((el,i)=>{el.classList.toggle('active',i===index);});
+    document.querySelectorAll('.sidebar-stage').forEach(function(el){el.classList.toggle('active',parseInt(el.getAttribute('data-stage-index'),10)===index);});
     document.querySelectorAll('.stage-content').forEach((el,i)=>{el.classList.toggle('active',i===index);});
     document.querySelectorAll('.sdp').forEach(function(el){el.style.display='none';});
     var rp=document.getElementById('resultsPanel');
@@ -723,10 +746,22 @@ function setSidebarResult(id,result){
     }
     el.textContent='•';
 }
+function _buildStageNameToIndexMap(){
+    const map={};
+    document.querySelectorAll('.sidebar-stage').forEach(function(el){
+        const idx=parseInt(el.getAttribute('data-stage-index'),10);
+        const cb=el.querySelector('.stage-cb');
+        if(cb&&!isNaN(idx)){map[String(cb.getAttribute('data-name')||'').trim()]=idx;}
+    });
+    return map;
+}
 function updateSidebarResults(r){
     if(!r||!Array.isArray(r.stages))return;
-    for(let si=0;si<r.stages.length;si++){
-        const stage=r.stages[si]||{};
+    const nameToIdx=_buildStageNameToIndexMap();
+    for(let i=0;i<r.stages.length;i++){
+        const stage=r.stages[i]||{};
+        const sn=String(stage.stage||'').trim();
+        const si=(sn&&nameToIdx[sn]!==undefined)?nameToIdx[sn]:i;
         setSidebarResult('ssr-stage-'+si,stage.result);
         const jobs=Array.isArray(stage.jobs)?stage.jobs:[];
         for(let ji=0;ji<jobs.length;ji++){
@@ -740,34 +775,198 @@ function updateSidebarResults(r){
         }
     }
 }
+function _getResultsSearchTerm(){
+    const input=document.getElementById('resultsSearchInput');
+    return input?String(input.value||'').trim().toLowerCase():'';
+}
+function _setSearchControlsEnabled(enabled){
+    const searchBar=document.getElementById('resultsSearchBar');
+    const input=document.getElementById('resultsSearchInput');
+    const clearBtn=document.getElementById('resultsSearchClearBtn');
+    const prevBtn=document.getElementById('resultsSearchPrevBtn');
+    const nextBtn=document.getElementById('resultsSearchNextBtn');
+    const status=document.getElementById('resultsSearchStatus');
+    const isEnabled=!!enabled;
+    if(searchBar)searchBar.classList.toggle('results-search-hidden',!isEnabled);
+    if(input)input.disabled=!isEnabled;
+    if(clearBtn)clearBtn.disabled=!isEnabled;
+    if(prevBtn)prevBtn.disabled=!isEnabled;
+    if(nextBtn)nextBtn.disabled=!isEnabled;
+    if(!isEnabled&&status)status.textContent='';
+}
+function _updateStickySearchOffset(){
+    const viewport=document.getElementById('resultsViewport');
+    if(!viewport)return;
+    viewport.style.setProperty('--aps-sticky-offset','8px');
+}
+function _clearActiveSearchHit(){
+    document.querySelectorAll('.res-search-hit-active').forEach(function(el){el.classList.remove('res-search-hit-active');});
+}
+function _collectVisibleSearchHits(){
+    const panel=document.getElementById('resultsPanel');
+    if(!panel)return[];
+    return Array.from(panel.querySelectorAll('.res-search-hit')).filter(function(el){
+        const step=el.closest('.res-step');
+        if(!step)return false;
+        return step.style.display!=='none';
+    });
+}
+function _setResultsSearchStatus(){
+    const status=document.getElementById('resultsSearchStatus');
+    if(!status)return;
+    const term=_getResultsSearchTerm();
+    if(!term){
+        status.textContent='';
+        _clearActiveSearchHit();
+        searchMatchIndex=-1;
+        searchMatchTerm='';
+        return;
+    }
+    const hits=_collectVisibleSearchHits();
+    if(!hits.length){
+        status.textContent='0 matches';
+        _clearActiveSearchHit();
+        searchMatchIndex=-1;
+        searchMatchTerm=term;
+        return;
+    }
+    if(searchMatchTerm!==term||searchMatchIndex<0||searchMatchIndex>=hits.length){
+        searchMatchIndex=0;
+    }
+    searchMatchTerm=term;
+    _clearActiveSearchHit();
+    const activeHit=hits[searchMatchIndex];
+    if(activeHit)activeHit.classList.add('res-search-hit-active');
+    status.textContent=String(searchMatchIndex+1)+' / '+String(hits.length)+' matches';
+}
+function _scrollSearchHitBelowToolbar(activeHit){
+    if(!activeHit)return;
+
+    const container=document.getElementById('resultsViewport');
+    const stepEl=activeHit.closest('.res-step')||activeHit;
+    const logPanel=activeHit.closest('.res-out');
+    const topOffset=8;
+
+    if(container){
+        const containerRect=container.getBoundingClientRect();
+        const stepRect=stepEl.getBoundingClientRect();
+        const containerTarget=container.scrollTop+(stepRect.top-containerRect.top)-topOffset;
+        container.scrollTop=Math.max(0,containerTarget);
+    }else if(typeof stepEl.scrollIntoView==='function'){
+        stepEl.scrollIntoView({block:'start',inline:'nearest',behavior:'auto'});
+    }
+
+    if(logPanel){
+        const logRect=logPanel.getBoundingClientRect();
+        const hitRectAfterBody=activeHit.getBoundingClientRect();
+        const logTarget=logPanel.scrollTop+(hitRectAfterBody.top-logRect.top)-10;
+        logPanel.scrollTop=Math.max(0,logTarget);
+    }
+
+    if(!container&&typeof activeHit.scrollIntoView==='function'){
+        activeHit.scrollIntoView({block:'start',inline:'nearest',behavior:'auto'});
+    }
+}
+function findNextSearchHit(){
+    const term=_getResultsSearchTerm();
+    if(!term){
+        _setResultsSearchStatus();
+        return;
+    }
+    const hits=_collectVisibleSearchHits();
+    if(!hits.length){
+        _setResultsSearchStatus();
+        return;
+    }
+    if(searchMatchTerm!==term||searchMatchIndex<0||searchMatchIndex>=hits.length){
+        searchMatchIndex=0;
+    }else{
+        searchMatchIndex=(searchMatchIndex+1)%hits.length;
+    }
+    searchMatchTerm=term;
+    _setResultsSearchStatus();
+    const refreshed=_collectVisibleSearchHits();
+    const activeHit=refreshed[searchMatchIndex];
+    _scrollSearchHitBelowToolbar(activeHit);
+}
+function findPrevSearchHit(){
+    const term=_getResultsSearchTerm();
+    if(!term){
+        _setResultsSearchStatus();
+        return;
+    }
+    const hits=_collectVisibleSearchHits();
+    if(!hits.length){
+        _setResultsSearchStatus();
+        return;
+    }
+    if(searchMatchTerm!==term||searchMatchIndex<0||searchMatchIndex>=hits.length){
+        searchMatchIndex=hits.length-1;
+    }else{
+        searchMatchIndex=(searchMatchIndex-1+hits.length)%hits.length;
+    }
+    searchMatchTerm=term;
+    _setResultsSearchStatus();
+    const refreshed=_collectVisibleSearchHits();
+    const activeHit=refreshed[searchMatchIndex];
+    _scrollSearchHitBelowToolbar(activeHit);
+}
+function onResultsSearchInput(){
+    if(lastResults){
+        renderResults(lastResults);
+        return;
+    }
+    applyTaskFilter();
+}
+function clearResultsSearch(){
+    const input=document.getElementById('resultsSearchInput');
+    if(input){
+        input.value='';
+        input.focus();
+    }
+    if(lastResults){
+        renderResults(lastResults);
+        return;
+    }
+    applyTaskFilter();
+}
 function applyTaskFilter(){
     const panel=document.getElementById('resultsPanel');
     if(!panel)return;
     const summary=panel.querySelector('.res-summary');
     const steps=panel.querySelectorAll('.res-step');
-    if(!steps.length)return;
-    if(!taskFilter){
-        panel.querySelectorAll('.res-stage,.res-job,.res-step').forEach(el=>{el.style.display='';});
-        if(summary)summary.style.display='';
+    if(!steps.length){
+        _setResultsSearchStatus();
         return;
     }
-    const s=String(taskFilter.stageIndex),j=String(taskFilter.jobIndex),t=String(taskFilter.stepIndex);
+    const term=_getResultsSearchTerm();
+    const hasTaskFilter=!!taskFilter;
+    const s=hasTaskFilter?String(taskFilter.stageIndex):'';
+    const j=hasTaskFilter?String(taskFilter.jobIndex):'';
+    const t=hasTaskFilter?String(taskFilter.stepIndex):'';
     steps.forEach(el=>{
-        const show=el.getAttribute('data-stage-index')===s&&el.getAttribute('data-job-index')===j&&el.getAttribute('data-step-index')===t;
+        const matchesTask=!hasTaskFilter||(
+            el.getAttribute('data-stage-index')===s&&
+            el.getAttribute('data-job-index')===j&&
+            el.getAttribute('data-step-index')===t
+        );
+        const searchText=String(el.getAttribute('data-search-text')||'').toLowerCase();
+        const matchesSearch=!term||searchText.includes(term);
+        const show=matchesTask&&matchesSearch;
         el.style.display=show?'':'none';
     });
-    panel.querySelectorAll('.res-stage').forEach(stageEl=>{
-        const stageIdx=stageEl.getAttribute('data-stage-index');
-        const matchesStage=stageIdx===s;
-        stageEl.style.display=matchesStage?'':'none';
-    });
+
     panel.querySelectorAll('.res-job').forEach(jobEl=>{
-        const stageIdx=jobEl.getAttribute('data-stage-index');
-        const jobIdx=jobEl.getAttribute('data-job-index');
-        const matchesJob=stageIdx===s&&jobIdx===j;
-        jobEl.style.display=matchesJob?'':'none';
+        const visible=Array.from(jobEl.querySelectorAll('.res-step')).some(stepEl=>stepEl.style.display!=='none');
+        jobEl.style.display=visible?'':'none';
     });
-    if(summary)summary.style.display='none';
+    panel.querySelectorAll('.res-stage').forEach(stageEl=>{
+        const visible=Array.from(stageEl.querySelectorAll('.res-job')).some(jobEl=>jobEl.style.display!=='none');
+        stageEl.style.display=visible?'':'none';
+    });
+
+    if(summary)summary.style.display=(hasTaskFilter||!!term)?'none':'';
+    _setResultsSearchStatus();
 }
 function toggleSteps(id){const el=document.getElementById(id);if(!el)return;el.classList.toggle('collapsed');}
 function toggleSettingsPanel(){var s=document.getElementById('settingsContent');var p=document.getElementById('settingsPanel');var btn=document.getElementById('settingsToggle');if(!s||!p)return;var c=s.classList.toggle('collapsed');p.classList.toggle('collapsed');btn.textContent=c?'▼ Settings':'▲ Collapse';}
@@ -812,25 +1011,40 @@ function clearLibVars(btn){
 }
 function addToolPath(){var tb=document.getElementById('toolPathsRows');if(!tb)return;var tr=document.createElement('tr');tr.innerHTML='<td style="width:48%"><input class="var-key tool-name" placeholder="tool (e.g. bash)"></td><td><div style="display:flex;gap:4px;align-items:center"><input class="var-val tool-path" placeholder="path" style="flex:1;min-width:0"><button class="add-var-btn" title="Browse for executable" onclick="browseToolPath(this)" style="flex-shrink:0;padding:2px 6px">&#128193;</button></div></td><td><button class="remove-var-btn">&times;</button></td>';tr.querySelector('.remove-var-btn').onclick=function(){tr.remove();};tb.appendChild(tr);var inp=tr.querySelector('.tool-name');if(inp)inp.focus();}
 function _collectToolPaths(){var paths={};document.querySelectorAll('#toolPathsRows tr').forEach(function(row){var n=row.querySelector('.tool-name');var p=row.querySelector('.tool-path');if(n&&p&&n.value.trim()&&p.value.trim())paths[n.value.trim()]=p.value.trim();});return paths;}
-function saveToolPaths(btn){vscode.postMessage({command:'saveToolPaths',data:{toolPaths:_collectToolPaths()}});_btnFeedback(btn,'Saved \u2713','#4ec9b0');}
+function saveToolPaths(btn){vscode.postMessage({command:'saveToolPaths',data:{toolPaths:_collectToolPaths(),toolsDirectory:(document.getElementById('toolsFolderInput')||{}).value||null}});_btnFeedback(btn,'Saved \u2713','#4ec9b0');}
 function clearToolPaths(btn){var tb=document.getElementById('toolPathsRows');if(tb)tb.innerHTML='';vscode.postMessage({command:'clearToolPaths'});_btnFeedback(btn,'Cleared','#ce9178');}
 var _toolPathBrowseRow=null;
 function browseToolPath(btn){_toolPathBrowseRow=btn.closest('tr');vscode.postMessage({command:'browseToolPath'});}
+function browseToolsFolder(){vscode.postMessage({command:'browseToolsFolder'});}
 function clearVars(){clearAzureVars();clearLibVars();vscode.postMessage({command:'clearVars'});}
 function toggleVariables(){var c=document.getElementById('variablesContent');var btn=document.getElementById('variablesToggle');if(!c)return;var hidden=c.style.display==='none';c.style.display=hidden?'':'none';if(btn)btn.classList.toggle('open',hidden);}
 function toggleToolPaths(){var c=document.getElementById('toolPathsContent');var btn=document.getElementById('toolPathsToggle');if(!c)return;var hidden=c.style.display==='none';c.style.display=hidden?'':'none';if(btn)btn.classList.toggle('open',hidden);}
-function _renderToolPathsPanel(){var body=document.getElementById('toolPathsPanelBody');if(!body)return;var html='<div class="var-group-sublabel" style="margin-top:0"><button class="add-var-btn" onclick="addToolPath()" title="Add Tool Path">+ Add Tool Path</button><span style="margin-left:auto;display:flex;gap:4px"><button class="sec-save-btn" onclick="_btnClick(event,saveToolPaths)" title="Save Tool Paths">Save</button><button class="sec-save-btn" onclick="_btnClick(event,clearToolPaths)" title="Clear Tool Paths">Clear</button></span></div><table class="vars-table"><thead><tr><th class="varth" style="width:48%">Tool</th><th class="varth">Path</th><th style="width:5%"></th></tr></thead><tbody id="toolPathsRows"></tbody></table>';body.innerHTML=html;}
+function _renderToolPathsPanel(){var body=document.getElementById('toolPathsPanelBody');if(!body)return;var html=''
+    +'<div style="display:flex;justify-content:flex-end;gap:6px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #2e2e2e">'
+    +'<button class="sec-save-btn" onclick="_btnClick(event,saveToolPaths)" title="Save Tool Paths">Save</button>'
+    +'<button class="sec-save-btn" onclick="_btnClick(event,clearToolPaths)" title="Clear Tool Paths">Clear</button>'
+    +'</div>'
+    +'<table class="vars-table"><thead><tr><th class="varth" colspan="2">Tools Folder Path</th><th></th></tr></thead>'
+    +'<tbody>'
+    +'<tr><td colspan="2"><input id="toolsFolderInput" class="var-val" placeholder="Tools folder (e.g. C:/tools or /usr/local/bin)" style="width:100%;box-sizing:border-box"></td><td style="text-align:center"><button class="add-var-btn" title="Browse for folder" onclick="browseToolsFolder()" style="padding:2px 6px">&#128193;</button></td></tr>'
+    +'</tbody></table>'
+    +'<div style="border-top:1px solid #2e2e2e;margin:6px 0 8px"></div>'
+    +'<div style="display:flex;align-items:center;margin-bottom:5px">'
+    +'<div style="font-size:.78em;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:.07em;flex:1">Individual Tool Paths</div>'
+    +'<button class="add-var-btn" onclick="addToolPath()" title="Add Tool Path">+ Add</button>'
+    +'</div>'
+    +'<table class="vars-table"><thead><tr><th class="varth" style="width:46%">Tool</th><th class="varth">Path</th><th></th></tr></thead><tbody id="toolPathsRows"></tbody></table>';
+body.innerHTML=html;}
 function toggleVarSubSection(hdr){var id=hdr.getAttribute('data-target');var el=document.getElementById(id);if(!el)return;var hidden=el.style.display==='none';el.style.display=hidden?'':'none';var tog=hdr.querySelector('.sidebar-toggle');if(tog)tog.classList.toggle('open',hidden);}
 function syncSpecialVarToPanel(){var set=function(name,val){var inp=document.querySelector('.var-override-input[data-varname="'+name+'"]');if(inp)inp.value=val;};var dbg=document.getElementById('debugMode');var br=document.getElementById('buildReason');var sb=document.getElementById('sourceBranch');if(dbg)set('System.Debug',dbg.checked?'true':'');if(br&&br.value)set('Build.Reason',br.value);if(sb){var sval=sb.value.trim();set('Build.SourceBranch',sval);if(sval){var sbn=sval.replace(/^refs\\/heads\\//,'');set('Build.SourceBranchName',sbn!==sval?sbn:sval.split('/').pop()||sval);}else{set('Build.SourceBranchName','');}}}
 function _collectAllVars(){var vars={};document.querySelectorAll('.var-override-input').forEach(function(inp){var name=inp.getAttribute('data-varname');if(name&&inp.value.trim())vars[name]=inp.value.trim();});return vars;}
 function addVarWithKey(name,defaultVal){var id='vr'+(varCount++);var tr=document.createElement('tr');tr.id=id;var enc=String(name||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');var phenc=String(defaultVal||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');tr.innerHTML='<td style="width:42%"><input class="var-key" placeholder="key" value="'+enc+'"></td><td style="width:49%"><input class="var-val" placeholder="'+(phenc||'value')+'" title="default: '+(phenc||'(none)')+'"></td><td><button class="remove-var-btn">&times;</button></td>';tr.querySelector('.remove-var-btn').onclick=function(){tr.remove();};var tb=document.getElementById('varRows');if(tb){tb.appendChild(tr);if(!name){var inp=tr.querySelector('.var-val');if(inp)inp.focus();}}}
-function addLibVarUnder(btn){var group=btn.getAttribute('data-group');var tbid=btn.getAttribute('data-tbody');var tb=document.getElementById(tbid);if(!tb)return;var tr=document.createElement('tr');tr.setAttribute('data-group',group||'');tr.innerHTML='<td style="width:48%"><input class="var-key lib-name" placeholder="variable"></td><td><input class="var-val lib-val" placeholder="value"></td><td><button class="remove-var-btn">&times;</button></td>';tr.querySelector('.remove-var-btn').onclick=function(){tr.remove();};tb.appendChild(tr);var inp=tr.querySelector('.lib-name');if(inp)inp.focus();}
+function addLibVarUnder(btn){var group=btn.getAttribute('data-group');var tbid=btn.getAttribute('data-tbody');var tb=document.getElementById(tbid);if(!tb)return;var tr=document.createElement('tr');tr.setAttribute('data-group',group||'');tr.innerHTML='<td style="width:44%"><input class="var-key lib-name" placeholder="variable"></td><td><div style="display:flex;gap:4px;align-items:center"><input class="var-val lib-val" placeholder="value" style="flex:1;min-width:0"><button class="remove-var-btn">&times;</button></div></td>';tr.querySelector('.remove-var-btn').onclick=function(){tr.remove();};tb.appendChild(tr);var inp=tr.querySelector('.lib-name');if(inp)inp.focus();}
 
 
 
 function _collectLibVars(){var m={};document.querySelectorAll('tr[data-group]').forEach(function(row){var g=row.getAttribute('data-group');var n=row.querySelector('.lib-name');var v=row.querySelector('.lib-val');if(g&&n&&v&&g.trim()&&n.value.trim()){var gk=g.trim();if(!m[gk])m[gk]={};m[gk][n.value.trim()]=v.value.trim();}});return m;}
 
-function _renderVariablesPanel(){var body=document.getElementById('variablesPanelBody');if(!body)return;var e=escHtml;var html='';html+='<div class="var-group-label var-toggle" data-target="azureVarsBody" onclick="toggleVarSubSection(this)"><span class="sidebar-toggle"></span>Azure System Variables<button class="sec-save-btn" onclick="_btnClick(event,saveVars)" title="Save">Save</button><button class="sec-save-btn" onclick="_btnClick(event,clearAzureVars)" title="Clear">Clear</button></div><div id="azureVarsBody" style="display:none"><table class="vars-table vars-ref-table"><thead><tr><th class="varth" style="width:38%">Variable</th><th class="varth" style="width:22%">Description</th><th class="varth">Override</th></tr></thead><tbody>';knownVars.azure.forEach(function(v){var en=e(v.name);var ed=e(v.desc||'');html+='<tr><td class="varref-name">'+en+'</td><td class="varref-val">'+ed+'</td><td><input class="var-override-input var-val" data-varname="'+en+'" placeholder="(auto)" style="width:100%"></td></tr>';});html+='</tbody></table></div>';if(knownVars.groups&&knownVars.groups.length){html+='<div class="var-group-label var-toggle" data-target="libVarsBody" onclick="toggleVarSubSection(this)" style="margin-top:8px"><span class="sidebar-toggle"></span>Library Variables<button class="sec-save-btn" onclick="_btnClick(event,saveVars)" title="Save">Save</button><button class="sec-save-btn" onclick="_btnClick(event,clearLibVars)" title="Clear">Clear</button></div><div id="libVarsBody" style="display:none">';knownVars.groups.forEach(function(g,gi){var eg=e(g);var tbid='libvars-'+gi;html+='<div class="var-group-sublabel"><span>'+eg+'</span><button class="add-var-btn" data-group="'+eg+'" data-tbody="'+tbid+'" onclick="addLibVarUnder(this)" title="Add variable">+</button></div><table class="vars-table"><thead><tr><th class="varth" style="width:48%">Variable</th><th class="varth">Value</th><th style="width:5%"></th></tr></thead><tbody id="'+tbid+'"></tbody></table>';});html+='</div>';}body.innerHTML=html;}
 
 function addLibVarToFirstGroup(){
     if(!knownVars.groups||!knownVars.groups.length)return;
@@ -843,9 +1057,10 @@ function _renderVariablesPanel(){
     if(!body)return;
     var e=escHtml;
     var html='';
+    var saveRow='<div style="display:flex;justify-content:flex-end;gap:6px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #2e2e2e">';
     if(knownVars.pipeline&&knownVars.pipeline.length){
-        html+='<div class="var-group-label var-toggle" data-target="pipelineVarsBody" onclick="toggleVarSubSection(this)"><span class="sidebar-toggle" style="transform:rotate(90deg)"></span>Pipeline Variables<button class="sec-save-btn" onclick="_btnClick(event,saveVars)" title="Save Pipeline Variables">Save</button></div>';
-        html+='<div id="pipelineVarsBody"><table class="vars-table vars-ref-table"><thead><tr><th class="varth" style="width:40%">Variable</th><th class="varth" style="width:30%">Default (YAML)</th><th class="varth">Override</th></tr></thead><tbody>';
+        html+='<div class="var-group-label var-toggle" data-target="pipelineVarsBody" onclick="toggleVarSubSection(this)"><span class="sidebar-toggle"></span>Pipeline Variables</div>';
+        html+='<div id="pipelineVarsBody" style="display:none">'+saveRow+'<button class="sec-save-btn" onclick="_btnClick(event,saveAzureVars)" title="Save">Save</button></div><table class="vars-table vars-ref-table"><thead><tr><th class="varth" style="width:40%">Variable</th><th class="varth" style="width:30%">Default (YAML)</th><th class="varth">Override</th></tr></thead><tbody>';
         knownVars.pipeline.forEach(function(v){
             var en=e(v.name);
             var ev=e(v.value||'');
@@ -854,7 +1069,7 @@ function _renderVariablesPanel(){
         html+='</tbody></table></div>';
     }
     html+='<div class="var-group-label var-toggle" data-target="azureVarsBody" onclick="toggleVarSubSection(this)"><span class="sidebar-toggle"></span>Azure System Variables</div>';
-    html+='<div id="azureVarsBody" style="display:none"><div class="var-group-actions" style="margin:4px 0 6px 0"><button class="sec-save-btn" onclick="_btnClick(event,saveAzureVars)" title="Save Azure System Variables">Save</button><button class="sec-save-btn" onclick="_btnClick(event,clearAzureVars)" title="Clear Azure System Variables">Clear</button></div><table class="vars-table vars-ref-table"><thead><tr><th class="varth" style="width:38%">Variable</th><th class="varth" style="width:22%">Description</th><th class="varth">Override</th></tr></thead><tbody>';
+    html+='<div id="azureVarsBody" style="display:none">'+saveRow+'<button class="sec-save-btn" onclick="_btnClick(event,saveAzureVars)" title="Save">Save</button><button class="sec-save-btn" onclick="_btnClick(event,clearAzureVars)" title="Clear">Clear</button></div><table class="vars-table vars-ref-table"><thead><tr><th class="varth" style="width:38%">Variable</th><th class="varth" style="width:22%">Description</th><th class="varth">Override</th></tr></thead><tbody>';
     knownVars.azure.forEach(function(v){
         var en=e(v.name);
         var ed=e(v.desc||'');
@@ -863,12 +1078,15 @@ function _renderVariablesPanel(){
     html+='</tbody></table></div>';
     if(knownVars.groups&&knownVars.groups.length){
         html+='<div class="var-group-label var-toggle" data-target="libVarsBody" onclick="toggleVarSubSection(this)" style="margin-top:8px"><span class="sidebar-toggle"></span>Library Variables</div>';
-        html+='<div id="libVarsBody" style="display:none"><div class="var-group-actions" style="margin:4px 0 6px 0"><button class="sec-save-btn" onclick="_btnClick(event,saveLibVars)" title="Save Library Variables">Save</button><button class="sec-save-btn" onclick="_btnClick(event,clearLibVars)" title="Clear Library Variables">Clear</button></div>';
+        html+='<div id="libVarsBody" style="display:none">'+saveRow+'<button class="sec-save-btn" onclick="_btnClick(event,saveLibVars)" title="Save">Save</button><button class="sec-save-btn" onclick="_btnClick(event,clearLibVars)" title="Clear">Clear</button></div>';
         knownVars.groups.forEach(function(g,gi){
             var eg=e(g);
             var tbid='libvars-'+gi;
-            html+='<div class="var-group-sublabel"><span>'+eg+'</span><button class="add-var-btn" data-group="'+eg+'" data-tbody="'+tbid+'" onclick="addLibVarUnder(this)" title="Add Variable">+ Add Variable</button></div>';
-            html+='<table class="vars-table"><thead><tr><th class="varth" style="width:48%">Variable</th><th class="varth">Value</th><th style="width:5%"></th></tr></thead><tbody id="'+tbid+'"></tbody></table>';
+            html+='<div style="display:flex;align-items:center;margin-bottom:5px;margin-top:8px">'
+                +'<div style="font-size:.78em;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:.07em;flex:1">'+eg+'</div>'
+                +'<button class="add-var-btn" data-group="'+eg+'" data-tbody="'+tbid+'" onclick="addLibVarUnder(this)" title="Add Variable">+ Add</button>'
+                +'</div>';
+            html+='<table class="vars-table vars-lib-table"><thead><tr><th class="varth" style="width:44%">Variable</th><th class="varth">Value</th></tr></thead><tbody id="'+tbid+'"></tbody></table>';
         });
         html+='</div>';
     }
@@ -886,6 +1104,7 @@ function runSimulation(){
   const buildReason=document.getElementById('buildReason').value;if(buildReason)variables['Build.Reason']=buildReason;
   const sourceBranch=document.getElementById('sourceBranch').value.trim();if(sourceBranch){variables['Build.SourceBranch']=sourceBranch;const sbn=sourceBranch.replace(/^refs\\/heads\\//,'');variables['Build.SourceBranchName']=sbn!==sourceBranch?sbn:sourceBranch.split('/').pop()||sourceBranch;}
   document.getElementById('runBtn').disabled=true;
+    _setSearchControlsEnabled(false);
   
   document.getElementById('statusMsg').textContent='';
     var ob=document.getElementById('browserBtn');if(ob)ob.style.display='none';
@@ -898,7 +1117,7 @@ function runSimulation(){
     const parameters=_collectTopLevelParameters();
     vscode.postMessage({command:'saveLibVars',data:{libData:_collectLibData()}});
     vscode.postMessage({command:'saveAzureVars',data:{overrides:_collectAzureOverrides()}});
-    vscode.postMessage({command:'runSimulation',stages,buildCounter,variables,libraryVariables:libVars,parameters,toolPaths:_collectToolPaths()});
+    vscode.postMessage({command:'runSimulation',stages,buildCounter,variables,libraryVariables:libVars,parameters,toolPaths:_collectToolPaths(),toolsDirectory:(document.getElementById('toolsFolderInput')||{}).value||null});
   }catch(e){console.error('[aps] runSimulation error',e);document.getElementById('resultsPanel').innerHTML='';document.getElementById('statusMsg').textContent='⚠ JS error: '+String(e);document.getElementById('runBtn').disabled=false;}
 }
 function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
@@ -1013,6 +1232,24 @@ function addRsmEnvRow(key,val){
     +'<button class="remove-var-btn" onclick="this.parentElement.remove()">&times;</button>';
   document.getElementById('rsmEnvRows').appendChild(row);
 }
+function clearSingleStepContent(si,ji,ti){
+    var sdp=document.getElementById('sdp-'+si+'-'+ji+'-'+ti);
+    if(sdp){
+        var hd=sdp.querySelector('.sdp-hd');
+        sdp.innerHTML=(hd?hd.outerHTML:'')+'<div class="sdp-empty">Running step...</div>';
+    }
+
+    var stepSel='.res-step[data-stage-index="'+String(si)+'"][data-job-index="'+String(ji)+'"][data-step-index="'+String(ti)+'"]';
+    var stepEl=document.querySelector(stepSel);
+    if(stepEl){
+        var nameEl=stepEl.querySelector('.res-step-name');
+        stepEl.innerHTML='<span class="res-icon" style="color:#888">•</span>'+
+            (nameEl?nameEl.outerHTML:'')+
+            '<div class="res-out"><div>Running step...</div></div>';
+    }
+
+    setSidebarResult('ssr-task-'+si+'-'+ji+'-'+ti,null);
+}
 function submitRunStep(){
   const variableOverrides={};
   const paramOverrides=[];
@@ -1044,14 +1281,16 @@ function submitRunStep(){
     Object.assign(savedVars.overrides,variableOverrides);
     vscode.postMessage({command:'saveStepVarOverrides',data:variableOverrides});
   }
+  clearSingleStepContent(_rsmState.si,_rsmState.ji,_rsmState.ti);
   closeRunStepModal();
   document.getElementById('runBtn').disabled=true;
+    _setSearchControlsEnabled(false);
   document.getElementById('statusMsg').textContent='Running single step\u2026';
   document.getElementById('resultsPanel').innerHTML='<div class="sim-loading"><div class="sim-spinner"></div><span>Running single step\u2026</span></div>';
   var rb=document.getElementById('renderBody');if(rb)rb.classList.remove('hidden');
   var s=document.getElementById('settingsContent');if(s){s.classList.add('collapsed');document.getElementById('settingsPanel').classList.add('collapsed');var btn=document.getElementById('settingsToggle');if(btn)btn.innerHTML='&#9660; Settings';}
   var bb=document.getElementById('backBtn');if(bb)bb.style.display='inline-block';
-  vscode.postMessage({command:'runSingleStep',stageIndex:_rsmState.si,jobIndex:_rsmState.ji,stepIndex:_rsmState.ti,buildCounter:isNaN(bc)?1:bc,variableOverrides:variableOverrides,paramOverrides:paramOverrides,envVars:envVars});
+    vscode.postMessage({command:'runSingleStep',stageIndex:_rsmState.si,jobIndex:_rsmState.ji,stepIndex:_rsmState.ti,buildCounter:isNaN(bc)?1:bc,variableOverrides:variableOverrides,paramOverrides:paramOverrides,envVars:envVars,toolPaths:_collectToolPaths(),toolsDirectory:(document.getElementById('toolsFolderInput')||{}).value||null});
 }
 function toggleRes(hd){var body=hd.nextElementSibling;if(!body)return;var c=body.classList.toggle('collapsed');var t=hd.querySelector('.res-tog');if(t)t.textContent=c?'\u25b6':'\u25bc';}
 function openResultsInBrowser(){
@@ -1065,10 +1304,132 @@ function openResultsInBrowser(){
     var btn=resultsClone.querySelector('.res-browser-btn');
     if(btn)btn.remove();
     sidebarClone.querySelectorAll('[onclick]').forEach(function(el){el.removeAttribute('onclick');});
+    var exportSearchValue=escHtml(((document.getElementById('resultsSearchInput')||{}).value||''));
+    var exportToolbarHtml=''
+        +'<div class="export-toolbar">'
+        +'<div class="results-search" id="exportResultsSearchBar">'
+        +'<input id="exportResultsSearchInput" type="text" placeholder="Search output messages..." value="'+exportSearchValue+'">'
+        +'<button class="results-search-clear" id="exportResultsSearchClearBtn">Clear</button>'
+        +'<button class="results-search-clear results-search-nav" id="exportResultsSearchPrevBtn">Find Prev</button>'
+        +'<button class="results-search-clear results-search-nav" id="exportResultsSearchNextBtn">Find Next</button>'
+        +'<span class="results-search-status" id="exportResultsSearchStatus"></span>'
+        +'</div>'
+        +'</div>';
 
-    var extraCss='body{height:auto;min-height:100vh;overflow:auto}.main-container{height:auto;min-height:100vh;overflow:visible}.sidebar,.body{overflow:visible}.export-content{flex:1;padding:16px 20px}.export-title{padding:14px 20px;border-bottom:2px solid #555;background:#2d2d30;color:#e8e8e8;font-size:1.05em;font-weight:600}';
+    var extraCss='body{height:auto;min-height:100vh;overflow:auto}.main-container{height:auto;min-height:100vh;overflow:visible}.sidebar,.body{overflow:visible}.export-content{flex:1;padding:16px 20px}.export-title{padding:14px 20px;border-bottom:2px solid #555;background:#2d2d30;color:#e8e8e8;font-size:1.05em;font-weight:600}.export-toolbar{display:flex;align-items:center;justify-content:flex-start;margin:0 0 10px}.export-content .results-search{width:100%;max-width:980px}.res-step-search-active{outline:1px solid #d4a100;box-shadow:0 0 0 1px rgba(212,161,0,.25);border-radius:2px}';
 
     var exportScript='(' + function () {
+        var currentTaskFilter = null;
+        var searchMatchIndex = -1;
+        var searchMatchTerm = '';
+
+        function getSearchTerm() {
+            var input = document.getElementById('exportResultsSearchInput');
+            return input ? String(input.value || '').trim().toLowerCase() : '';
+        }
+
+        function clearActiveSearchHit() {
+            document.querySelectorAll('.res-step-search-active').forEach(function (el) {
+                el.classList.remove('res-step-search-active');
+            });
+        }
+
+        function collectVisibleSearchHits() {
+            return Array.from(document.querySelectorAll('.export-content .res-step[data-export-search-match="1"]')).filter(
+                function (el) {
+                    return el.style.display !== 'none';
+                }
+            );
+        }
+
+        function updateSearchStatus() {
+            var status = document.getElementById('exportResultsSearchStatus');
+            if (!status) return;
+            var term = getSearchTerm();
+            if (!term) {
+                status.textContent = '';
+                clearActiveSearchHit();
+                searchMatchIndex = -1;
+                searchMatchTerm = '';
+                return;
+            }
+            var hits = collectVisibleSearchHits();
+            if (!hits.length) {
+                status.textContent = '0 matches';
+                clearActiveSearchHit();
+                searchMatchIndex = -1;
+                searchMatchTerm = term;
+                return;
+            }
+            if (searchMatchTerm !== term || searchMatchIndex < 0 || searchMatchIndex >= hits.length) {
+                searchMatchIndex = 0;
+            }
+            searchMatchTerm = term;
+            clearActiveSearchHit();
+            var active = hits[searchMatchIndex];
+            if (active) active.classList.add('res-step-search-active');
+            status.textContent = String(searchMatchIndex + 1) + ' / ' + String(hits.length) + ' matches';
+        }
+
+        function findNextSearchHit() {
+            var term = getSearchTerm();
+            if (!term) {
+                updateSearchStatus();
+                return;
+            }
+            var hits = collectVisibleSearchHits();
+            if (!hits.length) {
+                updateSearchStatus();
+                return;
+            }
+            if (searchMatchTerm !== term || searchMatchIndex < 0 || searchMatchIndex >= hits.length) {
+                searchMatchIndex = 0;
+            } else {
+                searchMatchIndex = (searchMatchIndex + 1) % hits.length;
+            }
+            searchMatchTerm = term;
+            updateSearchStatus();
+            var refreshed = collectVisibleSearchHits();
+            var active = refreshed[searchMatchIndex];
+            if (active && typeof active.scrollIntoView === 'function') {
+                active.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'smooth' });
+            }
+        }
+
+        function findPrevSearchHit() {
+            var term = getSearchTerm();
+            if (!term) {
+                updateSearchStatus();
+                return;
+            }
+            var hits = collectVisibleSearchHits();
+            if (!hits.length) {
+                updateSearchStatus();
+                return;
+            }
+            if (searchMatchTerm !== term || searchMatchIndex < 0 || searchMatchIndex >= hits.length) {
+                searchMatchIndex = hits.length - 1;
+            } else {
+                searchMatchIndex = (searchMatchIndex - 1 + hits.length) % hits.length;
+            }
+            searchMatchTerm = term;
+            updateSearchStatus();
+            var refreshed = collectVisibleSearchHits();
+            var active = refreshed[searchMatchIndex];
+            if (active && typeof active.scrollIntoView === 'function') {
+                active.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'smooth' });
+            }
+        }
+
+        function clearSearch() {
+            var input = document.getElementById('exportResultsSearchInput');
+            if (input) {
+                input.value = '';
+                input.focus();
+            }
+            applyTaskFilter();
+        }
+
         function expandResultsForTask(stageIndex, jobIndex) {
             var panel = document.querySelector('.export-content');
             if (!panel) return;
@@ -1098,25 +1459,25 @@ function openResultsInBrowser(){
         }
 
         function applyTaskFilter(filter) {
+            if (typeof filter !== 'undefined') currentTaskFilter = filter;
+            var activeFilter = currentTaskFilter;
             var panel = document.querySelector('.export-content');
             if (!panel) return;
             var summary = panel.querySelector('.res-summary');
             var steps = panel.querySelectorAll('.res-step');
             if (!steps.length) return;
-
-            if (!filter) {
-                panel.querySelectorAll('.res-stage,.res-job,.res-step').forEach(function (el) {
-                    el.style.display = '';
-                });
-                if (summary) summary.style.display = '';
-                return;
-            }
+            var term = getSearchTerm();
 
             steps.forEach(function (el) {
-                var show =
-                    el.getAttribute('data-stage-index') === filter.stageIndex &&
-                    el.getAttribute('data-job-index') === filter.jobIndex &&
-                    el.getAttribute('data-step-index') === filter.stepIndex;
+                var matchesTask =
+                    !activeFilter ||
+                    (el.getAttribute('data-stage-index') === activeFilter.stageIndex &&
+                        el.getAttribute('data-job-index') === activeFilter.jobIndex &&
+                        el.getAttribute('data-step-index') === activeFilter.stepIndex);
+                var searchText = String(el.getAttribute('data-search-text') || '').toLowerCase();
+                var matchesSearch = !term || searchText.indexOf(term) !== -1;
+                el.setAttribute('data-export-search-match', matchesSearch ? '1' : '0');
+                var show = matchesTask && matchesSearch;
                 el.style.display = show ? '' : 'none';
             });
 
@@ -1134,7 +1495,8 @@ function openResultsInBrowser(){
                 stageEl.style.display = visible ? '' : 'none';
             });
 
-            if (summary) summary.style.display = 'none';
+            if (summary) summary.style.display = activeFilter || term ? 'none' : '';
+            updateSearchStatus();
         }
 
         function toggleResultHeader(headerEl) {
@@ -1196,18 +1558,51 @@ function openResultsInBrowser(){
                 if (jobToggle) jobToggle.classList.toggle('open', !collapsed);
             });
         });
+
+        var searchInput = document.getElementById('exportResultsSearchInput');
+        var searchClear = document.getElementById('exportResultsSearchClearBtn');
+        var searchPrev = document.getElementById('exportResultsSearchPrevBtn');
+        var searchNext = document.getElementById('exportResultsSearchNextBtn');
+        if (searchInput) {
+            searchInput.addEventListener('input', function () {
+                applyTaskFilter();
+            });
+            searchInput.addEventListener('keydown', function (event) {
+                if (event.key !== 'Enter') return;
+                event.preventDefault();
+                if (event.shiftKey) findPrevSearchHit();
+                else findNextSearchHit();
+            });
+        }
+        if (searchClear) searchClear.addEventListener('click', clearSearch);
+        if (searchPrev) searchPrev.addEventListener('click', findPrevSearchHit);
+        if (searchNext) searchNext.addEventListener('click', findNextSearchHit);
+
+        applyTaskFilter(null);
     }.toString() + ')();';
 
     vscode.postMessage({
         command:'openResultsInBrowser',
-        html:'<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Simulation Results</title><style>'+css+extraCss+'</style></head><body><div class="export-title">Pipeline Simulation Results</div><div class="main-container">'+sidebarClone.outerHTML+'<div class="export-content">'+resultsClone.innerHTML+'</div></div><scr'+'ipt>'+exportScript+'<\/scr'+'ipt></body></html>'
+        html:'<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Simulation Results</title><style>'+css+extraCss+'</style></head><body><div class="export-title">Pipeline Simulation Results</div><div class="main-container">'+sidebarClone.outerHTML+'<div class="export-content">'+exportToolbarHtml+resultsClone.innerHTML+'</div></div><scr'+'ipt>'+exportScript+'<\/scr'+'ipt></body></html>'
     });
 }
 function _populateSdpResult(sdpEl,si,ji,ti){
   if(!lastResults)return;
-  var stg=lastResults.stages[si];if(!stg)return;
-  var job=stg.jobs[ji];if(!job)return;
-  var step=job.steps[ti];if(!step)return;
+  var _siMap=_buildStageNameToIndexMap();
+  var _invMap={};
+  Object.keys(_siMap).forEach(function(n){_invMap[_siMap[n]]=n;});
+  var _stageName=_invMap[si];
+    var stg=_stageName?lastResults.stages.find(function(s){return String(s&&s.stage||'').trim()===_stageName;}):lastResults.stages[si];
+    if(!stg&&lastResults.stages.length===1)stg=lastResults.stages[0];
+  if(!stg)return;
+    var jobs=Array.isArray(stg.jobs)?stg.jobs:[];
+    var job=jobs[ji];
+    if(!job&&jobs.length===1)job=jobs[0];
+    if(!job)return;
+    var steps=Array.isArray(job.steps)?job.steps:[];
+    var step=steps[ti];
+    if(!step&&steps.length===1)step=steps[0];
+    if(!step)return;
   var ICON={Succeeded:'\u2714',Failed:'\u2716',Skipped:'\u29d8'};
   var COL={Succeeded:'#4ec94e',Failed:'#f47174',Skipped:'#c8a84b'};
   var res=step.result||'Skipped';
@@ -1222,7 +1617,7 @@ function _populateSdpResult(sdpEl,si,ji,ti){
     }
     return true;
   }).join('\\n');
-  if(sdpStdout){body+='<div class="sdp-section"><div class="sdp-section-title">Output</div><pre class="sdp-script">'+escHtml(sdpStdout)+'</pre></div>';}
+  if(sdpStdout){var _sdpFmtLines=sdpStdout.split('\\n').map(function(l){var t=l.trim();var col=/^##\s*\[error\]/i.test(t)||/^\[sim-missing-tool\]/i.test(t)?'#f47174':/^##\s*\[warning\]/i.test(t)?'#c8a84b':null;return col?'<span style="color:'+col+'">'+escHtml(l)+'</span>':escHtml(l);}).join('\\n');body+='<div class="sdp-section"><div class="sdp-section-title">Output</div><pre class="sdp-script">'+_sdpFmtLines+'</pre></div>';}
   if(sdpStderr){body+='<div class="sdp-section"><div class="sdp-section-title">Errors / Warnings</div><pre class="sdp-script" style="color:#f47174">'+escHtml(sdpStderr)+'</pre></div>';}
   var ov=Object.entries(step.outputVariables||{});
   if(ov.length)body+='<div class="sdp-section"><div class="sdp-section-title">Output Variables</div><table class="sdp-table">'+ov.map(function(kv){return '<tr><td class="sdp-k">'+escHtml(kv[0])+'</td><td class="sdp-v">'+escHtml(String(kv[1]))+'</td></tr>';}).join('')+'</table></div>';
@@ -1232,6 +1627,7 @@ function _populateSdpResult(sdpEl,si,ji,ti){
 function renderResults(r){
   lastResults=r;
   const panel=document.getElementById('resultsPanel');
+    const searchTerm=_getResultsSearchTerm();
   const ICON={Succeeded:'\u2714',Failed:'\u2716',Skipped:'\u29d8'};
   const COL={Succeeded:'#4ec94e',Failed:'#f47174',Skipped:'#c8a84b'};
     const WARN='#c8a84b';
@@ -1263,17 +1659,41 @@ function renderResults(r){
     const formatRenderedLine=(line,isStderr)=>{
         const tracedVso=extractVsoFromTraceEcho(line);
         const raw=tracedVso||normalizeLogLine(line);
+        const highlightMessage=(text)=>{
+            const source=String(text||'');
+            if(!searchTerm)return escHtml(source);
+            const needle=String(searchTerm).toLowerCase();
+            if(!needle)return escHtml(source);
+            const lower=source.toLowerCase();
+            let out='';
+            let pos=0;
+            while(pos<source.length){
+                const hit=lower.indexOf(needle,pos);
+                if(hit===-1){
+                    out+=escHtml(source.slice(pos));
+                    break;
+                }
+                out+=escHtml(source.slice(pos,hit));
+                out+='<span class="res-search-hit">'+escHtml(source.slice(hit,hit+needle.length))+'</span>';
+                pos=hit+needle.length;
+            }
+            return out;
+        };
         let color='';
         if(/^##\\s*\\[debug\\]/i.test(raw)||/^##vso\\[task\\.debug\\]/i.test(raw)||/^##vso\\[task\\.logissue\\s+type=warning[^\\]]*\\]/i.test(raw)) color=WARN;
         if(/^##\\s*\\[error\\]/i.test(raw)||/^##vso\\[task\\.logissue\\s+type=error[^\\]]*\\]/i.test(raw)) color=ERR;
+        if(/^\\[sim-missing-tool\\]/i.test(raw)) color=ERR;
+        if(isStderr&&/permission denied/i.test(raw)) color=ERR;
         const prefix=isStderr?'<span class="res-vk">[stderr]</span> ':'';
-        const content=escHtml(raw);
+        const content=highlightMessage(raw);
         return color?'<div>'+prefix+'<span style="color:'+color+'">'+content+'</span></div>':'<div>'+prefix+content+'</div>';
     };
+    const _rr_nameToIdx=_buildStageNameToIndexMap();
     let html='<div class="res-wrap">';
-    for(let si=0;si<r.stages.length;si++){
-        const stage=r.stages[si];
+    for(let _rri=0;_rri<r.stages.length;_rri++){
+        const stage=r.stages[_rri];
     const sn=escHtml(stage.displayName||stage.stage);
+        const si=(()=>{const _sn=String(stage.stage||'').trim();return(_sn&&_rr_nameToIdx[_sn]!==undefined)?_rr_nameToIdx[_sn]:_rri;})();
         html+='<div class="res-stage" data-stage-index="'+si+'"><div class="res-stage-hd res-collapsible">'+sn+'<span class="res-tog">\u25b6</span></div><div class="res-body collapsed">';
         for(let ji=0;ji<stage.jobs.length;ji++){
             const job=stage.jobs[ji];
@@ -1284,7 +1704,11 @@ function renderResults(r){
         const res=step.result||'Skipped';
         const icon=ICON[res]||'?';
         const col=COL[res]||'#888';
-                html+='<div class="res-step" data-stage-index="'+si+'" data-job-index="'+ji+'" data-step-index="'+ti+'"><span class="res-icon" style="color:'+col+'">'+icon+'</span><span class="res-step-name">'+escHtml(step.displayName||'')+'</span>';
+                const _searchText=[
+                    String(step.stdout||''),
+                    String(step.stderr||'')
+                ].join('\\n').toLowerCase();
+                html+='<div class="res-step" data-stage-index="'+si+'" data-job-index="'+ji+'" data-step-index="'+ti+'" data-search-text="'+escHtml(_searchText)+'"><span class="res-icon" style="color:'+col+'">'+icon+'</span><span class="res-step-name">'+escHtml(step.displayName||'')+'</span>';
         const cleanStdout=stripWslProxyWarning(step.stdout);
         const cleanStderr=stripWslProxyWarning(step.stderr);
         if(cleanStdout&&cleanStdout.trim()){
@@ -1332,13 +1756,18 @@ document.getElementById('resultsPanel').addEventListener('click',function(e){
   var t=hd.querySelector('.res-tog');if(t)t.textContent=c?'\u25b6':'\u25bc';
 });
 requestAnimationFrame(function(){requestAnimationFrame(function(){var l=document.getElementById('pageLoader');if(l)l.remove();});});
+_setSearchControlsEnabled(false);
+_updateStickySearchOffset();
+window.addEventListener('resize',_updateStickySearchOffset);
 renderTopLevelParameters();
-function _syncOverrideToSettings(vn,val){if(vn==='Build.SourceBranch'){var sb=document.getElementById('sourceBranch');if(sb)sb.value=val;}else if(vn==='Build.SourceBranchName'){/* skip */}else if(vn==='Build.Reason'){var br=document.getElementById('buildReason');if(br)br.value=val;}else if(vn==='System.Debug'){var dbg=document.getElementById('debugMode');if(dbg)dbg.checked=val==='true'||val==='1';}else if(vn==='Build.BuildNumber'||vn==='Build.BuildId'){var bc=document.getElementById('buildCounter');if(bc&&vn==='Build.BuildNumber')bc.value=val;}}function _applyVarsLoaded(data){if(!data)return;var o=data.overrides||{};document.querySelectorAll('.var-override-input').forEach(function(inp){var name=inp.getAttribute('data-varname');if(o[name]!==undefined)inp.value=o[name];});if(Array.isArray(data.libData)){data.libData.forEach(function(entry){var gi=knownVars.groups.indexOf(entry.group);if(gi<0)return;var tb=document.getElementById('libvars-'+gi);if(!tb)return;tb.innerHTML='';if(!Array.isArray(entry.vars))return;entry.vars.forEach(function(v){var tr=document.createElement('tr');tr.setAttribute('data-group',entry.group);var en=escHtml(v.name||'');var ev=escHtml(v.value||'');tr.innerHTML='<td style="width:48%"><input class="var-key lib-name" placeholder="variable" value="'+en+'"></td><td><input class="var-val lib-val" placeholder="value" value="'+ev+'"></td><td><button class="remove-var-btn">&times;</button></td>';tr.querySelector('.remove-var-btn').onclick=function(){tr.remove();};tb.appendChild(tr);});});}if(data.toolPaths&&typeof data.toolPaths==='object'){var ttp=document.getElementById('toolPathsRows');if(ttp){ttp.innerHTML='';Object.entries(data.toolPaths).forEach(function(kv){var tr=document.createElement('tr');var en=escHtml(kv[0]||'');var ev=escHtml(kv[1]||'');tr.innerHTML='<td style="width:48%"><input class="var-key tool-name" placeholder="tool (e.g. bash)" value="'+en+'"></td><td><div style="display:flex;gap:4px;align-items:center"><input class="var-val tool-path" placeholder="path" value="'+ev+'" style="flex:1;min-width:0"><button class="add-var-btn" title="Browse for executable" onclick="browseToolPath(this)" style="flex-shrink:0;padding:2px 6px">&#128193;</button></div></td><td><button class="remove-var-btn">&times;</button></td>';tr.querySelector('.remove-var-btn').onclick=function(){tr.remove();};ttp.appendChild(tr);});}}try{syncSpecialVarToPanel();}catch(e){}}window.addEventListener('load',function(){_renderVariablesPanel();_renderToolPathsPanel();_applyVarsLoaded(savedVars);setTimeout(function(){expandAll(false);selectStage(0);syncSpecialVarToPanel();syncSelectAllStages();var pb=document.getElementById('variablesPanelBody');if(pb)pb.addEventListener('input',function(e){var inp=e.target;if(!inp.classList.contains('var-override-input'))return;_syncOverrideToSettings(inp.getAttribute('data-varname'),inp.value);});vscode.postMessage({command:'loadVars'});},50);});
+function _syncOverrideToSettings(vn,val){if(vn==='Build.SourceBranch'){var sb=document.getElementById('sourceBranch');if(sb)sb.value=val;}else if(vn==='Build.SourceBranchName'){/* skip */}else if(vn==='Build.Reason'){var br=document.getElementById('buildReason');if(br)br.value=val;}else if(vn==='System.Debug'){var dbg=document.getElementById('debugMode');if(dbg)dbg.checked=val==='true'||val==='1';}else if(vn==='Build.BuildNumber'||vn==='Build.BuildId'){var bc=document.getElementById('buildCounter');if(bc&&vn==='Build.BuildNumber')bc.value=val;}}function _applyVarsLoaded(data){if(!data)return;var o=data.overrides||{};document.querySelectorAll('.var-override-input').forEach(function(inp){var name=inp.getAttribute('data-varname');if(o[name]!==undefined)inp.value=o[name];});if(Array.isArray(data.libData)){data.libData.forEach(function(entry){var gi=knownVars.groups.indexOf(entry.group);if(gi<0)return;var tb=document.getElementById('libvars-'+gi);if(!tb)return;tb.innerHTML='';if(!Array.isArray(entry.vars))return;entry.vars.forEach(function(v){var tr=document.createElement('tr');tr.setAttribute('data-group',entry.group);var en=escHtml(v.name||'');var ev=escHtml(v.value||'');tr.innerHTML='<td style="width:44%"><input class="var-key lib-name" placeholder="variable" value="'+en+'"></td><td><div style="display:flex;gap:4px;align-items:center"><input class="var-val lib-val" placeholder="value" value="'+ev+'" style="flex:1;min-width:0"><button class="remove-var-btn">&times;</button></div></td>';tr.querySelector('.remove-var-btn').onclick=function(){tr.remove();};tb.appendChild(tr);});});}if(data.toolPaths&&typeof data.toolPaths==='object'){var ttp=document.getElementById('toolPathsRows');if(ttp){ttp.innerHTML='';Object.entries(data.toolPaths).forEach(function(kv){var tr=document.createElement('tr');var en=escHtml(kv[0]||'');var ev=escHtml(kv[1]||'');tr.innerHTML='<td style="width:48%"><input class="var-key tool-name" placeholder="tool (e.g. bash)" value="'+en+'"></td><td><div style="display:flex;gap:4px;align-items:center"><input class="var-val tool-path" placeholder="path" value="'+ev+'" style="flex:1;min-width:0"><button class="add-var-btn" title="Browse for executable" onclick="browseToolPath(this)" style="flex-shrink:0;padding:2px 6px">&#128193;</button></div></td><td><button class="remove-var-btn">&times;</button></td>';tr.querySelector('.remove-var-btn').onclick=function(){tr.remove();};ttp.appendChild(tr);});}}if(data.toolsDirectory){var tfd=document.getElementById('toolsFolderInput');if(tfd)tfd.value=data.toolsDirectory;}try{syncSpecialVarToPanel();}catch(e){}}window.addEventListener('load',function(){_renderVariablesPanel();_renderToolPathsPanel();_applyVarsLoaded(savedVars);setTimeout(function(){expandAll(false);selectStage(0);syncSpecialVarToPanel();syncSelectAllStages();var pb=document.getElementById('variablesPanelBody');if(pb)pb.addEventListener('input',function(e){var inp=e.target;if(!inp.classList.contains('var-override-input'))return;_syncOverrideToSettings(inp.getAttribute('data-varname'),inp.value);});vscode.postMessage({command:'loadVars'});},50);});
 window.addEventListener('message',e=>{
   const d=e.data;
-  if(d.command==='simulationStarted'){document.getElementById('runBtn').disabled=false;}
+  if(d.command==='simulationStarted'){/* simulation is running — keep button disabled until results arrive */}
   else if(d.command==='simulationResults'){
     document.getElementById('runBtn').disabled=false;
+        _setSearchControlsEnabled(true);
+        _updateStickySearchOffset();
     if(d.singleStep){
       const _savedFilter=taskFilter;
       taskFilter=null;
@@ -1347,13 +1776,14 @@ window.addEventListener('message',e=>{
       const _sr=d.results&&d.results.stages&&d.results.stages[0]&&d.results.stages[0].jobs&&d.results.stages[0].jobs[0]&&d.results.stages[0].jobs[0].steps&&d.results.stages[0].jobs[0].steps[0];
       if(_sr){setSidebarResult('ssr-task-'+d.si+'-'+d.ji+'-'+d.ti,_sr.result);}
       var _activeSdp=document.getElementById('sdp-'+d.si+'-'+d.ji+'-'+d.ti);
-      if(_activeSdp)_populateSdpResult(_activeSdp,0,0,0);
+            if(_activeSdp)_populateSdpResult(_activeSdp,d.si,d.ji,d.ti);
     }else{renderResults(d.results);}
   }
-    else if(d.command==='simulationError'){document.getElementById('resultsPanel').innerHTML='';document.getElementById('statusMsg').textContent='\u26a0 '+d.error;document.getElementById('runBtn').disabled=false;var browserBtn=document.getElementById('browserBtn');if(browserBtn)browserBtn.style.display='none';var _sc=document.getElementById('settingsContent');if(_sc){_sc.classList.remove('collapsed');var _sp=document.getElementById('settingsPanel');if(_sp)_sp.classList.remove('collapsed');var _sb=document.getElementById('settingsToggle');if(_sb)_sb.innerHTML='&#9650; Collapse';}}
+    else if(d.command==='simulationError'){document.getElementById('resultsPanel').innerHTML='';document.getElementById('statusMsg').textContent='\u26a0 '+d.error;document.getElementById('runBtn').disabled=false;_setSearchControlsEnabled(false);var browserBtn=document.getElementById('browserBtn');if(browserBtn)browserBtn.style.display='none';var _sc=document.getElementById('settingsContent');if(_sc){_sc.classList.remove('collapsed');var _sp=document.getElementById('settingsPanel');if(_sp)_sp.classList.remove('collapsed');var _sb=document.getElementById('settingsToggle');if(_sb)_sb.innerHTML='&#9650; Collapse';}}
   else if(d.command==='triggerRerun'){runSimulation();}
   else if(d.command==='varsLoaded'){_applyVarsLoaded(d.data);}
   else if(d.command==='toolPathBrowseResult'){if(_toolPathBrowseRow&&d.path){var _tp=_toolPathBrowseRow.querySelector('.tool-path');if(_tp)_tp.value=d.path;}_toolPathBrowseRow=null;}
+  else if(d.command==='toolsFolderBrowseResult'){if(d.path){var _tfd=document.getElementById('toolsFolderInput');if(_tfd)_tfd.value=d.path;}}
 });
 <\/script>
 </body></html>`;

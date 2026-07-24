@@ -185,6 +185,35 @@ Configure simulation behaviour via VS Code settings:
 
 - `azurePipelineStudio.simulation.workingDirectory` — Override the root directory used as the simulated workspace (default: directory of the open pipeline file)
 - `azurePipelineStudio.simulation.toolPaths` — Map tool names to explicit executable paths, e.g. `{"bash": "/usr/bin/bash", "pwsh": "/snap/bin/pwsh"}`
+- `azurePipelineStudio.simulation.toolsDirectory` — Path to a folder containing tool executables (checked before PATH when resolving tools not listed in `toolPaths`)
+
+### Use Cases
+
+#### Unit-testing pipeline steps locally
+
+Simulation lets you treat each pipeline step as a testable unit — run it in isolation with controlled inputs and assert on the output, all without a real ADO agent.
+
+**Typical workflow:**
+1. Open your pipeline file and launch **Simulate Pipeline Run**.
+2. Expand **Variables** and set any `$(VAR)` values the step depends on (e.g. a service token, branch name, or build counter). Click **Save** to persist them.
+3. Click **▶** next to the step under test in the sidebar to open the **Run Single Step** modal.
+4. Adjust individual parameter or variable overrides in the modal as needed.
+5. Click **▶ Run Step** and inspect stdout/stderr inline.
+6. Iterate: change variable values or script logic, re-run, confirm the output matches expectations.
+
+Because saved overrides persist across VS Code sessions, you can maintain a stable set of test inputs per pipeline and re-run quickly after any change.
+
+#### Debugging script failures before pushing
+
+Enable **Enable Debug** (panel-wide or per-step in the modal) to prepend `set -x` to bash scripts and `Set-PSDebug -Trace 1` to PowerShell scripts. The full command trace appears inline so you can pinpoint exactly which line failed and what values were in scope.
+
+#### Validating template parameter wiring
+
+Run the full simulation with different **Top-Level Parameters** values to confirm conditional steps are included/excluded correctly and that template parameters flow through to the right scripts.
+
+#### Smoke-testing tool availability
+
+Set **Tools Folder Path** (or individual entries in **Individual Tool Paths**) to point at local installs of `jq`, `curl`, `aws`, or any other CLI the pipeline relies on. Running the simulation confirms the tools are resolvable and the commands work with your actual data before CI runs them.
 
 ## Configuration
 
@@ -262,6 +291,99 @@ node extension-bundle.js -R ./ci -e .azure -e .ado
 # Format multiple files at once
 node extension-bundle.js file1.yml file2.yml file3.yml -f indent=4
 ```
+
+### Script Commands
+
+The CLI exposes script-level commands for inspecting and executing individual pipeline steps — useful for automated testing, CI validation, or debugging a single step without a full simulation.
+
+#### Discover pipeline structure
+
+```bash
+# List all stages
+node extension-bundle.js liststages ./pipeline.yaml
+
+# List jobs within stage 1
+node extension-bundle.js listjobs -stage 1 ./pipeline.yaml
+
+# List steps within stage 1, job 1
+node extension-bundle.js liststeps -stage 1 -job 1 ./pipeline.yaml
+
+# List everything in one shot
+node extension-bundle.js listpipeline ./pipeline.yaml
+```
+
+#### Inspect a step's inputs
+
+```bash
+# Show template parameters, runtime variables, and environment for step 3
+node extension-bundle.js getscriptinfo -stage 1 -job 1 -step 3 ./pipeline.yaml
+```
+
+Output includes parameter names, types, default values, and current expanded values.
+
+#### `runscript` — execute a step
+
+```bash
+node extension-bundle.js runscript -stage N -job N -step N <file> [--input JSON] [--debug] [--verbose]
+```
+
+Runs the script for a single pipeline step with optional overrides. By default only script stdout is printed; `--verbose` prints full JSON with step info, inputs, and environment.
+
+| Option | Description |
+|---|---|
+| `-stage N` | 1-based stage index |
+| `-job N` | 1-based job index |
+| `-step N` | 1-based step index |
+| `--input JSON` | JSON object with `parameters` and/or `variables` overrides |
+| `--debug` | Set `System.Debug=true` and prepend `set -x` |
+| `--xtrace` / `-x` | Prepend `set -x` only (no `System.Debug`) |
+| `--verbose` | Print full JSON result instead of script output only |
+
+**`--input` keys:**
+- `parameters` — map of template parameter name → value
+- `variables` — map of variable name → value; keys matching `Build.*`, `System.*`, `Agent.*`, `Pipeline.*`, `variables.*` are treated as compile-time; all others as runtime
+
+```bash
+# Run with default values
+node extension-bundle.js runscript -stage 1 -job 1 -step 3 ./pipeline.yaml
+
+# Override a template parameter
+node extension-bundle.js runscript -stage 1 -job 1 -step 3 ./pipeline.yaml \
+  --input '{"parameters":{"username":"myuser"}}'
+
+# Override a runtime variable
+node extension-bundle.js runscript -stage 1 -job 1 -step 3 ./pipeline.yaml \
+  --input '{"variables":{"auth_token":"mytoken"}}'
+
+# Enable debug mode
+node extension-bundle.js runscript -stage 1 -job 1 -step 3 ./pipeline.yaml \
+  --input '{"variables":{"System.Debug":"true"}}'
+
+# Combine overrides
+node extension-bundle.js runscript -stage 1 -job 1 -step 3 ./pipeline.yaml \
+  --input '{"parameters":{"serviceUser":"myuser"},"variables":{"System.Debug":"true","variable.var1":"abc"}}'
+```
+
+#### Use `runscript` for unit testing
+
+`runscript` is designed to be called from test scripts or CI jobs to validate individual steps automatically:
+
+```bash
+#!/usr/bin/env bash
+# test-step.sh — assert a step produces expected output
+OUTPUT=$(node extension-bundle.js runscript -stage 1 -job 1 -step 2 ./pipeline.yaml \
+  --input '{"parameters":{"environment":"staging"},"variables":{"Build.Reason":"Manual"}}')
+
+if echo "$OUTPUT" | grep -q "Deployment target: staging"; then
+  echo "PASS"
+else
+  echo "FAIL: unexpected output"
+  echo "$OUTPUT"
+  exit 1
+fi
+```
+
+Combined with `listpipeline` to enumerate steps, you can build a full test matrix that exercises every step in the pipeline with different input combinations.
 
 ## Pre-commit Hook
 
