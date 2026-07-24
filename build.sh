@@ -44,9 +44,9 @@ npm install
 # Build with webpack
 # Webpack outputs to extension-bundle.js to avoid overwriting source
 if [ ${DEVELOPMENT} -eq 1 ]; then
-  npm run build:dev
+  bash ./build-bundle.sh dev
 else
-  npm run build:prod
+  bash ./build-bundle.sh prod
 fi
 
 # Package the extension

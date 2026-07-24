@@ -322,6 +322,22 @@ class AzurePipelineParser {
      * @throws {Error} If YAML parsing fails or syntax hints are detected
      */
     parseYamlDocument(source, identifier, skipSyntax = false, context = undefined, lineNumber = null) {
+        // Azure Pipelines YAML does not interpret YAML escape sequences (e.g. \t, \n) in
+        // double-quoted strings — it treats every backslash as a literal path separator.
+        // The yaml npm package follows YAML 1.2 spec and would convert \t → TAB, losing the
+        // letter 't' (e.g. "!**\testhost.dll" → "!**" + TAB + "esthost.dll").
+        // Pre-escape single backslashes before letters in double-quoted strings so the yaml
+        // package preserves them as literal backslash sequences.
+        source = source.replace(/"((?:[^"\\]|\\.)*)"/g, (match, inner) => {
+            // Skip strings that look like bash content inside block scalars:
+            // bash pipes (` | `), command substitutions (`$(`, `${`), or
+            // tr-style escapes (the `'\n'` or `'\t'` argument pattern).
+            if (inner.includes('$(') || inner.includes('${') || / \| /.test(inner)) return match;
+            // Escape \<letter> (excluding \" and \\) to \\<letter> so yaml treats them literally.
+            const fixed = inner.replace(/\\(?=[a-zA-Z])/g, '\\\\');
+            return '"' + fixed + '"';
+        });
+
         if (!skipSyntax) {
             try {
                 this.validateYamlSyntaxHints(source, identifier);
@@ -2346,12 +2362,10 @@ class AzurePipelineParser {
         let result = input.replace(/\$\{\{\s*(.+?)\s*\}\}/g, (match, expr) => {
             const value = this.evaluateExpression(expr, context);
             if (value == null) {
-                // Check if this is a parameter reference that might be a runtime variable
-                // If so, convert it to a runtime variable reference format
+                // Unresolved template parameters should collapse to empty string.
+                // This avoids leaking unresolved compile-time params as runtime macros.
                 if (expr.trim().startsWith('parameters.')) {
-                    const paramName = expr.trim().substring('parameters.'.length);
-                    // Return as runtime variable $(paramName) instead of empty string
-                    return `$(${paramName})`;
+                    return '';
                 }
                 return '';
             }
