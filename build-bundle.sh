@@ -1,16 +1,14 @@
 #!/bin/bash
 
-set -e
-
 MODE=${1:-prod}
 
 check_bundle_hard_link() {
   local source_inode bundle_inode
 
   source_inode=$(stat -c %i extension.js)
-  bundle_inode=$(stat -c %i extension-bundle.js)
+  bundle_inode=$(stat -c %i extension-bundle.js 2>/dev/null)
 
-  if [[ "$source_inode" == "$bundle_inode" ]]; then
+  if [[ "${source_inode}" == "${bundle_inode}" ]]; then
     echo "ERROR: extension-bundle.js is a hard link to extension.js - remove the hard link before building a release bundle." >&2
     return 1
   fi
@@ -18,7 +16,7 @@ check_bundle_hard_link() {
 
 check_bundle_hard_link
 
-case "$MODE" in
+case "${MODE}" in
   dev)
     webpack --mode none
     ;;
