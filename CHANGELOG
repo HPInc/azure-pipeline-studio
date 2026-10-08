@@ -5,6 +5,21 @@ All notable changes to Azure Pipeline Studio will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.2] - 2026-10-08
+
+### Changed
+- **Simulation: single-step run focuses that step's panel immediately**: Clicking the sidebar ▶ "Run this step" button (or the Run Step modal) now switches to that step's detail panel as soon as the run starts, instead of only after results arrive — so the "Running step..." placeholder is actually visible while it executes, even if a different step's panel was previously expanded.
+- **Parser: template root-relative path resolution now finds the real repo root**: `repoBaseDir` previously defaulted to the directory of the file being parsed, so opening a pipeline file nested below the actual repository root (e.g. a reusable stage template living in a `templates/` subfolder) caused `/stages/...`-style references to resolve one level too deep and fail with "Template file not found". Resolution now walks up from the file's directory to find the nearest `.git` root first.
+
+### Fixed
+- **Pipeline Diagram: circular structure crash on templates with array/object parameters**: A parameter like `preSteps` could hold the exact same step objects that get spliced into the expanded pipeline body, so recording that parameter's value on `__templateParams` created a reference cycle and crashed `JSON.stringify` when rendering the diagram. Parameter values recorded on `__templateParams` are now deep-cloned first.
+- **Simulation panel: content lost when switching away and back**: The simulation webview panel is now created with `retainContextWhenHidden: true`, so its state and results survive switching to another editor tab and back.
+- **Simulation panel: Run Simulation button unreachable with many parameters**: The settings panel was missing `min-height:0`, so its `overflow-y:auto` never actually activated once content exceeded the available height, pushing the button out of view with no way to scroll to it.
+- **Simulation panel: edited pipeline not reflected after adding a flag-gated stage**: Editing the YAML only triggered a lightweight rerun of the already-rendered stage/job/step tree and never refreshed the captured source text, so a newly flag-enabled stage (or any other structural change) never appeared until the panel was closed and reopened. The panel now detects structural changes and does a full refresh when needed, and always refreshes the captured source text on edit.
+- **Simulation: running a single step wiped the rest of the results**: A single-step rerun's result is now merged into the existing full results tree instead of replacing the whole panel with a one-step result, so previously displayed steps are no longer lost.
+- **Simulation: step detail panel could show a different step's cached output**: Fixed two related issues — the single-step merge indexed stages/jobs/steps positionally instead of by name (risking a cross-stage mismatch when results were reshaped), and the step-detail panel's existing "only one candidate" fallback could display a stale single-step result under the wrong step's header. The step detail panel now only trusts single-step-only cached results for the exact step they were generated for.
+- **Simulation: "Running single step…" status text never cleared**: The status message was only ever cleared on error, so it remained next to the Run Simulation button after a successful run.
+
 ## [1.7.1] - 2026-07-24
 
 ### Added
@@ -50,7 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **CLI `runscript` and `getscriptinfo` commands**: New CLI commands to run an individual pipeline step as a standalone script and to inspect the generated script content with resolved parameters and variables.
-- **Repository resource location picker**: The "Configure Resource Location" command now shows all `resources.repositories` entries from the open YAML in a single multi-select picker, each with its type and name visible (e.g. `githubenterprise · codeway/templates`). Multiple resources can be selected and configured at once without navigating a two-step flow.
+- **Repository resource location picker**: The "Configure Resource Location" command now shows all `resources.repositories` entries from the open YAML in a single multi-select picker, each with its type and name visible (e.g. `githubenterprise · myorg/templates`). Multiple resources can be selected and configured at once without navigating a two-step flow.
 
 ### Changed
 - **Webview code split into separate files**: Dependency, error, and simulation panel webviews have been extracted from the main extension bundle into dedicated source files, improving maintainability and reducing bundle size.

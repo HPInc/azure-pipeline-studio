@@ -189,11 +189,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 .sidebar-stage-header:hover .sidebar-stage-run-btn,.sidebar-stage.active .sidebar-stage-run-btn{opacity:1}
 .sidebar-stage-run-btn:hover{background:#0078d4;color:#fff}
 .main-content{flex:1;display:flex;flex-direction:column;overflow:hidden}
-.settings-panel{background:#2a2a2c;border-bottom:1px solid #444;padding:0;display:flex;flex-direction:column;max-height:none;flex:1}
+.settings-panel{background:#2a2a2c;border-bottom:1px solid #444;padding:0;display:flex;flex-direction:column;max-height:none;flex:1;min-height:0}
 .settings-panel.collapsed{flex:0 0 auto}
 .settings-panel.collapsed #settingsContent{display:none!important}
 .settings-panel-title{padding:10px 20px 8px;flex-shrink:0;border-bottom:1px solid #333}
-#settingsContent{padding:8px 20px 12px;overflow-y:auto;flex:1}
+#settingsContent{padding:8px 20px 12px;overflow-y:auto;flex:1;min-height:0}
 .body{flex:1;display:flex;flex-direction:column;overflow:hidden;padding:16px 20px}
 .body.hidden{display:none}
 .body-toolbar{display:flex;justify-content:flex-end;align-items:center;margin-bottom:4px;background:#1e1e1e;padding:4px 0;flex:0 0 auto}
@@ -452,7 +452,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 <script>
 window.onerror=function(msg,src,line,col,err){var l=document.getElementById('pageLoader');if(l){l.innerHTML='<div style="color:#f47174;padding:20px;font-family:monospace;font-size:13px"><b>JS Error (line '+line+'):</b><br>'+msg+'<br><br>'+(err&&err.stack?err.stack.replace(/\\n/g,'<br>'):'')+'</div>';}return false;};
 window.addEventListener('unhandledrejection',function(e){var l=document.getElementById('pageLoader');if(l){l.innerHTML='<div style="color:#f47174;padding:20px;font-family:monospace;font-size:13px"><b>Unhandled Promise Rejection:</b><br>'+String(e.reason)+'</div>';}});
-const vscode=acquireVsCodeApi();let varCount=0;let libVarCount=0;let taskFilter=null;let lastResults=null;let searchMatchIndex=-1;let searchMatchTerm='';
+const vscode=acquireVsCodeApi();let varCount=0;let libVarCount=0;let taskFilter=null;let lastResults=null;let _singleStepOnlyKey=null;let searchMatchIndex=-1;let searchMatchTerm='';
 const _b64Decode=(str)=>{try{return new TextDecoder().decode(Uint8Array.from(atob(str),c=>c.charCodeAt(0)));}catch(e){console.error('b64Decode error:',e,str&&str.slice(0,40));return str;}};const dataEl=document.getElementById('__aps_data');function _safeJsonParse(b64,fallback){try{var dec=_b64Decode(b64||'');console.log('[aps] decoded (first 80):', dec&&dec.slice(0,80));return JSON.parse(dec);}catch(e){console.error('[aps] _safeJsonParse failed, b64=',b64&&b64.slice(0,40),e);return fallback;}}const _rawKnownVars=_safeJsonParse(dataEl.getAttribute('data-known-vars'),{});const knownVars={azure:Array.isArray(_rawKnownVars.azure)?_rawKnownVars.azure:[],pipeline:Array.isArray(_rawKnownVars.pipeline)?_rawKnownVars.pipeline:[],groups:Array.isArray(_rawKnownVars.groups)?_rawKnownVars.groups:[]};const _rawSavedVars=_safeJsonParse(dataEl.getAttribute('data-saved-vars'),{});const savedVars={overrides:(_rawSavedVars.overrides&&typeof _rawSavedVars.overrides==='object')?_rawSavedVars.overrides:{},libData:Array.isArray(_rawSavedVars.libData)?_rawSavedVars.libData:[],toolPaths:(_rawSavedVars.toolPaths&&typeof _rawSavedVars.toolPaths==='object')?_rawSavedVars.toolPaths:{},toolsDirectory:_rawSavedVars.toolsDirectory||null};const topLevelParameterDefinitions=_safeJsonParse(dataEl.getAttribute('data-top-params'),[]);window._expandedSteps=_safeJsonParse(dataEl.getAttribute('data-expanded-steps'),[]);window._originalSourceText=_safeJsonParse(dataEl.getAttribute('data-source-text'),'');window._pipelineDir=dataEl.getAttribute('data-pipeline-dir')||'';console.log('[aps] init: stages=',document.querySelectorAll('.sidebar-stage').length,'knownVars.azure=',knownVars.azure.length,'topLevelParams=',topLevelParameterDefinitions.length);console.log('[aps-diag] webview script loaded — WSL_PROXY_FILTER_MARKER=2026-07-15-v4');function _normParamType(t){return String(t||'string').trim().toLowerCase();}
 function _asBool(v){if(typeof v==='boolean')return v;var s=String(v||'').trim().toLowerCase();return s==='true'||s==='1'||s==='yes';}
 function _stringifyParamValue(v){if(v===undefined||v===null)return '';if(typeof v==='object'){try{return JSON.stringify(v);}catch(_){return String(v);}}return String(v);}
@@ -677,12 +677,14 @@ function toggleSidebarJob(event,bodyId,toggleId,stageIndex,jobIndex){
         }
     }
 }
-function selectSidebarTask(event,stageIndex,jobIndex,stepIndex){
-    if(event)event.stopPropagation();
+// Shared by selectSidebarTask (user click) and the post-run handler (running via the sidebar ▶
+// button while a different step's panel is expanded), so the just-run step always becomes focused.
+function _focusStepPanel(stageIndex,jobIndex,stepIndex){
     selectStage(stageIndex);
     taskFilter={stageIndex,jobIndex,stepIndex};
     document.querySelectorAll('.sidebar-task-row').forEach(el=>el.classList.remove('active'));
-    if(event&&event.currentTarget)event.currentTarget.classList.add('active');
+    var row=document.querySelector('.sidebar-task-row[data-stage-index="'+stageIndex+'"][data-job-index="'+jobIndex+'"][data-step-index="'+stepIndex+'"]');
+    if(row)row.classList.add('active');
     document.querySelectorAll('.sdp').forEach(function(el){el.style.display='none';});
     var sdp=document.getElementById('sdp-'+stageIndex+'-'+jobIndex+'-'+stepIndex);
     if(sdp){_populateSdpResult(sdp,stageIndex,jobIndex,stepIndex);sdp.style.display='';}
@@ -690,6 +692,10 @@ function selectSidebarTask(event,stageIndex,jobIndex,stepIndex){
     applyTaskFilter();
     var rp=document.getElementById('resultsPanel');
     if(rp)rp.style.display='none';
+}
+function selectSidebarTask(event,stageIndex,jobIndex,stepIndex){
+    if(event)event.stopPropagation();
+    _focusStepPanel(stageIndex,jobIndex,stepIndex);
 }
 function expandResultsForTask(stageIndex,jobIndex){
     const panel=document.getElementById('resultsPanel');
@@ -1286,7 +1292,11 @@ function submitRunStep(){
   document.getElementById('runBtn').disabled=true;
     _setSearchControlsEnabled(false);
   document.getElementById('statusMsg').textContent='Running single step\u2026';
-  document.getElementById('resultsPanel').innerHTML='<div class="sim-loading"><div class="sim-spinner"></div><span>Running single step\u2026</span></div>';
+  // Switch to this step's panel immediately instead of waiting for the result. _focusStepPanel
+  // repopulates the panel from any prior (stale) result, so re-apply the "Running step..."
+  // placeholder afterward to make sure that's what's actually shown while it runs.
+  _focusStepPanel(_rsmState.si,_rsmState.ji,_rsmState.ti);
+  clearSingleStepContent(_rsmState.si,_rsmState.ji,_rsmState.ti);
   var rb=document.getElementById('renderBody');if(rb)rb.classList.remove('hidden');
   var s=document.getElementById('settingsContent');if(s){s.classList.add('collapsed');document.getElementById('settingsPanel').classList.add('collapsed');var btn=document.getElementById('settingsToggle');if(btn)btn.innerHTML='&#9660; Settings';}
   var bb=document.getElementById('backBtn');if(bb)bb.style.display='inline-block';
@@ -1588,6 +1598,9 @@ function openResultsInBrowser(){
 }
 function _populateSdpResult(sdpEl,si,ji,ti){
   if(!lastResults)return;
+  // lastResults may still be a lone unmerged single-step doc from a different step's run — don't let
+  // its data leak into a step it was never generated for.
+  if(_singleStepOnlyKey!==null&&_singleStepOnlyKey!==(si+'-'+ji+'-'+ti))return;
   var _siMap=_buildStageNameToIndexMap();
   var _invMap={};
   Object.keys(_siMap).forEach(function(n){_invMap[_siMap[n]]=n;});
@@ -1623,6 +1636,43 @@ function _populateSdpResult(sdpEl,si,ji,ti){
   if(ov.length)body+='<div class="sdp-section"><div class="sdp-section-title">Output Variables</div><table class="sdp-table">'+ov.map(function(kv){return '<tr><td class="sdp-k">'+escHtml(kv[0])+'</td><td class="sdp-v">'+escHtml(String(kv[1]))+'</td></tr>';}).join('')+'</table></div>';
   var hd=sdpEl.querySelector('.sdp-hd');
   sdpEl.innerHTML=(hd?hd.outerHTML:'')+body;
+}
+// A single-step rerun only simulates one step in isolation; splice its result into the last full
+// results tree (when one exists) instead of replacing the whole panel, so other steps' output survives.
+// Resolves the target stage by name (like _populateSdpResult/updateSidebarResults do), since
+// lastResults.stages can be ordered/shaped differently than the static sidebar's si/ji/ti indices
+// (e.g. when a conditional stage is absent) — blind positional indexing here could silently splice
+// the new result into the wrong stage/job/step.
+function _mergeSingleStepIntoLastResults(singleResults,si,ji,ti){
+  const singleStep=singleResults&&singleResults.stages&&singleResults.stages[0]&&singleResults.stages[0].jobs&&singleResults.stages[0].jobs[0]&&singleResults.stages[0].jobs[0].steps&&singleResults.stages[0].jobs[0].steps[0];
+  if(!lastResults||!Array.isArray(lastResults.stages)||!singleStep)return singleResults;
+  let merged;
+  try{merged=JSON.parse(JSON.stringify(lastResults));}catch{return singleResults;}
+  const _siMap=_buildStageNameToIndexMap();
+  const _invMap={};
+  Object.keys(_siMap).forEach(function(n){_invMap[_siMap[n]]=n;});
+  const _stageName=_invMap[si];
+  let stage=_stageName?merged.stages.find(function(s){return String(s&&s.stage||'').trim()===_stageName;}):undefined;
+  if(!stage){
+    if(merged.stages.length===1)stage=merged.stages[0];
+    else return singleResults;
+  }
+  const jobs=Array.isArray(stage.jobs)?stage.jobs:[];
+  let job=jobs[ji];
+  if(!job){
+    if(jobs.length===1)job=jobs[0];
+    else return singleResults;
+  }
+  const steps=Array.isArray(job.steps)?job.steps:[];
+  if(!(ti>=0&&ti<steps.length))return singleResults;
+  steps[ti]=singleStep;
+  let totalPassed=0,totalFailed=0,totalSkipped=0;
+  merged.stages.forEach(function(s){(s.jobs||[]).forEach(function(j){(j.steps||[]).forEach(function(st){
+    const res=st.result||'Skipped';
+    if(res==='Succeeded')totalPassed++;else if(res==='Failed')totalFailed++;else totalSkipped++;
+  });});});
+  merged.totalPassed=totalPassed;merged.totalFailed=totalFailed;merged.totalSkipped=totalSkipped;
+  return merged;
 }
 function renderResults(r){
   lastResults=r;
@@ -1768,16 +1818,20 @@ window.addEventListener('message',e=>{
     document.getElementById('runBtn').disabled=false;
         _setSearchControlsEnabled(true);
         _updateStickySearchOffset();
+    document.getElementById('statusMsg').textContent='';
     if(d.singleStep){
       const _savedFilter=taskFilter;
       taskFilter=null;
-      renderResults(d.results);
+      const _renderedResults=_mergeSingleStepIntoLastResults(d.results,d.si,d.ji,d.ti);
+      _singleStepOnlyKey=(_renderedResults===d.results)?(d.si+'-'+d.ji+'-'+d.ti):null;
+      renderResults(_renderedResults);
       taskFilter=_savedFilter;
       const _sr=d.results&&d.results.stages&&d.results.stages[0]&&d.results.stages[0].jobs&&d.results.stages[0].jobs[0]&&d.results.stages[0].jobs[0].steps&&d.results.stages[0].jobs[0].steps[0];
       if(_sr){setSidebarResult('ssr-task-'+d.si+'-'+d.ji+'-'+d.ti,_sr.result);}
-      var _activeSdp=document.getElementById('sdp-'+d.si+'-'+d.ji+'-'+d.ti);
-            if(_activeSdp)_populateSdpResult(_activeSdp,d.si,d.ji,d.ti);
-    }else{renderResults(d.results);}
+      // Make the step that was just run the focused/expanded one, even if a different step's
+      // panel was open (e.g. the run was started from the sidebar ▶ button, not by selecting it first).
+      _focusStepPanel(d.si,d.ji,d.ti);
+    }else{_singleStepOnlyKey=null;renderResults(d.results);}
   }
     else if(d.command==='simulationError'){document.getElementById('resultsPanel').innerHTML='';document.getElementById('statusMsg').textContent='\u26a0 '+d.error;document.getElementById('runBtn').disabled=false;_setSearchControlsEnabled(false);var browserBtn=document.getElementById('browserBtn');if(browserBtn)browserBtn.style.display='none';var _sc=document.getElementById('settingsContent');if(_sc){_sc.classList.remove('collapsed');var _sp=document.getElementById('settingsPanel');if(_sp)_sp.classList.remove('collapsed');var _sb=document.getElementById('settingsToggle');if(_sb)_sb.innerHTML='&#9650; Collapse';}}
   else if(d.command==='triggerRerun'){runSimulation();}
