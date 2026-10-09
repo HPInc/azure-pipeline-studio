@@ -36,6 +36,19 @@ function findRepoRootDir(startDir) {
     }
 }
 
+// A Windows-style absolute path (C:\...) isn't recognized by path.isAbsolute()/path.resolve() when
+// Node is running under WSL/Linux (POSIX path semantics) — it gets silently treated as a relative
+// segment and concatenated onto whatever base directory is in scope, producing a garbled path.
+function isWindowsAbsolutePath(p) {
+    return typeof p === 'string' && /^[a-zA-Z]:[\\/]/.test(p);
+}
+
+function windowsPathToWslPath(p) {
+    const m = /^([a-zA-Z]):[\\/](.*)$/.exec(p);
+    if (!m) return p;
+    return `/mnt/${m[1].toLowerCase()}/${m[2].replace(/\\/g, '/')}`;
+}
+
 // Clones a template parameter's resolved value before recording it on __templateParams.
 // Without this, array/object parameters can hold the exact same step
 // objects that are spliced into the expanded body, so attaching __templateParams to those
@@ -1110,11 +1123,9 @@ class AzurePipelineParser {
                 }
                 break;
             case 'object':
-                if (name === 'dependsOn') {
-                    if (!(actualType === 'string' || (actualType === 'object' && paramValue !== null))) {
-                        return { name, expected: 'object', actual: actualType, value: paramValue };
-                    }
-                } else if (!(actualType === 'object' && paramValue !== null)) {
+                // Azure Pipelines accepts a plain scalar string for an `object` parameter (it's documented
+                // as "any YAML structure", and a scalar is a valid YAML node) — don't hard-fail on it here.
+                if (!(actualType === 'string' || (actualType === 'object' && paramValue !== null))) {
                     return { name, expected: 'object', actual: actualType, value: paramValue };
                 }
                 break;
@@ -3590,7 +3601,12 @@ class AzurePipelineParser {
 
         if (!repoLocation) return fallback;
 
-        const absoluteLocation = path.isAbsolute(repoLocation) ? repoLocation : path.resolve(fallback, repoLocation);
+        const normalizedLocation =
+            path.sep === '/' && isWindowsAbsolutePath(repoLocation) ? windowsPathToWslPath(repoLocation) : repoLocation;
+
+        const absoluteLocation = path.isAbsolute(normalizedLocation)
+            ? normalizedLocation
+            : path.resolve(fallback, normalizedLocation);
         try {
             const stat = fs.statSync(absoluteLocation);
             if (stat.isFile()) {

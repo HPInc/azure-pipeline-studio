@@ -130,8 +130,21 @@
         },
         "azurePipelineStudio.pipelineRoot": {
           "default": "",
-          "description": "Optional local root directory used to resolve template includes when the top-level pipeline does not define repository resources.",
-          "type": "string"
+          "description": "Optional local root directories used to resolve template includes when the top-level pipeline does not define repository resources. Configure windowsPath and linuxPath independently, or use a legacy string for a shared path.",
+          "properties": {
+            "linuxPath": {
+              "description": "Linux-specific local root directory.",
+              "type": "string"
+            },
+            "windowsPath": {
+              "description": "Windows-specific local root directory.",
+              "type": "string"
+            }
+          },
+          "type": [
+            "object",
+            "string"
+          ]
         },
         "azurePipelineStudio.refreshOnSave": {
           "default": true,
@@ -297,5 +310,5 @@
     "test:module": "node tests/test-azure-expressions-module.js"
   },
   "type": "commonjs",
-  "version": "1.7.2"
+  "version": "1.8.0"
 }
