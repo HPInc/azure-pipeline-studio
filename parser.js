@@ -17,6 +17,38 @@ function stripInternalProperties(node) {
     }
 }
 
+// Walks up from startDir looking for a .git directory/file to find the actual repo root.
+// Without this, opening a file nested below the repo root (e.g. templates/templates/foo.yaml)
+// would resolve root-relative ("/stages/...") template references against the file's own
+// directory instead of the repo root, duplicating path segments and failing to find the file.
+function findRepoRootDir(startDir) {
+    if (!startDir) return undefined;
+    let dir = path.resolve(startDir);
+    for (;;) {
+        try {
+            if (fs.existsSync(path.join(dir, '.git'))) return dir;
+        } catch {
+            // ignore and keep walking up
+        }
+        const parent = path.dirname(dir);
+        if (parent === dir) return undefined;
+        dir = parent;
+    }
+}
+
+// Clones a template parameter's resolved value before recording it on __templateParams.
+// Without this, array/object parameters can hold the exact same step
+// objects that are spliced into the expanded body, so attaching __templateParams to those
+// same objects later creates a reference cycle (item -> __templateParams -> value -> item).
+function cloneTemplateParamValue(value) {
+    if (value === null || typeof value !== 'object') return value;
+    try {
+        return JSON.parse(JSON.stringify(value));
+    } catch {
+        return value;
+    }
+}
+
 const CHECKOUT_TASK = '6d15af64-176c-496d-b583-fd2ae21d4df4@1';
 // Mapping of shorthand keys to Azure task identifiers
 const TASK_TYPE_MAP = Object.freeze({
@@ -731,7 +763,8 @@ class AzurePipelineParser {
         const overrideResources = this.normalizeResourcesConfig(overrides.resources);
         const locals = overrides.locals || {};
         const baseDir = overrides.baseDir || (overrides.fileName ? path.dirname(overrides.fileName) : process.cwd());
-        const repoBaseDir = overrides.repoBaseDir !== undefined ? overrides.repoBaseDir : baseDir;
+        const repoBaseDir =
+            overrides.repoBaseDir !== undefined ? overrides.repoBaseDir : findRepoRootDir(baseDir) || baseDir;
         const rootRepoBaseDir = overrides.rootRepoBaseDir !== undefined ? overrides.rootRepoBaseDir : repoBaseDir;
 
         const mergedResources = this.mergeResourcesConfig(resources, overrideResources);
@@ -3377,7 +3410,7 @@ class AzurePipelineParser {
                             hasDefault,
                             defaultValue: hasDefault ? p.default : '',
                             values: Array.isArray(p.values) ? p.values : null,
-                            value: mergedParameters[p.name],
+                            value: cloneTemplateParamValue(mergedParameters[p.name]),
                         });
                     }
                 } else if (typeof rawParams === 'object') {
@@ -3395,7 +3428,7 @@ class AzurePipelineParser {
                             hasDefault,
                             defaultValue: hasDefault ? defaultValue : '',
                             values: null,
-                            value: mergedParameters[name],
+                            value: cloneTemplateParamValue(mergedParameters[name]),
                         });
                     }
                 }

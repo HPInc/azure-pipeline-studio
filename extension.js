@@ -52,6 +52,7 @@ let simOutputChannel = null;
 let lastSimDocument = null;
 let lastSimSourceText = null;
 let lastSimParserOptions = null;
+let lastSimStructureSignature = null;
 let extensionRuntimeGeneration = 0;
 
 const isWsl =
@@ -323,6 +324,24 @@ function collectBuildContextsFromPipelineDocument(parsedDoc) {
     }
 
     return contexts;
+}
+
+// Cheap fingerprint of stage/job/step shape, used to tell whether an edited document needs a full
+// simulation panel refresh (stage added/removed) or just a lightweight rerun of the existing view.
+function computeSimStructureSignature(stageTree) {
+    try {
+        return JSON.stringify(
+            (stageTree || []).map((stage) => ({
+                stage: stage.stage || stage.displayName || '',
+                jobs: (stage.jobs || []).map((job) => ({
+                    job: job.job || job.deployment || job.displayName || '',
+                    steps: (job.steps || []).length,
+                })),
+            }))
+        );
+    } catch {
+        return null;
+    }
 }
 
 function activate(context) {
@@ -1677,6 +1696,7 @@ function activate(context) {
             expandedDoc = parsedDoc;
             lastExpandedDoc = parsedDoc;
             stageTree = extractSimulationTree(expandedDoc);
+            lastSimStructureSignature = computeSimStructureSignature(stageTree);
             topLevelParameterDefinitions = extractTopLevelParameterDefinitions(simParser, sourceText, skipSyntaxCheck);
         } catch (err) {
             const enhancedError = new Error(formatTemplateExpansionError(document.fileName, err));
@@ -1734,7 +1754,7 @@ function activate(context) {
                 'pipelineSimulation',
                 'Simulate Pipeline Run',
                 vscode.ViewColumn.Two,
-                { enableScripts: true }
+                { enableScripts: true, retainContextWhenHidden: true }
             );
             simulationPanel.onDidDispose(() => {
                 simulationPanel = null;
@@ -2887,7 +2907,37 @@ function activate(context) {
                 if (contentChanges.length === 0 || isSimulationRunning) return;
                 clearTimeout(simulationDebounceTimer);
                 simulationDebounceTimer = setTimeout(() => {
-                    if (!isSimulationRunning && simulationPanel && simulationPanel.webview) {
+                    if (isSimulationRunning || !simulationPanel || !simulationPanel.webview) return;
+
+                    // Always refresh the captured source/document so a lightweight rerun still picks up
+                    // the latest edits, even when the pipeline's stage/job/step structure hasn't changed.
+                    const freshSourceText = document.getText();
+                    lastSimDocument = document;
+                    lastSimSourceText = freshSourceText;
+
+                    let structureChanged = false;
+                    try {
+                        const skipSyntaxCheck = vscode.workspace
+                            .getConfiguration('azurePipelineStudio', document.uri)
+                            .get('expansion.skipSyntaxCheck', false);
+                        const sigParser = new AzurePipelineParser({ skipSyntax: skipSyntaxCheck });
+                        const { document: freshExpanded } = sigParser.expandPipeline(
+                            freshSourceText,
+                            lastSimParserOptions || {}
+                        );
+                        const freshSignature = computeSimStructureSignature(extractSimulationTree(freshExpanded));
+                        structureChanged =
+                            lastSimStructureSignature !== null && freshSignature !== lastSimStructureSignature;
+                        lastSimStructureSignature = freshSignature;
+                    } catch {
+                        // Invalid YAML mid-edit — fall back to a lightweight rerun instead of failing.
+                    }
+
+                    if (structureChanged) {
+                        // Stage/job/step shape changed (e.g. a flag-gated stage appeared) — regenerate the
+                        // whole panel so the sidebar and stage tabs reflect the new structure.
+                        void openSimulationView(document);
+                    } else {
                         simulationPanel.webview.postMessage({ command: 'triggerRerun' });
                     }
                 }, 500);
