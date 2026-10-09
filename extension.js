@@ -65,6 +65,12 @@ const isWsl =
         }
     })();
 
+// Resource-location/pipeline-root config (windowsPath vs linuxPath) must follow the extension
+// host process's own platform, not the open document's file path — a native Windows host can
+// resolve a configured windowsPath directly even while browsing a repo via a \\wsl.localhost\ UNC
+// path, so the document-path heuristic used for simulation context doesn't apply here.
+const isLinuxResourceTarget = () => vscode.env.remoteName === 'wsl' || process.platform !== 'win32';
+
 function _resolveSimulationWorkingDirectory(document, parserOptions) {
     const candidates = [
         parserOptions && parserOptions.fileName,
@@ -93,6 +99,15 @@ function _resolveSimulationWorkingDirectory(document, parserOptions) {
 
     const fallbackPath = candidates[0] || process.cwd() || '.';
     return toSimulatorPath(path.dirname(path.resolve(fallbackPath)));
+}
+
+function getConfiguredPipelineRoot(config, document) {
+    const configuredRoot = config.get('pipelineRoot', '');
+    if (typeof configuredRoot === 'string') return configuredRoot;
+    if (!configuredRoot || typeof configuredRoot !== 'object') return '';
+
+    const isLinuxTarget = isLinuxResourceTarget();
+    return pickFirstString(isLinuxTarget ? configuredRoot.linuxPath : configuredRoot.windowsPath) || '';
 }
 
 /** Convert a Windows UNC WSL path (\\wsl.localhost\distro\foo) to the Linux path (/foo).
@@ -1160,12 +1175,13 @@ function activate(context) {
         const workspaceDir = workspaceFolder && workspaceFolder.uri ? workspaceFolder.uri.fsPath : undefined;
         const documentDir = document.fileName ? path.dirname(document.fileName) : undefined;
         const repositories = {};
+        const isLinuxTarget = isLinuxResourceTarget();
 
         for (const entry of configuredResources) {
             if (!entry || typeof entry !== 'object') continue;
 
             const alias = entry.repository && entry.repository.trim ? entry.repository.trim() : '';
-            const rawPath = !isLinuxSimulationContext(document.fileName)
+            const rawPath = !isLinuxTarget
                 ? pickFirstString(entry.windowsPath, entry.path, entry.location)
                 : pickFirstString(entry.linuxPath, entry.path, entry.location);
             if (!alias || !rawPath) continue;
@@ -1195,7 +1211,7 @@ function activate(context) {
         if (!vscode || !document) return undefined;
 
         const config = vscode.workspace.getConfiguration('azurePipelineStudio', document.uri);
-        const rawRootDirectory = config.get('pipelineRoot');
+        const rawRootDirectory = getConfiguredPipelineRoot(config, document);
         if (typeof rawRootDirectory !== 'string' || !rawRootDirectory.trim().length) return undefined;
 
         const text = document.getText();
@@ -2515,6 +2531,8 @@ function activate(context) {
             return;
         }
 
+        const isLinuxTarget = isLinuxResourceTarget();
+
         const config = vscode.workspace.getConfiguration('azurePipelineStudio', targetDocument.uri);
         const configuredResources = config.get('resourceLocations');
         const existingEntries = Array.isArray(configuredResources)
@@ -2565,7 +2583,7 @@ function activate(context) {
             for (const entry of existingEntries) {
                 const entryAlias = getRepositoryAlias(entry);
                 if (!entryAlias) continue;
-                const osPath = !isLinuxSimulationContext(targetDocument.fileName)
+                const osPath = !isLinuxTarget
                     ? pickFirstString(entry.windowsPath, entry.path, entry.location)
                     : pickFirstString(entry.linuxPath, entry.path, entry.location);
                 quickPickItems.push({
@@ -2629,7 +2647,7 @@ function activate(context) {
                     aliasesToConfigure[0].existingEntry || existingEntries.find((e) => getRepositoryAlias(e) === alias);
             } else {
                 // Multiple selections: configure each sequentially, save all at once, return.
-                const isLinux = isLinuxSimulationContext(targetDocument.fileName);
+                const isLinux = isLinuxTarget;
                 let currentEntries = [...existingEntries];
                 for (const { alias: a, existingEntry: existingForA } of aliasesToConfigure) {
                     const existingE = existingForA || currentEntries.find((e) => getRepositoryAlias(e) === a);
@@ -2729,7 +2747,7 @@ function activate(context) {
         }
 
         const currentLocation = existingEntry
-            ? !isLinuxSimulationContext(targetDocument.fileName)
+            ? !isLinuxTarget
                 ? pickFirstString(existingEntry.windowsPath, existingEntry.path, existingEntry.location)
                 : pickFirstString(existingEntry.linuxPath, existingEntry.path, existingEntry.location)
             : undefined;
@@ -2795,7 +2813,7 @@ function activate(context) {
             const entryAlias = getRepositoryAlias(entry);
             if (entryAlias === alias) {
                 const cloned = { ...entry, repository: alias };
-                if (!isLinuxSimulationContext(targetDocument.fileName)) {
+                if (!isLinuxTarget) {
                     cloned.windowsPath = sanitizedLocation;
                     delete cloned.windowsLocation;
                 } else {
@@ -2815,7 +2833,7 @@ function activate(context) {
 
         if (!updated) {
             updatedEntries.push(
-                !isLinuxSimulationContext(targetDocument.fileName)
+                !isLinuxTarget
                     ? { repository: alias, path: sanitizedLocation, windowsPath: sanitizedLocation }
                     : {
                           repository: alias,
@@ -2851,7 +2869,13 @@ function activate(context) {
             'azurePipelineStudio',
             targetDocument ? targetDocument.uri : undefined
         );
-        const currentRoot = config.get('pipelineRoot', '');
+        const configuredRoot = config.get('pipelineRoot', '');
+        const isLinuxTarget = isLinuxResourceTarget();
+        const rootKey = isLinuxTarget ? 'linuxPath' : 'windowsPath';
+        const currentRoot =
+            typeof configuredRoot === 'string'
+                ? configuredRoot
+                : pickFirstString(configuredRoot && configuredRoot[rootKey]) || '';
 
         const methodChoice = await vscode.window.showQuickPick(
             [
@@ -2890,7 +2914,16 @@ function activate(context) {
             }
         }
 
-        await config.update('pipelineRoot', newRoot.trim(), vscode.ConfigurationTarget.Workspace);
+        const updatedRoot =
+            typeof configuredRoot === 'string'
+                ? configuredRoot.trim()
+                    ? { windowsPath: configuredRoot, linuxPath: configuredRoot }
+                    : {}
+                : configuredRoot && typeof configuredRoot === 'object'
+                  ? { ...configuredRoot }
+                  : {};
+        updatedRoot[rootKey] = newRoot.trim();
+        await config.update('pipelineRoot', updatedRoot, vscode.ConfigurationTarget.Workspace);
         vscode.window.showInformationMessage('Pipeline root saved.');
 
         if (targetDocument) {
