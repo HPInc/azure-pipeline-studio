@@ -5,6 +5,15 @@ All notable changes to Azure Pipeline Studio will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.1] - 2026-11-06
+
+### Fixed
+- **Pipeline Diagram: disconnected stages and jobs**: Disconnected nodes are now laid out independently rather than interfering with connected stages and jobs.
+- **Formatter: conditional branches**: Valid sibling `else` and `elseif` branches no longer produce false-positive missing-dash or indentation warnings.
+- **Formatter: consecutive comments**: Formatting no longer inserts blank lines between adjacent comment lines; existing blank lines are preserved.
+- **Parser: indentation errors and template locations**: Invalid YAML indentation is now reported explicitly, with template call stacks and line numbers identifying the source of syntax and parsing errors.
+- **Error panel: template diagnostics**: Template call stacks now appear before diagnostics, with redundant template-expansion error prefixes removed.
+
 ## [1.8.0] - 2026-10-09
 
 ### Added
@@ -89,8 +98,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Simulation: EPERM workspace errors surfaced**: Permission errors during simulation workspace cleanup are now shown as actionable VS Code error messages that include the locked directory path.
 - **Simulation: Windows multi-line env var corruption**: Fixed multi-line variable values being incorrectly injected with real newlines into the Windows process environment block passed to Git Bash/WSL.
 
-[1.7.0]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.7.0
+[1.8.1]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.8.1
 [1.8.0]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.8.0
+[1.7.0]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.7.0
 [1.6.2]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.6.2
 [1.6.1]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.6.1
 [1.6.0]: https://github.com/HPInc/azure-pipeline-studio/releases/tag/v1.6.0

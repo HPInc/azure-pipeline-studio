@@ -615,6 +615,27 @@ const test28Pass = runTest('Test 28: Correctly indented conditional value block 
             `Should not produce error or warning for correct indentation, got: ${result.error || result.warning}`
         );
     }
+
+    for (const valueIndent of [6, 8]) {
+        for (const branch of ['else', "elseif eq(parameters.env, 'dev')"]) {
+            const conditionalYaml = [
+                'stages:',
+                '  - stage: Build',
+                '    jobs:',
+                "    - ${{ if eq(parameters.env, 'prod') }}:",
+                `${' '.repeat(valueIndent)}- job: ProdJob`,
+                `      \${{ ${branch} }}:`,
+                '        - job: OtherJob',
+            ].join('\n');
+            const conditionalResult = formatYaml(conditionalYaml, { suppressConsoleOutput: true });
+            if (conditionalResult.error || conditionalResult.warning) {
+                throw new Error(
+                    `Valid sibling ${branch} with value indent ${valueIndent} was rejected: ${conditionalResult.error || conditionalResult.warning}`
+                );
+            }
+            new AzurePipelineParser().validateYamlSyntaxHints(conditionalYaml);
+        }
+    }
 });
 
 // Test 29: Over-indented value block with intermediate-indent sibling is caught
@@ -628,6 +649,48 @@ const test29Pass = runTest('Test 29: Over-indented value block with intermediate
 
     if (!output.includes('sibling')) {
         throw new Error('Should warn about intermediate-indent sibling key with over-indented value block');
+    }
+
+    for (const branch of ['else', "elseif eq(parameters.env, 'dev')"]) {
+        const malformed = [
+            'steps:',
+            '- template: previous.yaml',
+            '  parameters:',
+            '    value: test',
+            '',
+            " - ${{ if eq(parameters.env, 'prod') }}:",
+            '    template: prod.yaml',
+            `  \${{ ${branch} }}:`,
+            '    template: other.yaml',
+            '  parameters:',
+            '    value: test',
+        ].join('\n');
+        const malformedResult = formatYaml(malformed, { suppressConsoleOutput: true });
+        const diagnostic = [malformedResult.error || '', malformedResult.warning || ''].join(' ');
+        if (!diagnostic.includes('line 6: Conditional list item is indented 1 spaces')) {
+            throw new Error(`Expected the conditional dash indentation error, got: ${diagnostic}`);
+        }
+        let parserMessage = '';
+        try {
+            new AzurePipelineParser().validateYamlSyntaxHints(malformed);
+        } catch (error) {
+            parserMessage = error.message;
+        }
+        if (
+            !parserMessage.includes('line 6: Conditional list item') ||
+            parserMessage.includes('line 8:') ||
+            parserMessage.includes("Prepend '-'")
+        ) {
+            throw new Error(`Expected only the primary indentation issue, got: ${parserMessage}`);
+        }
+        const corrected = malformed.replace('\n - ${{ if', '\n- ${{ if');
+        new AzurePipelineParser().validateYamlSyntaxHints(corrected);
+        const correctedResult = formatYaml(corrected, { suppressConsoleOutput: true });
+        if (correctedResult.error || correctedResult.warning) {
+            throw new Error(
+                `Corrected mapping-style ${branch} was rejected: ${correctedResult.error || correctedResult.warning}`
+            );
+        }
     }
 });
 

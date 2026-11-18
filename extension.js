@@ -9,7 +9,7 @@ const { PipelineSimulator, printSimulationResults } = require('./simulator');
 const { formatYaml } = require('./formatter');
 const { DependencyAnalyzer } = require('./dependency-analyzer');
 const { _generateDependencyViewHtml, _generateDiagramLoadingHtml } = require('./dependency-webview');
-const { _generateErrorViewHtml } = require('./error-webview');
+const { _generateErrorViewHtml, _formatErrorDetails } = require('./error-webview');
 const { _generateSimulationViewHtml } = require('./simulation-webview');
 const {
     extractSimulationTree,
@@ -828,19 +828,7 @@ function activate(context) {
             ];
         }
 
-        const detailsLines = [];
-        if (messageLines.length) {
-            detailsLines.push(...messageLines);
-        }
-
-        if (templateLines.length) {
-            detailsLines.push('Template call stack:');
-            templateLines.forEach((line) => {
-                detailsLines.push(`  ${line}`);
-            });
-        }
-
-        const errorDetailsText = detailsLines.join('\n');
+        const errorDetailsText = _formatErrorDetails(messageLines, templateLines);
 
         const tipLinesNormalized = tipLines.map((line) =>
             line.startsWith('-') || line.startsWith('•') ? line : `- ${line}`

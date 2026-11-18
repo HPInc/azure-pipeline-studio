@@ -264,63 +264,86 @@ class DependencyAnalyzer {
         const criticalEdges = [];
         let edgeIndex = 0;
 
-        if (dependencies.stages.length > 0) {
-            dependencies.stages.forEach((stage) => {
-                const nodeId = `stage_${this._sanitizeId(stage.name)}`;
-                const emoji = getEmoji(stage.displayName);
-                const isOnCriticalPath = criticalPathSet.has(stage.name);
-                const styleClass = isOnCriticalPath ? 'critical' : getStageType(stage.displayName);
-                const displayText = stage.displayName || stage.name;
+        // Nodes with zero edges are disconnected from the graph; dagre's layout can still place
+        // them in the path of unrelated edges, visually (but falsely) implying a dependency.
+        // Isolating them in their own subgraph keeps real edges from routing through them.
+        const buildNodeLine = (item, idPrefix) => {
+            const nodeId = `${idPrefix}_${this._sanitizeId(item.name)}`;
+            const emoji = getEmoji(item.displayName);
+            const isOnCriticalPath = criticalPathSet.has(item.name);
+            const styleClass = isOnCriticalPath ? 'critical' : getStageType(item.displayName);
+            const displayText = item.displayName || item.name;
+            return `    ${nodeId}["${emoji} ${displayText}"]:::${styleClass}`;
+        };
 
-                const nodeLabel = `${emoji} ${displayText}`;
-
-                lines.push(`    ${nodeId}["${nodeLabel}"]:::${styleClass}`);
+        const partitionByConnectivity = (items, edges) => {
+            const connectedNames = new Set();
+            edges.forEach((dep) => {
+                connectedNames.add(dep.from);
+                connectedNames.add(dep.to);
             });
+            return {
+                connected: items.filter((item) => connectedNames.has(item.name)),
+                isolated: items.filter((item) => !connectedNames.has(item.name)),
+            };
+        };
 
-            dependencies.dependencyGraph
-                .filter((dep) => dep.type === 'stage')
-                .forEach((dep) => {
-                    const fromId = `stage_${this._sanitizeId(dep.from)}`;
-                    const toId = `stage_${this._sanitizeId(dep.to)}`;
-                    // Check if this edge is consecutive in the critical path
-                    const edgeKey = `${dep.from}->${dep.to}`;
-                    const isOnCriticalPath = criticalEdgeMap.has(edgeKey);
-                    const edgeStyle = isOnCriticalPath ? '==>' : '-->';
-                    lines.push(`    ${fromId} ${edgeStyle} ${toId}`);
+        if (dependencies.stages.length > 0) {
+            const stageEdges = dependencies.dependencyGraph.filter((dep) => dep.type === 'stage');
+            const { connected, isolated } = partitionByConnectivity(dependencies.stages, stageEdges);
 
-                    if (isOnCriticalPath) {
-                        criticalEdges.push(edgeIndex);
-                    }
-                    edgeIndex++;
-                });
+            connected.forEach((stage) => lines.push(buildNodeLine(stage, 'stage')));
+
+            if (isolated.length > 0) {
+                lines.push('    subgraph independentStages [ ]');
+                isolated.forEach((stage) => lines.push(buildNodeLine(stage, 'stage')));
+                lines.push('    end');
+                lines.push('    style independentStages fill:none,stroke:none');
+            }
+
+            stageEdges.forEach((dep) => {
+                const fromId = `stage_${this._sanitizeId(dep.from)}`;
+                const toId = `stage_${this._sanitizeId(dep.to)}`;
+                // Check if this edge is consecutive in the critical path
+                const edgeKey = `${dep.from}->${dep.to}`;
+                const isOnCriticalPath = criticalEdgeMap.has(edgeKey);
+                const edgeStyle = isOnCriticalPath ? '==>' : '-->';
+                lines.push(`    ${fromId} ${edgeStyle} ${toId}`);
+
+                if (isOnCriticalPath) {
+                    criticalEdges.push(edgeIndex);
+                }
+                edgeIndex++;
+            });
         }
 
         if (dependencies.jobs.length > 0 && dependencies.stages.length === 0) {
-            dependencies.jobs.forEach((job) => {
-                const nodeId = `job_${this._sanitizeId(job.name)}`;
-                const emoji = getEmoji(job.displayName);
-                const isOnCriticalPath = criticalPathSet.has(job.name);
-                const styleClass = isOnCriticalPath ? 'critical' : getStageType(job.displayName);
-                const displayText = job.displayName || job.name;
-                lines.push(`    ${nodeId}["${emoji} ${displayText}"]:::${styleClass}`);
+            const jobEdges = dependencies.dependencyGraph.filter((dep) => dep.type === 'job');
+            const { connected, isolated } = partitionByConnectivity(dependencies.jobs, jobEdges);
+
+            connected.forEach((job) => lines.push(buildNodeLine(job, 'job')));
+
+            if (isolated.length > 0) {
+                lines.push('    subgraph independentJobs [ ]');
+                isolated.forEach((job) => lines.push(buildNodeLine(job, 'job')));
+                lines.push('    end');
+                lines.push('    style independentJobs fill:none,stroke:none');
+            }
+
+            jobEdges.forEach((dep) => {
+                const fromId = `job_${this._sanitizeId(dep.from)}`;
+                const toId = `job_${this._sanitizeId(dep.to)}`;
+                // Check if this edge is consecutive in the critical path
+                const edgeKey = `${dep.from}->${dep.to}`;
+                const isOnCriticalPath = criticalEdgeMap.has(edgeKey);
+                const edgeStyle = isOnCriticalPath ? '==>' : '-->';
+                lines.push(`    ${fromId} ${edgeStyle} ${toId}`);
+
+                if (isOnCriticalPath) {
+                    criticalEdges.push(edgeIndex);
+                }
+                edgeIndex++;
             });
-
-            dependencies.dependencyGraph
-                .filter((dep) => dep.type === 'job')
-                .forEach((dep) => {
-                    const fromId = `job_${this._sanitizeId(dep.from)}`;
-                    const toId = `job_${this._sanitizeId(dep.to)}`;
-                    // Check if this edge is consecutive in the critical path
-                    const edgeKey = `${dep.from}->${dep.to}`;
-                    const isOnCriticalPath = criticalEdgeMap.has(edgeKey);
-                    const edgeStyle = isOnCriticalPath ? '==>' : '-->';
-                    lines.push(`    ${fromId} ${edgeStyle} ${toId}`);
-
-                    if (isOnCriticalPath) {
-                        criticalEdges.push(edgeIndex);
-                    }
-                    edgeIndex++;
-                });
         }
 
         // Define styles for different stage types - minimalist outline style

@@ -15,6 +15,8 @@ const fs = require('fs');
 const path = require('path');
 const minimist = require('minimist');
 const { AzurePipelineParser } = require('../parser.js');
+const { _formatErrorDetails } = require('../error-webview.js');
+const assert = require('node:assert/strict');
 
 const parser = new AzurePipelineParser();
 
@@ -250,12 +252,113 @@ const test8Pass = runErrorTestCase(
     }
 );
 
+const test9Pass = (() => {
+    console.log('=== Test 9: Syntax hints link to the failing template line ===');
+    const hintParser = new AzurePipelineParser();
+    const baseDir = path.join(__dirname, 'inputs');
+    const intermediatePath = path.join(baseDir, 'intermediate-template.yaml');
+    const failingPath = path.join(baseDir, 'final-template.yaml');
+    hintParser.readFileContent = (filePath) => {
+        if (filePath === intermediatePath) {
+            return 'stages:\n\n  - template: final-template.yaml\n';
+        }
+        if (filePath === failingPath) {
+            return 'stages:\n  - stage: Build\n    jobs:\n     - ${{ if true }}:\n        - job: Build\n      ${{ else }}:\n        - job: Other\n';
+        }
+        throw new Error(`Unexpected template path: ${filePath}`);
+    };
+    try {
+        hintParser.expandPipelineFromString('stages:\n  - template: intermediate-template.yaml\n', {
+            baseDir,
+            fileName: path.join(baseDir, 'error-root.yaml'),
+        });
+        throw new Error('Expected a syntax hint error');
+    } catch (error) {
+        const message = error.message;
+        if (
+            !message.includes('potential issues:') ||
+            !message.includes('error-root.yaml:2') ||
+            !message.includes(`intermediate-template.yaml:3 (${intermediatePath})`) ||
+            !message.includes(`final-template.yaml:6 (${failingPath})`)
+        ) {
+            console.log(`FAIL: Incorrect error navigation: ${message}\n`);
+            return false;
+        }
+        console.log('PASS\n');
+        return true;
+    }
+})();
+
 // Summary
+const test10Pass = (() => {
+    console.log('=== Test 10: Error details follow the template stack without indentation ===');
+    try {
+        assert.equal(
+            _formatErrorDetails(
+                ['  Template expansion failed.', '    line 148: Invalid indentation.'],
+                ['root.yaml:172', 'final-template.yaml:148 (/templates/final-template.yaml)']
+            ),
+            'Template call stack:\n  root.yaml:172\n  final-template.yaml:148 (/templates/final-template.yaml)\n\nline 148: Invalid indentation.'
+        );
+        const templateLines = ['root.yaml:172', 'final-template.yaml:146 (/templates/final-template.yaml)'];
+        const diagnostic = 'line 146: Conditional list item is indented 5 spaces; expected 4.';
+        const expected = `Template call stack:\n  ${templateLines.join('\n  ')}\n\n${diagnostic}`;
+        const preamble =
+            '[\\\\wsl.localhost\\Ubuntu-22.04\\root\\workspace\\codeway.yaml] Template(/stages/windows/unit-tests-v0.yaml) expansion failed. Potential issues:';
+        assert.equal(_formatErrorDetails(['Error:', preamble, `  ${diagnostic}`], templateLines), expected);
+        assert.equal(_formatErrorDetails([`${preamble} ${diagnostic}`], templateLines), expected);
+        assert.equal(
+            _formatErrorDetails(["Template 'final-template.yaml' potential issues:", diagnostic], templateLines),
+            expected
+        );
+        assert.equal(_formatErrorDetails(['Potential template issues:', diagnostic], templateLines), expected);
+        assert.equal(_formatErrorDetails([preamble], []), preamble);
+        assert.equal(_formatErrorDetails(['  Invalid YAML.'], []), 'Invalid YAML.');
+        assert.equal(_formatErrorDetails([], []), '');
+        const rootParser = new AzurePipelineParser();
+        rootParser.readFileContent = () => {
+            throw new Error('Must not expand templates when root indentation is invalid');
+        };
+        assert.throws(
+            () =>
+                rootParser.expandPipelineFromString(
+                    [
+                        'stages:',
+                        '- template: missing.yaml',
+                        '  parameters:',
+                        '    enableSonarScan: true',
+                        '     sonarGate: true',
+                    ].join('\n'),
+                    { fileName: '/pipelines/codeway.yaml' }
+                ),
+            (error) =>
+                error.message.includes('Failed to parse YAML:') &&
+                error.message.includes('/pipelines/codeway.yaml:5') &&
+                !error.message.includes('Must not expand templates') &&
+                !error.message.includes('Template file not found')
+        );
+        console.log('PASS\n');
+        return true;
+    } catch (error) {
+        console.log(`FAIL: ${error.message}\n`);
+        return false;
+    }
+})();
+
 console.log('='.repeat(70));
-const totalTests = 8;
-const passedTests = [test1Pass, test2Pass, test3Pass, test4Pass, test5Pass, test6Pass, test7Pass, test8Pass].filter(
-    Boolean
-).length;
+const totalTests = 10;
+const passedTests = [
+    test1Pass,
+    test2Pass,
+    test3Pass,
+    test4Pass,
+    test5Pass,
+    test6Pass,
+    test7Pass,
+    test8Pass,
+    test9Pass,
+    test10Pass,
+].filter(Boolean).length;
 const failedTests = totalTests - passedTests;
 
 console.log(`Total tests: ${totalTests}`);

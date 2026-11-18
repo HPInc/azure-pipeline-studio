@@ -2,6 +2,28 @@
 
 // Generates the HTML/CSS/JS for the Pipeline Error webview panel.
 
+function _formatErrorDetails(messageLines, templateLines) {
+    const detailsLines = [];
+    const diagnosticLines = messageLines
+        .map((line) => {
+            const trimmed = line.trim();
+            if (!templateLines.length) return trimmed;
+            if (/^(?:Error:|(?:\[[^\n]*\]\s*)?Template expansion failed\.?)$/i.test(trimmed)) return '';
+            return trimmed
+                .replace(/^(?:\[[^\n]*\]\s*)?Template\([^\n]*?\) expansion failed\.\s*Potential issues:\s*/i, '')
+                .replace(/^(?:Template '[^']+' potential issues:|Potential template issues:)\s*/i, '');
+        })
+        .filter((line) => line.length);
+    if (templateLines.length) {
+        detailsLines.push('Template call stack:', ...templateLines.map((line) => `  ${line}`));
+    }
+    if (diagnosticLines.length) {
+        if (detailsLines.length) detailsLines.push('');
+        detailsLines.push(...diagnosticLines);
+    }
+    return detailsLines.join('\n');
+}
+
 function _generateErrorViewHtml(titleHtml, errorDetailsHtml, tipsHtml, stackHtml) {
     return `
             <!DOCTYPE html>
@@ -143,4 +165,4 @@ function _generateErrorViewHtml(titleHtml, errorDetailsHtml, tipsHtml, stackHtml
         `;
 }
 
-module.exports = { _generateErrorViewHtml };
+module.exports = { _generateErrorViewHtml, _formatErrorDetails };

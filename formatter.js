@@ -706,6 +706,19 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
                 }
             }
 
+            if (isListContext && /^\$\{\{\s*(?:else|elseif)\b.*\}\}\s*:\s*$/.test(trimmed)) {
+                for (let j = i - 1; j >= 0; j--) {
+                    const previous = lines[j];
+                    if (!previous.trim() || previous.trim().startsWith('#')) continue;
+                    const previousIndent = getIndent(previous);
+                    if (previousIndent >= currentIndent) continue;
+                    if (previousIndent === currentIndent - 2 && /^\s*-\s+\$\{\{\s*if\b.*\}\}\s*:\s*$/.test(previous)) {
+                        isListContext = false;
+                    }
+                    break;
+                }
+            }
+
             // Only warn if in list context, OR if not a conditional directive
             // Conditional directives used as object keys (not in list context) don't need dashes
             if (isListContext || !isConditionalDirective(trimmed, conditionalDirectives)) {
@@ -725,6 +738,23 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
         //      the same indent is a sibling of the conditional — not inside the value block.
         if (/^\s*-\s+(?:\$\{\{.*\}}|__EXPR_PLACEHOLDER_\d+__)\s*:\s*$/.test(line)) {
             const condIndent = getIndent(line);
+            for (let previousIndex = i - 1; previousIndex >= 0; previousIndex--) {
+                const previousLine = lines[previousIndex];
+                if (!previousLine.trim() || previousLine.trim().startsWith('#')) continue;
+                const previousIndent = getIndent(previousLine);
+                if (previousIndent >= condIndent) continue;
+                if (
+                    previousIndent === condIndent - 1 &&
+                    /^\s*-\s+(?:template|script|bash|pwsh|powershell|task|checkout|download|publish|job|stage):/.test(
+                        previousLine
+                    )
+                ) {
+                    return [
+                        `line ${i + 1}: Conditional list item is indented ${condIndent} spaces; the neighboring list item on line ${previousIndex + 1} uses ${previousIndent}. Remove one leading space before '-' so the items align. Fix this indentation before checking its value block or else/elseif branches.`,
+                    ];
+                }
+                break;
+            }
             const expectedValueIndent = condIndent + 2;
 
             let valueIndent = -1;
@@ -746,6 +776,11 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
                     if (!checkTrimmed || checkTrimmed.startsWith('#')) continue;
                     const checkIndent = getIndent(checkLine);
                     if (checkIndent <= condIndent) break;
+                    if (
+                        checkIndent === expectedValueIndent &&
+                        /^\$\{\{\s*(?:else|elseif)\b.*\}\}\s*:\s*$/.test(checkTrimmed)
+                    )
+                        break;
                     if (checkIndent > condIndent && checkIndent < valueIndent) {
                         hints.push(
                             `line ${j + 1}: '${checkTrimmed}' is at indent ${checkIndent}, which is between the conditional directive's indent (${condIndent}) and its value block (indent ${valueIndent}, line ${valueLineNum + 1}). This makes it a sibling key of the conditional expression rather than inside it. Fix the value block to start at indent ${expectedValueIndent}.`
@@ -763,6 +798,11 @@ function analyzeTemplateHints(content, conditionalDirectives = new Set()) {
                     if (!checkTrimmed || checkTrimmed.startsWith('#')) continue;
                     const checkIndent = getIndent(checkLine);
                     if (checkIndent <= condIndent) break;
+                    if (
+                        checkIndent === expectedValueIndent &&
+                        /^\$\{\{\s*(?:else|elseif)\b.*\}\}\s*:\s*$/.test(checkTrimmed)
+                    )
+                        break;
                     if (
                         checkIndent === expectedValueIndent &&
                         !checkTrimmed.startsWith('-') &&
@@ -1196,7 +1236,8 @@ function handleCommentLine(state) {
             const lastTrimmed = lastLine ? lastLine.trim() : '';
             const lastIsHeader = lastTrimmed === 'steps:' || lastTrimmed === 'jobs:' || lastTrimmed === 'stages:';
 
-            if (lastLine && !isBlank(lastLine) && !lastIsHeader) {
+            // Consecutive comment lines stay together without a blank line between them
+            if (lastLine && !isBlank(lastLine) && !lastIsHeader && !isComment(lastLine)) {
                 pass1.push('');
             }
         }

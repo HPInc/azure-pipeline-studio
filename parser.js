@@ -107,7 +107,10 @@ class AzurePipelineParser {
         }
 
         t('1. parseYamlDocument');
-        const { yamlDoc, jsonDoc } = this.parseYamlDocument(sourceText, undefined, skipSyntax);
+        const { yamlDoc, jsonDoc } = this.parseYamlDocument(sourceText, undefined, skipSyntax, {
+            rootTemplate: overrides.fileName,
+            templateStack: overrides.templateStack || [],
+        });
         te('1. parseYamlDocument');
 
         t('2. buildExecutionContext + captureQuoteStyles');
@@ -388,10 +391,12 @@ class AzurePipelineParser {
                 this.validateYamlSyntaxHints(source, identifier);
             } catch (err) {
                 const msg = err && err.message ? err.message : String(err);
-                throw new Error(this.formatErrorWithStack(msg, context, lineNumber));
+                const hintLine = /(?:^|\n)\s*line (\d+):/.exec(msg);
+                throw new Error(this.formatErrorWithStack(msg, context, hintLine ? Number(hintLine[1]) : lineNumber));
             }
         }
 
+        let parseErrorLine = lineNumber;
         try {
             let yamlDoc;
             try {
@@ -406,6 +411,16 @@ class AzurePipelineParser {
 
             if (yamlDoc.errors && yamlDoc.errors.length > 0) {
                 const sourceLines = source.split('\n');
+                const indentationErrors = yamlDoc.errors.filter((error) =>
+                    ['BAD_INDENT', 'TAB_AS_INDENT', 'MULTILINE_IMPLICIT_KEY'].includes(error.code)
+                );
+                if (indentationErrors.length) {
+                    const locationError =
+                        indentationErrors.find((error) => error.code === 'MULTILINE_IMPLICIT_KEY') ||
+                        indentationErrors[0];
+                    parseErrorLine = locationError.linePos?.at(-1)?.line || lineNumber;
+                    throw new Error(indentationErrors.map((error) => error.message).join('\n'));
+                }
 
                 // Block sequence as implicit map key — always a data-corrupting error.
                 const blockSequenceErrors = yamlDoc.errors.filter((e) => {
@@ -489,7 +504,7 @@ class AzurePipelineParser {
             const errorMsg = identifier
                 ? `Failed to parse template '${identifier}': ${error.message}`
                 : `Failed to parse YAML: ${error.message}`;
-            throw new Error(this.formatErrorWithStack(errorMsg, context, lineNumber));
+            throw new Error(this.formatErrorWithStack(errorMsg, context, parseErrorLine));
         }
     }
 
@@ -3310,7 +3325,13 @@ class AzurePipelineParser {
                 templateSource,
                 identifier,
                 skipSyntax,
-                context,
+                {
+                    ...context,
+                    templateStack: [
+                        ...(context.templateStack || []),
+                        `${identifier}${templateLineNumber ? `:${templateLineNumber}` : ''} (${resolvedPath})`,
+                    ],
+                },
                 templateLineNumber
             );
             templateJson = jsonDoc;
